@@ -1,0 +1,6 @@
+{
+  "name": "ULA AI Claims Hub",
+  "short_name": "ULA Claims",
+  "start_url": "/",
+  "display": "standalone"
+}
