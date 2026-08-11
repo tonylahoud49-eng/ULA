@@ -1,0 +1,96 @@
+{
+  "schemaVersion": 2,
+  "generatedAt": "2026-08-11T18:40:35.9305786+03:00",
+  "title": "Design System: ULA Claims Hub",
+  "extensions": {
+    "colorMeta": {
+      "ula-teal": { "role": "primary", "displayName": "ULA Teal", "canonical": "hsl(169 63% 33%)", "tonalRamp": ["oklch(26% 0.07 172)", "oklch(36% 0.09 172)", "oklch(46% 0.10 172)", "oklch(56% 0.10 172)", "oklch(66% 0.09 172)", "oklch(76% 0.07 172)", "oklch(86% 0.04 172)", "oklch(95% 0.02 172)"] },
+      "issue-paper": { "role": "neutral", "displayName": "Issue Paper", "canonical": "hsl(140 10% 96%)", "tonalRamp": ["oklch(24% 0.01 150)", "oklch(34% 0.01 150)", "oklch(44% 0.01 150)", "oklch(56% 0.01 150)", "oklch(68% 0.01 150)", "oklch(78% 0.01 150)", "oklch(88% 0.01 150)", "oklch(96% 0.01 150)"] },
+      "sheet-white": { "role": "neutral", "displayName": "Sheet White", "canonical": "hsl(0 0% 100%)", "tonalRamp": ["oklch(25% 0 0)", "oklch(35% 0 0)", "oklch(45% 0 0)", "oklch(57% 0 0)", "oklch(69% 0 0)", "oklch(79% 0 0)", "oklch(90% 0 0)", "oklch(100% 0 0)"] },
+      "graphite": { "role": "neutral", "displayName": "Graphite", "canonical": "hsl(165 25% 10%)", "tonalRamp": ["oklch(18% 0.02 165)", "oklch(28% 0.02 165)", "oklch(38% 0.02 165)", "oklch(49% 0.02 165)", "oklch(61% 0.02 165)", "oklch(72% 0.02 165)", "oklch(84% 0.01 165)", "oklch(95% 0.01 165)"] },
+      "warning-amber": { "role": "secondary", "displayName": "Warning Amber", "canonical": "hsl(35 58% 49%)", "tonalRamp": ["oklch(28% 0.08 72)", "oklch(38% 0.10 72)", "oklch(48% 0.12 72)", "oklch(58% 0.13 72)", "oklch(68% 0.11 72)", "oklch(78% 0.08 72)", "oklch(88% 0.05 72)", "oklch(95% 0.02 72)"] },
+      "alert-red": { "role": "tertiary", "displayName": "Alert Red", "canonical": "hsl(4 45% 49%)", "tonalRamp": ["oklch(27% 0.09 28)", "oklch(37% 0.12 28)", "oklch(47% 0.14 28)", "oklch(57% 0.15 28)", "oklch(67% 0.12 28)", "oklch(77% 0.09 28)", "oklch(87% 0.05 28)", "oklch(95% 0.02 28)"] }
+    },
+    "typographyMeta": {
+      "display": { "displayName": "Docket Display", "purpose": "Page purpose and claim identity." },
+      "title": { "displayName": "Register Title", "purpose": "Workspace and section headings." },
+      "body": { "displayName": "Operational Body", "purpose": "Forms, tables, descriptions, and actions." },
+      "label": { "displayName": "Control Label", "purpose": "Metrics, fields, status, and document metadata." }
+    },
+    "shadows": [
+      { "name": "sheet-lift", "value": "0 18px 38px -32px rgb(15 33 29 / 0.72)", "purpose": "Low ambient separation for complete docket surfaces." },
+      { "name": "action-lift", "value": "0 8px 18px -14px rgba(15,33,29,0.9)", "purpose": "Primary action emphasis." }
+    ],
+    "motion": [
+      { "name": "docket-enter", "value": "420ms cubic-bezier(0.16, 1, 0.3, 1)", "purpose": "One restrained reveal for route content; disabled under reduced motion." },
+      { "name": "state-transition", "value": "150ms ease", "purpose": "Quiet hover and focus feedback on controls." }
+    ],
+    "breakpoints": [
+      { "name": "sm", "value": "640px" },
+      { "name": "lg", "value": "1024px" },
+      { "name": "content-max", "value": "1600px" }
+    ]
+  },
+  "components": [
+    {
+      "name": "Primary Button",
+      "kind": "button",
+      "refersTo": "button-primary",
+      "description": "Primary workflow action with restrained lift.",
+      "html": "<button class=\"ds-btn-primary\">Generate report</button>",
+      "css": ".ds-btn-primary{height:40px;padding:8px 16px;border:0;border-radius:4px;background:hsl(var(--primary));color:hsl(var(--primary-foreground));font:600 14px/1.25 var(--font-body);box-shadow:0 8px 18px -14px rgba(15,33,29,.9);transition:background-color 150ms ease,transform 150ms ease}.ds-btn-primary:hover{background:hsl(var(--primary)/.9)}.ds-btn-primary:focus-visible{outline:2px solid hsl(var(--ring));outline-offset:2px}.ds-btn-primary:active{transform:translateY(1px)}"
+    },
+    {
+      "name": "Outline Button",
+      "kind": "button",
+      "refersTo": "button-outline",
+      "description": "Secondary action contained by a document rule.",
+      "html": "<button class=\"ds-btn-outline\">Review evidence</button>",
+      "css": ".ds-btn-outline{height:40px;padding:8px 16px;border:1px solid hsl(var(--input));border-radius:4px;background:hsl(var(--card));color:hsl(var(--foreground));font:600 14px/1.25 var(--font-body);transition:background-color 150ms ease,border-color 150ms ease}.ds-btn-outline:hover{border-color:hsl(var(--primary)/.55);background:hsl(var(--accent))}.ds-btn-outline:focus-visible{outline:2px solid hsl(var(--ring));outline-offset:2px}.ds-btn-outline:active{transform:translateY(1px)}"
+    },
+    {
+      "name": "Claim Field",
+      "kind": "input",
+      "refersTo": "input",
+      "description": "Compact ruled field for operational data.",
+      "html": "<input class=\"ds-input\" value=\"ULA-2026-0148\" aria-label=\"Claim number\">",
+      "css": ".ds-input{height:40px;width:100%;padding:4px 12px;border:1px solid hsl(var(--input));border-radius:4px;background:hsl(var(--card));color:hsl(var(--foreground));font:400 14px/1.5 var(--font-body);transition:border-color 150ms ease,box-shadow 150ms ease}.ds-input:hover{border-color:hsl(var(--primary)/.55)}.ds-input:focus-visible{outline:0;border-color:hsl(var(--primary));box-shadow:0 0 0 2px hsl(var(--ring)/.25)}"
+    },
+    {
+      "name": "Docket Surface",
+      "kind": "card",
+      "refersTo": "docket-surface",
+      "description": "Ruled working sheet for a claim register or report section.",
+      "html": "<section class=\"ds-docket\"><h3>Recent claim register</h3><p>Evidence and release state remain together.</p></section>",
+      "css": ".ds-docket{padding:24px;border:1px solid hsl(var(--border));border-radius:6px;background:hsl(var(--card));color:hsl(var(--foreground));box-shadow:0 18px 38px -32px rgb(15 33 29/.72)}.ds-docket h3{margin:0;font:600 24px/1 var(--font-heading);letter-spacing:-.015em}.ds-docket p{margin:8px 0 0;color:hsl(var(--muted-foreground));font:400 14px/1.5 var(--font-body)}"
+    },
+    {
+      "name": "Status Mark",
+      "kind": "chip",
+      "refersTo": "status-mark",
+      "description": "Compact release-state label with semantic color.",
+      "html": "<span class=\"ds-status\">Report draft</span>",
+      "css": ".ds-status{display:inline-flex;align-items:center;padding:4px 8px;border:1px solid hsl(var(--primary)/.45);border-radius:2px;background:hsl(var(--primary)/.05);color:hsl(var(--primary));font:600 11px/1.25 var(--font-body);letter-spacing:.07em;text-transform:uppercase}.ds-status:hover{background:hsl(var(--primary)/.1)}.ds-status:focus-visible{outline:2px solid hsl(var(--ring));outline-offset:2px}"
+    },
+    {
+      "name": "Primary Navigation Item",
+      "kind": "nav",
+      "description": "Active route treatment in the persistent operations rail.",
+      "html": "<a class=\"ds-nav\" href=\"#\"><svg viewBox=\"0 0 24 24\" aria-hidden=\"true\"><path d=\"M3 3h7v7H3zM14 3h7v7h-7zM3 14h7v7H3zM14 14h7v7h-7z\" fill=\"none\" stroke=\"currentColor\" stroke-width=\"1.8\"/></svg><span><strong>Dashboard</strong><small>Portfolio control</small></span></a>",
+      "css": ".ds-nav{display:flex;align-items:center;gap:12px;padding:12px;border-radius:4px;background:hsl(var(--sidebar-primary));color:hsl(var(--sidebar-primary-foreground));font-family:var(--font-body);text-decoration:none;transition:background-color 150ms ease}.ds-nav svg{width:18px;height:18px}.ds-nav span{display:grid;gap:2px}.ds-nav strong{font-size:14px;line-height:1.2}.ds-nav small{font-size:11px;line-height:1.2;opacity:.65}.ds-nav:hover{background:hsl(var(--sidebar-ring))}.ds-nav:focus-visible{outline:2px solid hsl(var(--sidebar-ring));outline-offset:2px}"
+    }
+  ],
+  "narrative": {
+    "northStar": "The Release Docket",
+    "overview": "ULA Claims Hub uses the visual language of a controlled professional issue sheet: cool paper, graphite rules, restrained ULA teal, dense registers, and explicit release states. The system feels precise and operational rather than promotional. It gives evidence, responsibility, readiness, and approval equal visual weight so professional judgment remains visible throughout the workflow. Density is deliberate but readable. Large condensed headings establish hierarchy; compact labels, tabular numbers, and ruled surfaces carry claim detail without turning the application into a generic card dashboard. Route-specific compositions may vary, but every working surface should reveal its current state and next professional gate.",
+    "keyCharacteristics": ["Controlled-document hierarchy with strong reading order.", "Flat issue-sheet surfaces structured by rules and tonal layers.", "ULA teal reserved for primary action, current state, and verified progress.", "Condensed technical headings paired with highly readable body copy.", "Evidence, human review, and approval provenance remain explicit."],
+    "rules": [
+      { "name": "The Controlled Accent Rule", "body": "ULA teal identifies action or controlled state; it is not decorative fill.", "section": "colors" },
+      { "name": "The Status Truth Rule", "body": "Amber and red are semantic status colors and never ambient decoration.", "section": "colors" },
+      { "name": "The Two-Voice Rule", "body": "Barlow Condensed carries headings; Source Sans 3 carries every operational value and action.", "section": "typography" },
+      { "name": "The Paper-First Rule", "body": "Borders establish structure; shadows only separate a complete sheet or primary action from its background.", "section": "elevation" }
+    ],
+    "dos": ["Do keep evidence, readiness, assigned responsibility, version, and approval state visible near report actions.", "Do use contiguous registers, rules, tabular figures, and short operational labels for dense claim information.", "Do reserve ULA teal for current state, verified progress, focus, and primary action.", "Do preserve keyboard focus, reduced-motion handling, readable contrast, and mobile reflow."],
+    "donts": ["Don't turn claims or report stages into a generic grid of floating KPI cards.", "Don't use gradients, glass, distressed type, fake stamps, bevels, or material imitation.", "Don't use amber or red without a real workflow or validation meaning.", "Don't hide AI provenance or imply that AI can approve, finalize, or replace professional judgment."]
+  }
+}

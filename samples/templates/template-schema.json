@@ -1,0 +1,37 @@
+{
+  "schemaVersion": 1,
+  "templateFamily": "ULA Unified Claim Report",
+  "issueStates": ["Draft", "In Review", "Changes Requested", "Preliminary", "Final", "Revised Final"],
+  "workflow": ["Evidence", "Analysis", "Adjustment", "Review", "Approval"],
+  "roles": ["investigator", "preparer", "reviewer", "approver"],
+  "commonSections": [
+    "Cover Page",
+    "Document Control",
+    "Version History",
+    "Report Summary",
+    "Claim Salient Details",
+    "Appointment and Scope",
+    "Investigation and Findings",
+    "Cause of Loss",
+    "Policy and Coverage Analysis",
+    "Claim and Adjustment",
+    "Conclusion",
+    "Supporting Documents",
+    "Outstanding Documents",
+    "Appendices and Photographs",
+    "About ULA and Strategic Alliances"
+  ],
+  "variants": [
+    {"id": "air-shipment", "label": "Air Shipment Report"},
+    {"id": "land-shipment", "label": "Land Shipment Report"},
+    {"id": "marine-reefer", "label": "Marine Reefer Cargo Report"},
+    {"id": "marine-non-reefer", "label": "Marine Non-Reefer Cargo Report"},
+    {"id": "bulk-vessel", "label": "Bulk Vessel Cargo Report"},
+    {"id": "fidelity", "label": "Fidelity Report"},
+    {"id": "property", "label": "Property Report"},
+    {"id": "yacht", "label": "Yacht Report"}
+  ],
+  "placeholderSyntax": "{{field_name}}",
+  "humanApprovalRequired": ["cause_of_loss", "coverage_analysis", "adjustment", "liability", "recommendations", "conclusion"],
+  "binaryStorage": "external-provider-reference-only"
+}

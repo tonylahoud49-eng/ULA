@@ -14,6 +14,7 @@ const BUSINESS_LINES = [
   "Marine Cargo (Non-Reefer)",
   "Bulk Vessel",
   "Air Shipment (NET)",
+  "Land Shipment",
   "Fidelity Claims",
   "Unclassified",
 ];
@@ -28,12 +29,12 @@ const STATUSES = [
 ];
 
 const statusStyles = {
-  New: "bg-blue-100 text-blue-700",
-  "Under Investigation": "bg-amber-100 text-amber-700",
-  "Pending Documents": "bg-orange-100 text-orange-700",
-  "Report Draft": "bg-violet-100 text-violet-700",
-  "Report Final": "bg-emerald-100 text-emerald-700",
-  Closed: "bg-slate-100 text-slate-600",
+  New: "border-sky-300 bg-sky-50 text-sky-800",
+  "Under Investigation": "border-amber-300 bg-amber-50 text-amber-800",
+  "Pending Documents": "border-orange-300 bg-orange-50 text-orange-800",
+  "Report Draft": "border-violet-300 bg-violet-50 text-violet-800",
+  "Report Final": "border-emerald-300 bg-emerald-50 text-emerald-800",
+  Closed: "border-border bg-muted text-muted-foreground",
 };
 
 export default function Claims() {
@@ -77,10 +78,10 @@ export default function Claims() {
 
   return (
     <div className="space-y-6">
-      <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4">
+      <div className="docket-header">
         <div>
-          <h1 className="text-2xl font-heading font-bold">Claims</h1>
-          <p className="text-sm text-muted-foreground mt-1">View and manage all claims</p>
+          <h2 className="docket-title">Claims register</h2>
+          <p className="docket-subtitle">Search every matter, identify its current gate, and open the controlled claim workspace.</p>
         </div>
         <Link to="/ai-reporting">
           <Button>
@@ -89,7 +90,7 @@ export default function Claims() {
         </Link>
       </div>
 
-      <Card className="p-4">
+      <Card className="docket-surface p-4 shadow-none">
         <div className="grid grid-cols-1 md:grid-cols-3 gap-3">
           <div className="relative">
             <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-muted-foreground" />
@@ -118,12 +119,12 @@ export default function Claims() {
       </Card>
 
       {error ? (
-        <Card className="p-6 flex items-center gap-3 text-destructive">
+        <Card className="docket-surface flex items-center gap-3 border-destructive/35 bg-destructive/5 p-6 text-destructive shadow-none">
           <AlertTriangle className="w-5 h-5 shrink-0" />
           <p className="text-sm">{error}</p>
         </Card>
       ) : (
-        <Card className="overflow-hidden">
+        <Card className="docket-surface overflow-hidden shadow-none">
           <div className="px-5 py-4 border-b flex items-center justify-between">
             <div className="flex items-center gap-2 font-heading font-semibold text-sm">
               <FolderOpen className="w-4 h-4 text-primary" /> All Claims
@@ -137,35 +138,35 @@ export default function Claims() {
             <div className="p-10 text-center text-sm text-muted-foreground">No claims match the selected filters.</div>
           ) : (
             <div className="overflow-x-auto">
-              <table className="w-full text-sm">
-                <thead className="bg-muted/40 text-muted-foreground">
+              <table className="register-table">
+                <thead>
                   <tr>
-                    <th className="text-left font-medium px-5 py-3">Claim</th>
-                    <th className="text-left font-medium px-5 py-3">Business Line</th>
-                    <th className="text-left font-medium px-5 py-3">Insured</th>
-                    <th className="text-left font-medium px-5 py-3">Status</th>
-                    <th className="text-left font-medium px-5 py-3">Surveyor</th>
-                    <th className="px-5 py-3" aria-label="Open claim" />
+                    <th>Claim</th>
+                    <th>Business Line</th>
+                    <th>Insured</th>
+                    <th>Status</th>
+                    <th>Surveyor</th>
+                    <th aria-label="Open claim" />
                   </tr>
                 </thead>
-                <tbody className="divide-y">
+                <tbody>
                   {filteredClaims.map((claim) => (
-                    <tr key={claim.id} className="hover:bg-muted/30 transition-colors">
-                      <td className="px-5 py-4">
+                    <tr key={claim.id}>
+                      <td>
                         <Link to={`/claims/${claim.id}`} className="font-medium hover:text-primary">
                           {claim.title}
                         </Link>
                         <div className="text-xs text-muted-foreground mt-0.5">{claim.claim_number}</div>
                       </td>
-                      <td className="px-5 py-4">{claim.business_line || "Unclassified"}</td>
-                      <td className="px-5 py-4">{claim.insured || "—"}</td>
-                      <td className="px-5 py-4">
-                        <span className={`inline-flex rounded-full px-2.5 py-1 text-xs font-medium ${statusStyles[claim.status] || "bg-slate-100 text-slate-600"}`}>
+                      <td>{claim.business_line || "Unclassified"}</td>
+                      <td>{claim.insured || "—"}</td>
+                      <td>
+                        <span className={`status-mark ${statusStyles[claim.status] || "border-border bg-muted text-muted-foreground"}`}>
                           {claim.status || "New"}
                         </span>
                       </td>
-                      <td className="px-5 py-4">{claim.surveyor || "Unassigned"}</td>
-                      <td className="px-5 py-4 text-right">
+                      <td>{claim.surveyor || "Unassigned"}</td>
+                      <td className="text-right">
                         <Link to={`/claims/${claim.id}`} aria-label={`Open ${claim.claim_number || claim.title}`}>
                           <ArrowRight className="w-4 h-4 text-muted-foreground" />
                         </Link>

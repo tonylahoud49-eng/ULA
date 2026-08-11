@@ -1,16 +1,29 @@
-import React, { useEffect, useState } from "react";
+import React, { useEffect, useMemo, useState } from "react";
 import { useNavigate } from "react-router-dom";
+import {
+  AlertTriangle,
+  ArrowLeft,
+  ArrowRight,
+  CheckCircle,
+  FileText,
+  Link2,
+  Loader2,
+  ShieldCheck,
+  Sparkles,
+  Wand2,
+} from "lucide-react";
 import { appClient } from "@/api/appClient";
-import { Card } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
+import { Card } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
-import { Textarea } from "@/components/ui/textarea";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
-import { Sparkles, FileText, ArrowRight, ArrowLeft, CheckCircle, AlertTriangle, Loader2, Wand2 } from "lucide-react";
+import { Textarea } from "@/components/ui/textarea";
+import { toast } from "@/components/ui/use-toast";
 import DocumentUploader from "@/components/DocumentUploader";
+import { REPORT_WORKFLOW_ROLES, reportReadiness } from "@/lib/reportTemplates";
 
-const BUSINESS_LINES = ["Yacht", "Property", "Marine Cargo (Reefer/GFS)", "Marine Cargo (Non-Reefer)", "Bulk Vessel", "Air Shipment (NET)", "Fidelity Claims", "Unclassified"];
+const BUSINESS_LINES = ["Yacht", "Property", "Marine Cargo (Reefer/GFS)", "Marine Cargo (Non-Reefer)", "Bulk Vessel", "Air Shipment (NET)", "Land Shipment", "Fidelity Claims", "Unclassified"];
 const STEPS = ["Select Claim", "Upload Evidence", "AI Analysis", "Review & Edit", "Generate Report"];
 
 export default function AIReporting() {
@@ -23,29 +36,30 @@ export default function AIReporting() {
   const [analysis, setAnalysis] = useState(null);
   const [edited, setEdited] = useState({});
   const [generating, setGenerating] = useState(false);
-
   const navigate = useNavigate();
+  const readiness = useMemo(() => reportReadiness(edited || {}, documents), [edited, documents]);
 
   useEffect(() => {
-    (async () => {
-      const data = await appClient.entities.Claim.list("-created_date", 100);
-      setClaims(data);
-    })();
+    appClient.entities.Claim.list("-created_date", 100)
+      .then(setClaims)
+      .catch((error) => toast({ variant: "destructive", title: "Claims could not be loaded", description: error.message }));
   }, []);
 
   const selectClaim = async (id) => {
     setSelectedClaimId(id);
-    const c = await appClient.entities.Claim.get(id);
-    setClaim(c);
-    setEdited(c);
+    const selected = await appClient.entities.Claim.get(id);
+    setClaim(selected);
+    setEdited(selected);
     setDocuments(await appClient.entities.ClaimDocument.filter({ claim_id: id }));
+    setAnalysis(null);
   };
 
   const createClaim = async () => {
-    const number = `ULA-2026-${String(claims.length + 1).padStart(4, "0")}`;
-    const c = await appClient.entities.Claim.create({ claim_number: number, title: "New AI Claim", business_line: "Unclassified", status: "New", priority: "Medium" });
-    await selectClaim(c.id);
-    setClaims([c, ...claims]);
+    const year = new Date().getFullYear();
+    const number = `ULA-${year}-${String(claims.length + 1).padStart(4, "0")}`;
+    const created = await appClient.entities.Claim.create({ claim_number: number, title: "New AI Claim", business_line: "Unclassified", status: "New", priority: "Medium" });
+    await selectClaim(created.id);
+    setClaims((current) => [created, ...current]);
   };
 
   const reloadDocs = async () => {
@@ -55,30 +69,33 @@ export default function AIReporting() {
   const runAnalysis = async () => {
     setAnalyzing(true);
     try {
-      const res = await appClient.functions.invoke("analyseClaim", { claim_id: selectedClaimId });
-      setAnalysis(res.data.analysis);
+      const response = await appClient.functions.invoke("analyseClaim", { claim_id: selectedClaimId });
+      setAnalysis(response.data.analysis);
       await selectClaim(selectedClaimId);
+      setAnalysis(response.data.analysis);
       setStep(3);
-    } catch (e) {
-      alert(e.response?.data?.error || e.message);
+    } catch (error) {
+      toast({ variant: "destructive", title: "Analysis could not be completed", description: error.response?.data?.error || error.message });
     } finally {
       setAnalyzing(false);
     }
   };
 
   const saveEdits = async () => {
-    await appClient.entities.Claim.update(selectedClaimId, edited);
-    setClaim(edited);
+    const updated = await appClient.entities.Claim.update(selectedClaimId, edited);
+    setClaim(updated);
+    setEdited(updated);
+    toast({ title: "Claim data saved", description: "The controlled draft will use these reviewed values." });
   };
 
   const generateReport = async () => {
     setGenerating(true);
     try {
-      await saveEdits();
+      await appClient.entities.Claim.update(selectedClaimId, edited);
       await appClient.functions.invoke("generateReport", { claim_id: selectedClaimId, edited_data: edited });
       navigate(`/claims/${selectedClaimId}`);
-    } catch (e) {
-      alert(e.response?.data?.error || e.message);
+    } catch (error) {
+      toast({ variant: "destructive", title: "Draft report could not be generated", description: error.response?.data?.error || error.message });
     } finally {
       setGenerating(false);
     }
@@ -86,85 +103,77 @@ export default function AIReporting() {
 
   return (
     <div className="space-y-6">
-      <div>
-        <h2 className="text-2xl font-heading font-bold flex items-center gap-2"><Sparkles className="w-6 h-6 text-primary" /> AI Reporting</h2>
-        <p className="text-sm text-muted-foreground mt-1">Upload evidence, let AI classify and extract, review every field, then generate a ULA-standard draft report.</p>
+      <div className="docket-header">
+        <div>
+          <h2 className="docket-title">Controlled reporting workspace</h2>
+          <p className="docket-subtitle">Register evidence, run a conservative local completeness analysis, verify every field, and generate a unified ULA draft for professional review.</p>
+        </div>
+        <span className="status-mark border-amber-300 bg-amber-50 text-amber-800"><ShieldCheck className="h-3.5 w-3.5" /> Human approval required</span>
       </div>
 
       <Stepper step={step} />
 
       {step === 0 && (
-        <Card className="p-6">
-          <h3 className="font-heading font-semibold mb-4">Select or create a claim to report on</h3>
-          <Button onClick={createClaim} className="ula-gradient text-white mb-4"><Wand2 className="w-4 h-4 mr-2" /> Create New AI Claim</Button>
-          <div className="space-y-2 max-h-96 overflow-y-auto scrollbar-thin">
-            {claims.map((c) => (
-              <button key={c.id} onClick={() => selectClaim(c.id)} className={`w-full text-left p-3 rounded-lg border transition-colors ${selectedClaimId === c.id ? "border-primary bg-primary/5" : "border-border hover:bg-muted/40"}`}>
-                <div className="flex items-center justify-between">
-                  <span className="font-medium text-sm">{c.title}</span>
-                  <span className="font-mono text-xs text-muted-foreground">{c.claim_number}</span>
-                </div>
-                <p className="text-xs text-muted-foreground mt-0.5">{c.business_line} · {c.status}</p>
-              </button>
-            ))}
+        <Card className="docket-surface overflow-hidden shadow-none">
+          <div className="flex flex-col justify-between gap-3 border-b bg-muted/35 p-5 sm:flex-row sm:items-center">
+            <div><h3 className="font-heading text-xl font-semibold">Select a claim</h3><p className="mt-1 text-xs text-muted-foreground">The business line determines the unified report template.</p></div>
+            <Button onClick={createClaim}><Wand2 /> Create New AI Claim</Button>
           </div>
-          {selectedClaimId && (
-            <div className="mt-5 flex justify-end">
-              <Button onClick={() => setStep(1)} className="ula-gradient text-white">Continue <ArrowRight className="w-4 h-4 ml-2" /></Button>
-            </div>
-          )}
+          <div className="max-h-[430px] divide-y overflow-y-auto scrollbar-thin">
+            {claims.length ? claims.map((item) => (
+              <button key={item.id} type="button" onClick={() => selectClaim(item.id)} className={`w-full border-l-2 p-4 text-left transition-colors ${selectedClaimId === item.id ? "border-l-primary bg-primary/5" : "border-l-transparent hover:bg-muted/40"}`}>
+                <div className="flex flex-wrap items-center justify-between gap-2">
+                  <span className="font-semibold">{item.title}</span>
+                  <span className="font-mono text-xs text-muted-foreground">{item.claim_number}</span>
+                </div>
+                <p className="mt-1 text-xs text-muted-foreground">{item.business_line} · {item.status}</p>
+              </button>
+            )) : <div className="p-10 text-center text-sm text-muted-foreground">No claims registered yet.</div>}
+          </div>
+          {selectedClaimId && <div className="flex justify-end border-t p-5"><Button onClick={() => setStep(1)}>Continue <ArrowRight /></Button></div>}
         </Card>
       )}
 
       {step === 1 && claim && (
         <div className="space-y-4">
-          <Card className="p-4 bg-primary/5 border-primary/20">
-            <p className="text-sm">Reporting on <span className="font-medium">{claim.title}</span> ({claim.claim_number})</p>
+          <Card className="docket-surface border-primary/25 bg-primary/5 p-4 shadow-none">
+            <div className="flex flex-wrap items-center justify-between gap-3"><p className="text-sm">Reporting on <span className="font-semibold">{claim.title}</span> ({claim.claim_number})</p><span className="status-mark border-primary/30 bg-card text-primary">{readiness.template.name}</span></div>
           </Card>
           <DocumentUploader claimId={selectedClaimId} documents={documents} onChanged={reloadDocs} />
-          <div className="flex justify-between">
-            <Button variant="outline" onClick={() => setStep(0)}><ArrowLeft className="w-4 h-4 mr-2" /> Back</Button>
-            <Button onClick={() => setStep(2)} disabled={!documents.length} className="ula-gradient text-white">Continue <ArrowRight className="w-4 h-4 ml-2" /></Button>
-          </div>
+          <div className="flex justify-between"><Button variant="outline" onClick={() => setStep(0)}><ArrowLeft /> Back</Button><Button onClick={() => setStep(2)} disabled={!documents.length}>Continue <ArrowRight /></Button></div>
         </div>
       )}
 
       {step === 2 && claim && (
-        <Card className="p-8 text-center">
+        <Card className="docket-surface p-8 text-center shadow-none">
           {analyzing ? (
-            <div className="flex flex-col items-center">
-              <Loader2 className="w-12 h-12 text-primary animate-spin mb-4" />
-              <h3 className="font-heading font-semibold">AI is analyzing your evidence…</h3>
-              <p className="text-sm text-muted-foreground mt-2 max-w-md">Combining all documents and photos, running OCR and computer vision, classifying the business line, and extracting every key field.</p>
-            </div>
+            <div className="flex flex-col items-center"><Loader2 className="mb-4 h-11 w-11 animate-spin text-primary" /><h3 className="font-heading text-xl font-semibold">Checking template completeness…</h3><p className="mx-auto mt-2 max-w-md text-sm text-muted-foreground">The local adapter is matching registered metadata and evidence categories to the selected report template. External OCR and AI extraction are not enabled.</p></div>
           ) : (
-            <>
-              <FileText className="w-12 h-12 text-primary mx-auto mb-4" />
-              <h3 className="font-heading font-semibold">Ready to analyze {documents.length} document(s)</h3>
-              <p className="text-sm text-muted-foreground mt-2 max-w-md mx-auto">The AI will combine all uploaded evidence before classifying and extracting. It never relies on photos alone and never fabricates missing information.</p>
-              <Button onClick={runAnalysis} className="ula-gradient text-white mt-5"><Sparkles className="w-4 h-4 mr-2" /> Run AI Analysis</Button>
-            </>
+            <><FileText className="mx-auto mb-4 h-11 w-11 text-primary" /><h3 className="font-heading text-xl font-semibold">Ready to review {documents.length} source document(s)</h3><p className="mx-auto mt-2 max-w-md text-sm text-muted-foreground">Local mode checks the evidence register against the unified template and marks missing information explicitly. It does not fabricate or silently infer absent facts.</p><Button onClick={runAnalysis} className="mt-5"><Sparkles /> Run AI Analysis</Button></>
           )}
-          <div className="mt-6 flex justify-center">
-            <Button variant="ghost" onClick={() => setStep(1)}><ArrowLeft className="w-4 h-4 mr-2" /> Back to upload</Button>
-          </div>
+          <div className="mt-6 flex justify-center"><Button variant="ghost" onClick={() => setStep(1)}><ArrowLeft /> Back to upload</Button></div>
         </Card>
       )}
 
-      {step === 3 && claim && (
-        <ReviewStep analysis={analysis} edited={edited} setEdited={setEdited} onSave={saveEdits} onBack={() => setStep(2)} onNext={() => setStep(4)} />
-      )}
+      {step === 3 && claim && <ReviewStep analysis={analysis} edited={edited} setEdited={setEdited} readiness={readiness} onSave={saveEdits} onBack={() => setStep(2)} onNext={() => setStep(4)} />}
 
       {step === 4 && claim && (
-        <Card className="p-8 text-center">
-          <CheckCircle className="w-12 h-12 text-emerald-500 mx-auto mb-4" />
-          <h3 className="font-heading font-semibold">Generate the draft report?</h3>
-          <p className="text-sm text-muted-foreground mt-2 max-w-md mx-auto">The AI will produce a complete ULA-style draft report with cover page, summary, findings, cause of loss, policy analysis, adjustment, liability, recommendations, and outstanding documents. You will be able to review and approve it before it becomes final.</p>
-          <Button onClick={generateReport} disabled={generating} className="ula-gradient text-white mt-5">
-            {generating ? <><Loader2 className="w-4 h-4 mr-2 animate-spin" /> Generating report…</> : <><Sparkles className="w-4 h-4 mr-2" /> Generate Draft Report</>}
-          </Button>
-          <div className="mt-6 flex justify-center">
-            <Button variant="ghost" onClick={() => setStep(3)}><ArrowLeft className="w-4 h-4 mr-2" /> Back to review</Button>
+        <Card className="docket-surface overflow-hidden shadow-none">
+          <div className="border-b bg-muted/35 px-6 py-5 text-left">
+            <div className="flex items-start gap-3"><CheckCircle className="mt-0.5 h-6 w-6 text-primary" /><div><h3 className="font-heading text-xl font-semibold">Generate controlled draft</h3><p className="mt-1 text-sm text-muted-foreground">{readiness.template.name} · {readiness.overallProgress}% template readiness · {documents.length} registered sources</p></div></div>
+          </div>
+          <div className="grid sm:grid-cols-4">
+            {REPORT_WORKFLOW_ROLES.map((role) => (
+              <div key={role.id} className="border-b p-4 last:border-b-0 sm:border-b-0 sm:border-r sm:last:border-r-0">
+                <p className="docket-label">{role.label}</p>
+                <p className="mt-2 text-xs text-muted-foreground">{role.id === "investigator" ? edited.surveyor || "To be assigned" : role.id === "preparer" ? edited.prepared_by || "Current author" : role.id === "reviewer" ? edited.reviewed_by || "To be assigned" : edited.approved_by || "To be assigned"}</p>
+              </div>
+            ))}
+          </div>
+          <div className="border-t p-6 text-center">
+            <p className="mx-auto max-w-2xl text-sm text-muted-foreground">The generated document remains a draft. Cause, coverage, adjustment, liability, recommendations, and conclusion require professional review; only an authorized approver may issue the final version.</p>
+            <Button onClick={generateReport} disabled={generating} className="mt-5">{generating ? <><Loader2 className="animate-spin" /> Generating report…</> : <><Sparkles /> Generate Draft Report</>}</Button>
+            <div className="mt-5"><Button variant="ghost" onClick={() => setStep(3)}><ArrowLeft /> Back to review</Button></div>
           </div>
         </Card>
       )}
@@ -174,100 +183,79 @@ export default function AIReporting() {
 
 function Stepper({ step }) {
   return (
-    <div className="flex items-center gap-2 overflow-x-auto pb-2">
-      {STEPS.map((s, i) => (
-        <React.Fragment key={s}>
-          <div className={`flex items-center gap-2 shrink-0 ${i <= step ? "text-primary" : "text-muted-foreground"}`}>
-            <div className={`w-7 h-7 rounded-full flex items-center justify-center text-xs font-semibold ${i < step ? "ula-gradient text-white" : i === step ? "border-2 border-primary text-primary" : "border border-border"}`}>
-              {i < step ? <CheckCircle className="w-4 h-4" /> : i + 1}
-            </div>
-            <span className="text-xs font-medium hidden sm:inline">{s}</span>
-          </div>
-          {i < STEPS.length - 1 && <div className={`h-px w-6 sm:w-10 ${i < step ? "bg-primary" : "bg-border"}`} />}
-        </React.Fragment>
+    <ol className="docket-surface grid overflow-hidden rounded-lg sm:grid-cols-5" aria-label="Report workflow">
+      {STEPS.map((label, index) => (
+        <li key={label} className={`flex min-w-0 items-center gap-3 border-b p-3 last:border-b-0 sm:border-b-0 sm:border-r sm:last:border-r-0 ${index === step ? "bg-primary/5" : ""}`}>
+          <span className={`flex h-7 w-7 shrink-0 items-center justify-center rounded-full border text-xs font-semibold ${index < step ? "border-primary bg-primary text-primary-foreground" : index === step ? "border-primary text-primary" : "border-border text-muted-foreground"}`}>{index < step ? <CheckCircle className="h-4 w-4" /> : index + 1}</span>
+          <span className={`truncate text-xs font-semibold ${index <= step ? "text-foreground" : "text-muted-foreground"}`}>{label}</span>
+        </li>
       ))}
+    </ol>
+  );
+}
+
+function ReviewStep({ analysis, edited, setEdited, readiness, onSave, onBack, onNext }) {
+  const set = (key, value) => setEdited({ ...edited, [key]: value });
+  const number = (key, value) => setEdited({ ...edited, [key]: value === "" ? undefined : Number(value) });
+  const confidenceClass = analysis?.confidence >= 80 ? "text-emerald-700" : analysis?.confidence >= 60 ? "text-amber-700" : "text-red-700";
+
+  return (
+    <div className="space-y-4">
+      <div className="grid gap-4 lg:grid-cols-[minmax(0,1fr)_300px]">
+        <Card className="docket-surface border-primary/30 bg-primary/5 p-4 shadow-none">
+          <div className="flex items-start justify-between gap-4"><div><p className="text-sm font-semibold">Template classification: <span className="text-primary">{analysis?.template_name || readiness.template.name}</span></p><p className="mt-1 text-xs leading-5 text-muted-foreground">{analysis?.summary || "Completeness analysis has not been run."}</p></div>{analysis && <div className="text-right"><p className="docket-label">Confidence</p><p className={`font-heading text-2xl font-semibold ${confidenceClass}`}>{analysis.confidence}%</p></div>}</div>
+          {analysis?.missing_documents?.length > 0 && <div className="mt-3 flex items-start gap-2 border-t border-primary/20 pt-3 text-xs text-amber-800"><AlertTriangle className="mt-0.5 h-4 w-4 shrink-0" /><span><strong>Evidence categories still required:</strong> {analysis.missing_documents.join(", ")}</span></div>}
+        </Card>
+        <ReadinessPanel readiness={readiness} />
+      </div>
+
+      <Card className="docket-surface overflow-hidden shadow-none">
+        <div className="flex flex-col justify-between gap-3 border-b bg-muted/35 p-5 sm:flex-row sm:items-center"><div><h3 className="font-heading text-xl font-semibold">Review extracted and entered facts</h3><p className="mt-1 text-xs text-muted-foreground">Empty values remain explicit gaps. Saving does not approve any professional determination.</p></div><Button size="sm" variant="outline" onClick={onSave}>Save Changes</Button></div>
+        <div className="grid grid-cols-1 gap-4 p-5 sm:grid-cols-2 xl:grid-cols-3">
+          <RField label="Business Line"><Select value={edited.business_line || "Unclassified"} onValueChange={(value) => set("business_line", value)}><SelectTrigger><SelectValue /></SelectTrigger><SelectContent>{BUSINESS_LINES.map((line) => <SelectItem key={line} value={line}>{line}</SelectItem>)}</SelectContent></Select></RField>
+          <RField label="Insured"><Input value={edited.insured || ""} onChange={(event) => set("insured", event.target.value)} /></RField>
+          <RField label="Insurer"><Input value={edited.insurer || ""} onChange={(event) => set("insurer", event.target.value)} /></RField>
+          <RField label="Broker"><Input value={edited.broker || ""} onChange={(event) => set("broker", event.target.value)} /></RField>
+          <RField label="Policy Number"><Input value={edited.policy_number || ""} onChange={(event) => set("policy_number", event.target.value)} /></RField>
+          <RField label="Policy Limit"><Input type="number" value={edited.policy_limit || ""} onChange={(event) => number("policy_limit", event.target.value)} /></RField>
+          <RField label="Deductible"><Input type="number" value={edited.deductible || ""} onChange={(event) => number("deductible", event.target.value)} /></RField>
+          <RField label="Date of Loss"><Input type="date" value={edited.date_of_loss || ""} onChange={(event) => set("date_of_loss", event.target.value)} /></RField>
+          <RField label="Date of Intimation"><Input type="date" value={edited.date_of_intimation || ""} onChange={(event) => set("date_of_intimation", event.target.value)} /></RField>
+          <RField label="Surveyor / Investigator"><Input value={edited.surveyor || ""} onChange={(event) => set("surveyor", event.target.value)} /></RField>
+          <RField label="Prepared By"><Input value={edited.prepared_by || ""} onChange={(event) => set("prepared_by", event.target.value)} /></RField>
+          <RField label="Reviewed By"><Input value={edited.reviewed_by || ""} onChange={(event) => set("reviewed_by", event.target.value)} /></RField>
+          <RField label="Approved By"><Input value={edited.approved_by || ""} onChange={(event) => set("approved_by", event.target.value)} /></RField>
+          <RField label="Country"><Input value={edited.country || ""} onChange={(event) => set("country", event.target.value)} /></RField>
+          <RField label="Vessel Name"><Input value={edited.vessel_name || ""} onChange={(event) => set("vessel_name", event.target.value)} /></RField>
+          <RField label="Container Number"><Input value={edited.container_number || ""} onChange={(event) => set("container_number", event.target.value)} /></RField>
+          <RField label="Port of Loading"><Input value={edited.port_of_loading || ""} onChange={(event) => set("port_of_loading", event.target.value)} /></RField>
+          <RField label="Port of Discharge"><Input value={edited.port_of_discharge || ""} onChange={(event) => set("port_of_discharge", event.target.value)} /></RField>
+          <RField label="Claim Amount"><Input type="number" value={edited.claim_amount || ""} onChange={(event) => number("claim_amount", event.target.value)} /></RField>
+          <div className="sm:col-span-2 xl:col-span-3"><RField label="Cause of Loss — professional review required"><Textarea value={edited.cause_of_loss || ""} onChange={(event) => set("cause_of_loss", event.target.value)} rows={3} /></RField></div>
+        </div>
+      </Card>
+
+      {analysis?.evidence_sources?.length > 0 && (
+        <Card className="docket-surface overflow-hidden shadow-none">
+          <div className="border-b bg-muted/35 px-5 py-4"><h3 className="font-heading text-xl font-semibold">Evidence provenance</h3><p className="mt-1 text-xs text-muted-foreground">Registered sources remain reviewable; local mode does not invent page-level citations.</p></div>
+          <div className="divide-y">{analysis.evidence_sources.map((source) => <div key={source.id} className="grid gap-2 px-5 py-3 text-xs sm:grid-cols-[70px_1fr_1fr_auto] sm:items-center"><span className="font-mono text-muted-foreground">{source.id}</span><span className="font-semibold">{source.field}</span><span className="truncate text-muted-foreground">{source.source}</span><span className="flex items-center gap-1 text-primary"><Link2 className="h-3.5 w-3.5" /> {source.review_state}</span></div>)}</div>
+        </Card>
+      )}
+
+      <div className="flex justify-between"><Button variant="outline" onClick={onBack}><ArrowLeft /> Back</Button><Button onClick={onNext}>Continue to Report <ArrowRight /></Button></div>
     </div>
   );
 }
 
-function ReviewStep({ analysis, edited, setEdited, onSave, onBack, onNext }) {
-  const set = (k, v) => setEdited({ ...edited, [k]: v });
-  const num = (k, v) => setEdited({ ...edited, [k]: v === "" ? undefined : Number(v) });
-  const confidenceColor = (c) => c >= 80 ? "text-emerald-600" : c >= 60 ? "text-amber-600" : "text-red-600";
-
+function ReadinessPanel({ readiness }) {
   return (
-    <div className="space-y-4">
-      {analysis && (
-        <Card className="p-4 border-primary/30 bg-primary/5">
-          <div className="flex items-center justify-between">
-            <div>
-              <p className="text-sm font-medium">AI Classification: <span className="text-primary">{analysis.business_line}</span></p>
-              <p className="text-xs text-muted-foreground mt-0.5">{analysis.summary}</p>
-            </div>
-            <div className="text-right">
-              <p className="text-xs text-muted-foreground">Confidence</p>
-              <p className={`text-lg font-bold ${confidenceColor(analysis.confidence)}`}>{analysis.confidence}%</p>
-            </div>
-          </div>
-          {analysis.missing_documents && analysis.missing_documents.length > 0 && (
-            <div className="mt-3 pt-3 border-t border-primary/20 flex items-start gap-2 text-xs text-amber-700">
-              <AlertTriangle className="w-4 h-4 mt-0.5 shrink-0" />
-              <span><strong>Missing documents:</strong> {analysis.missing_documents.join(", ")}</span>
-            </div>
-          )}
-        </Card>
-      )}
-
-      <Card className="p-5">
-        <div className="flex items-center justify-between mb-4">
-          <h3 className="font-heading font-semibold text-sm">Review &amp; Edit Extracted Information</h3>
-          <Button size="sm" variant="outline" onClick={onSave}>Save Changes</Button>
-        </div>
-        <p className="text-xs text-muted-foreground mb-4">Every field below was extracted by the AI. Edit any value before generating the report. Empty fields indicate information not found in the evidence.</p>
-        <div className="grid grid-cols-2 md:grid-cols-3 gap-4">
-          <RField label="Business Line"><Select value={edited.business_line || "Unclassified"} onValueChange={(v) => set("business_line", v)}><SelectTrigger><SelectValue /></SelectTrigger><SelectContent>{BUSINESS_LINES.map((l) => <SelectItem key={l} value={l}>{l}</SelectItem>)}</SelectContent></Select></RField>
-          <RField label="Insured"><Input value={edited.insured || ""} onChange={(e) => set("insured", e.target.value)} /></RField>
-          <RField label="Insurer"><Input value={edited.insurer || ""} onChange={(e) => set("insurer", e.target.value)} /></RField>
-          <RField label="Broker"><Input value={edited.broker || ""} onChange={(e) => set("broker", e.target.value)} /></RField>
-          <RField label="Policy Number"><Input value={edited.policy_number || ""} onChange={(e) => set("policy_number", e.target.value)} /></RField>
-          <RField label="Policy Limit"><Input type="number" value={edited.policy_limit || ""} onChange={(e) => num("policy_limit", e.target.value)} /></RField>
-          <RField label="Deductible"><Input type="number" value={edited.deductible || ""} onChange={(e) => num("deductible", e.target.value)} /></RField>
-          <RField label="Date of Loss"><Input type="date" value={edited.date_of_loss || ""} onChange={(e) => set("date_of_loss", e.target.value)} /></RField>
-          <RField label="Date of Intimation"><Input type="date" value={edited.date_of_intimation || ""} onChange={(e) => set("date_of_intimation", e.target.value)} /></RField>
-          <RField label="Surveyor"><Input value={edited.surveyor || ""} onChange={(e) => set("surveyor", e.target.value)} /></RField>
-          <RField label="Country"><Input value={edited.country || ""} onChange={(e) => set("country", e.target.value)} /></RField>
-          <RField label="Vessel Name"><Input value={edited.vessel_name || ""} onChange={(e) => set("vessel_name", e.target.value)} /></RField>
-          <RField label="Container Number"><Input value={edited.container_number || ""} onChange={(e) => set("container_number", e.target.value)} /></RField>
-          <RField label="Port of Loading"><Input value={edited.port_of_loading || ""} onChange={(e) => set("port_of_loading", e.target.value)} /></RField>
-          <RField label="Port of Discharge"><Input value={edited.port_of_discharge || ""} onChange={(e) => set("port_of_discharge", e.target.value)} /></RField>
-          <RField label="Claim Amount"><Input type="number" value={edited.claim_amount || ""} onChange={(e) => num("claim_amount", e.target.value)} /></RField>
-          <div className="col-span-2 md:col-span-3"><RField label="Cause of Loss"><Textarea value={edited.cause_of_loss || ""} onChange={(e) => set("cause_of_loss", e.target.value)} rows={2} /></RField></div>
-        </div>
-      </Card>
-
-      {analysis && analysis.evidence_sources && analysis.evidence_sources.length > 0 && (
-        <Card className="p-5">
-          <h3 className="font-heading font-semibold text-sm mb-3">Evidence Sources &amp; Confidence</h3>
-          <div className="space-y-1.5">
-            {analysis.evidence_sources.map((e, i) => (
-              <div key={i} className="flex items-center justify-between text-xs py-1.5 border-b border-border/50 last:border-0">
-                <span className="font-medium">{e.field}</span>
-                <span className="text-muted-foreground">{e.source}</span>
-                <span className={`font-medium ${e.confidence === "High" ? "text-emerald-600" : e.confidence === "Medium" ? "text-amber-600" : "text-red-600"}`}>{e.confidence}</span>
-              </div>
-            ))}
-          </div>
-        </Card>
-      )}
-
-      <div className="flex justify-between">
-        <Button variant="outline" onClick={onBack}><ArrowLeft className="w-4 h-4 mr-2" /> Back</Button>
-        <Button onClick={onNext} className="ula-gradient text-white">Continue to Report <ArrowRight className="w-4 h-4 ml-2" /></Button>
-      </div>
-    </div>
+    <Card className="docket-surface overflow-hidden shadow-none">
+      <div className="border-b bg-muted/35 px-4 py-3"><p className="docket-label">Template readiness</p><p className="mt-1 font-heading text-3xl font-semibold">{readiness.overallProgress}%</p></div>
+      <div className="grid grid-cols-2"><div className="border-r p-3"><p className="docket-label">Fields</p><p className="mt-1 text-sm font-semibold">{readiness.fieldProgress}%</p></div><div className="p-3"><p className="docket-label">Documents</p><p className="mt-1 text-sm font-semibold">{readiness.documentProgress}%</p></div></div>
+    </Card>
   );
 }
 
 function RField({ label, children }) {
-  return <div><Label className="text-xs">{label}</Label><div className="mt-1">{children}</div></div>;
+  return <div><Label className="text-xs font-semibold">{label}</Label><div className="mt-1.5">{children}</div></div>;
 }

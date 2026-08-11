@@ -1,4 +1,8 @@
 import { documentStorage } from "@/api/documentStorage";
+import {
+  createLocalReportAnalysis,
+  createUnifiedReportDraft,
+} from "@/lib/reportingEngine";
 
 const DATABASE_KEY = "ula_claims_hub_database_v1";
 const AUTH_KEY = "ula_claims_hub_auth_v1";
@@ -355,7 +359,8 @@ const buildAnalysis = async ({ claim_id: claimId }) => {
     .filter((field) => !claim[field])
     .map((field) => field.replaceAll("_", " "));
   const classified = claim.business_line && claim.business_line !== "Unclassified";
-  const analysis = {
+  const unifiedAnalysis = createLocalReportAnalysis({ claim, documents });
+  const analysis = unifiedAnalysis || {
     ...clone(claim),
     business_line: claim.business_line || "Unclassified",
     confidence: classified ? 75 : 25,
@@ -370,8 +375,10 @@ const buildAnalysis = async ({ claim_id: claimId }) => {
 
   await entities.Claim.update(claimId, {
     ai_confidence: analysis.confidence,
-    ai_classification_source: "Local document review",
-    missing_documents: missingDocuments,
+    ai_classification_source: "Local template and completeness review",
+    report_template_id: analysis.template_id,
+    report_template_name: analysis.template_name,
+    missing_documents: analysis.missing_documents || missingDocuments,
   });
   return { data: { analysis, claim_id: claimId, document_count: documents.length } };
 };
@@ -382,8 +389,15 @@ const buildReport = async ({ claim_id: claimId, edited_data: editedData }) => {
   const claim = editedData ? { ...storedClaim, ...clone(editedData) } : storedClaim;
   const documents = await entities.ClaimDocument.filter({ claim_id: claimId });
   const versions = await entities.ReportVersion.filter({ claim_id: claimId });
+  const user = currentUser();
+  const unifiedDraft = createUnifiedReportDraft({
+    claim,
+    documents,
+    versions,
+    generatedBy: user.full_name || user.email,
+  });
   const value = (item, fallback = "Requires confirmation — document not provided") => item || fallback;
-  const content = `# ${value(claim.claim_number, "Claim Report")}
+  const content = unifiedDraft.content || `# ${value(claim.claim_number, "Claim Report")}
 
 ## Cover Page
 
@@ -455,9 +469,20 @@ ${documents.filter((document) => document.file_type === "Photo").map((document) 
     claim_id: claimId,
     version_number: versions.length + 1,
     status: "Draft",
+    issue_state: "Draft",
+    template_id: unifiedDraft.template.id,
+    template_name: unifiedDraft.template.name,
+    assignments: unifiedDraft.assignments,
+    readiness: {
+      overall_progress: unifiedDraft.readiness.overallProgress,
+      missing_fields: unifiedDraft.readiness.missingFields,
+      missing_documents: unifiedDraft.readiness.missingDocuments,
+    },
+    evidence_count: documents.length,
+    human_approval_required: true,
     content,
-    generated_by: currentUser().full_name || currentUser().email,
-    notes: "Locally generated draft",
+    generated_by: user.full_name || user.email,
+    notes: "Locally generated controlled draft; professional review required",
   });
   await entities.Claim.update(claimId, { ...editedData, status: "Report Draft" });
   return { data: { report, claim_id: claimId } };

@@ -66,8 +66,12 @@ export default function DocumentUploader({ claimId, documents, onChanged }) {
   };
 
   return (
-    <Card className="p-5">
-      <div className="flex flex-col md:flex-row gap-4 mb-5">
+    <Card className="docket-surface overflow-hidden shadow-none">
+      <div className="border-b bg-muted/35 px-5 py-4">
+        <h3 className="font-heading text-xl font-semibold">Evidence register</h3>
+        <p className="mt-1 text-xs text-muted-foreground">Binary files are stored separately; only lightweight metadata and provider references enter the claim database.</p>
+      </div>
+      <div className="flex flex-col gap-4 border-b px-5 py-4 md:flex-row">
         <div className="flex-1">
           <Label className="text-xs">Default document type</Label>
           <Select value={type} onValueChange={setType}>
@@ -84,21 +88,23 @@ export default function DocumentUploader({ claimId, documents, onChanged }) {
         </div>
       </div>
 
-      <label className="border-2 border-dashed border-border rounded-xl p-8 flex flex-col items-center justify-center cursor-pointer hover:border-primary hover:bg-primary/5 transition-colors">
+      <label className="m-5 flex cursor-pointer flex-col items-center justify-center rounded-md border border-dashed border-primary/45 bg-primary/[0.025] p-8 transition-colors hover:border-primary hover:bg-primary/5">
         <input type="file" multiple className="hidden" onChange={(e) => handleFiles(Array.from(e.target.files))} />
         {uploading ? (
           <><Loader2 className="w-8 h-8 text-primary animate-spin mb-2" /><p className="text-sm text-muted-foreground">Uploading…</p></>
         ) : (
-          <><UploadCloud className="w-8 h-8 text-primary mb-2" /><p className="text-sm font-medium">Click to upload evidence</p><p className="text-xs text-muted-foreground mt-1">PDFs, Word, Excel, emails, invoices, policies, photos…</p></>
+          <><UploadCloud className="w-8 h-8 text-primary mb-2" /><p className="text-sm font-semibold">Add source evidence</p><p className="text-xs text-muted-foreground mt-1">PDF, Word, Excel, email, invoice, policy, transport record, or photograph</p></>
         )}
       </label>
 
-      <div className="mt-5 space-y-2">
+      <div className="border-t px-5 py-4">
         {documents.length === 0 ? (
           <p className="text-sm text-muted-foreground text-center py-6">No documents uploaded yet.</p>
         ) : (
-          documents.map((d) => (
-            <div key={d.id} className="flex items-center gap-3 p-3 border border-border rounded-lg hover:bg-muted/30">
+          <div className="divide-y border">
+          {documents.map((d, index) => (
+            <div key={d.id} className="flex items-center gap-3 p-3 hover:bg-muted/30">
+              <span className="w-9 shrink-0 font-mono text-[0.68rem] text-muted-foreground">E-{String(index + 1).padStart(2, "0")}</span>
               {d.file_type === "Photo" ? <ImageIcon className="w-5 h-5 text-primary" /> : <FileText className="w-5 h-5 text-primary" />}
               <div className="flex-1 min-w-0">
                 <p className="text-sm font-medium truncate">{d.file_name}</p>
@@ -107,7 +113,8 @@ export default function DocumentUploader({ claimId, documents, onChanged }) {
               <DocumentLink document={d} />
               <Button size="icon" variant="ghost" onClick={() => remove(d)}><X className="w-4 h-4 text-muted-foreground" /></Button>
             </div>
-          ))
+          ))}
+          </div>
         )}
       </div>
     </Card>

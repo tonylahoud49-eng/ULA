@@ -1,4 +1,4 @@
-import React, { useEffect, useState } from "react";
+import React, { useEffect, useMemo, useState } from "react";
 import { useParams, Link } from "react-router-dom";
 import { appClient } from "@/api/appClient";
 import { Card } from "@/components/ui/card";
@@ -8,11 +8,13 @@ import { Label } from "@/components/ui/label";
 import { Textarea } from "@/components/ui/textarea";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
-import { ArrowLeft, FileText, Sparkles, AlertTriangle, Save, CheckCircle } from "lucide-react";
+import { ArrowLeft, FileText, Sparkles, AlertTriangle, Save, CheckCircle, ClipboardCheck, ShieldCheck } from "lucide-react";
 import DocumentUploader from "@/components/DocumentUploader";
 import ReactMarkdown from "react-markdown";
+import { toast } from "@/components/ui/use-toast";
+import { REPORT_LIFECYCLE, reportReadiness } from "@/lib/reportTemplates";
 
-const BUSINESS_LINES = ["Yacht", "Property", "Marine Cargo (Reefer/GFS)", "Marine Cargo (Non-Reefer)", "Bulk Vessel", "Air Shipment (NET)", "Fidelity Claims", "Unclassified"];
+const BUSINESS_LINES = ["Yacht", "Property", "Marine Cargo (Reefer/GFS)", "Marine Cargo (Non-Reefer)", "Bulk Vessel", "Air Shipment (NET)", "Land Shipment", "Fidelity Claims", "Unclassified"];
 const STATUSES = ["New", "Under Investigation", "Pending Documents", "Report Draft", "Report Final", "Closed"];
 
 export default function ClaimDetail() {
@@ -25,6 +27,7 @@ export default function ClaimDetail() {
   const [analysis, setAnalysis] = useState(null);
   const [editing, setEditing] = useState(false);
   const [form, setForm] = useState({});
+  const readiness = useMemo(() => reportReadiness(claim || {}, documents), [claim, documents]);
 
   const load = async () => {
     try {
@@ -47,7 +50,7 @@ export default function ClaimDetail() {
       setAnalysis(res.data.analysis);
       await load();
     } catch (e) {
-      alert(e.response?.data?.error || e.message);
+      toast({ variant: "destructive", title: "Analysis could not be completed", description: e.response?.data?.error || e.message });
     } finally {
       setAnalyzing(false);
     }
@@ -63,27 +66,31 @@ export default function ClaimDetail() {
   if (!claim) return <div className="text-center py-20 text-muted-foreground">Claim not found.</div>;
 
   return (
-    <div className="space-y-5">
-      <div className="flex items-center gap-3">
-        <Link to="/claims"><Button variant="ghost" size="icon"><ArrowLeft className="w-4 h-4" /></Button></Link>
-        <div className="flex-1">
-          <div className="flex items-center gap-2">
-            <h2 className="text-xl font-heading font-bold">{claim.title}</h2>
-            <span className="font-mono text-xs text-muted-foreground bg-muted px-2 py-0.5 rounded">{claim.claim_number}</span>
+    <div className="space-y-6">
+      <div className="docket-header">
+        <div className="flex min-w-0 items-start gap-3">
+          <Link to="/claims"><Button variant="ghost" size="icon"><ArrowLeft className="w-4 h-4" /></Button></Link>
+          <div className="min-w-0 flex-1">
+            <div className="flex flex-wrap items-center gap-2">
+              <h2 className="docket-title truncate">{claim.title}</h2>
+              <span className="status-mark border-border bg-card font-mono text-muted-foreground">{claim.claim_number}</span>
+            </div>
+            <p className="docket-subtitle">{claim.business_line} · {claim.insured || "Insured requires confirmation"} · {readiness.template.name}</p>
           </div>
-          <p className="text-sm text-muted-foreground">{claim.business_line} · {claim.insured || "Insured TBD"}</p>
         </div>
         <Button onClick={runAnalysis} disabled={analyzing || !documents.length} className="ula-gradient text-white hover:opacity-90">
           <Sparkles className="w-4 h-4 mr-2" /> {analyzing ? "Analyzing…" : "Run AI Analysis"}
         </Button>
       </div>
 
+      <ReleaseChain claim={claim} documents={documents} reports={reports} readiness={readiness} />
+
       {analysis && (
-        <Card className="p-4 border-primary/30 bg-primary/5">
+        <Card className="docket-surface border-primary/30 bg-primary/5 p-4 shadow-none">
           <div className="flex items-start gap-3">
             <Sparkles className="w-5 h-5 text-primary mt-0.5" />
             <div className="flex-1">
-              <p className="text-sm font-medium">AI Analysis Complete — Confidence: {analysis.confidence}%</p>
+              <p className="text-sm font-semibold">Local analysis complete — readiness confidence: {analysis.confidence}%</p>
               <p className="text-xs text-muted-foreground mt-1">{analysis.summary}</p>
               {analysis.missing_documents && analysis.missing_documents.length > 0 && (
                 <div className="mt-2 flex items-start gap-2 text-xs text-amber-700">
@@ -97,14 +104,14 @@ export default function ClaimDetail() {
       )}
 
       <Tabs defaultValue="overview">
-        <TabsList>
+        <TabsList className="w-full justify-start overflow-x-auto">
           <TabsTrigger value="overview">Overview</TabsTrigger>
           <TabsTrigger value="documents">Documents ({documents.length})</TabsTrigger>
           <TabsTrigger value="report">Report Versions ({reports.length})</TabsTrigger>
         </TabsList>
 
         <TabsContent value="overview" className="space-y-4">
-          <Card className="p-5">
+          <Card className="docket-surface p-5 shadow-none">
             <div className="flex items-center justify-between mb-4">
               <h3 className="font-heading font-semibold text-sm">Claim Details</h3>
               {editing ? (
@@ -132,6 +139,42 @@ export default function ClaimDetail() {
   );
 }
 
+function ReleaseChain({ claim, documents, reports, readiness }) {
+  const hasFinal = reports.some((report) => report.status === "Final");
+  const currentIndex = hasFinal ? 4 : reports.length ? 3 : claim.ai_confidence ? 2 : documents.length ? 1 : 0;
+
+  return (
+    <section className="docket-surface overflow-hidden rounded-lg" aria-label="Claim release progress">
+      <div className="grid lg:grid-cols-[minmax(0,1fr)_220px]">
+        <div className="grid sm:grid-cols-5">
+          {REPORT_LIFECYCLE.map((stage, index) => {
+            const complete = index < currentIndex || (hasFinal && index === currentIndex);
+            const current = index === currentIndex && !hasFinal;
+            return (
+              <div key={stage.id} className={`relative border-b p-4 last:border-b-0 sm:border-b-0 sm:border-r ${current ? "bg-primary/5" : ""}`}>
+                <div className="flex items-center gap-2">
+                  <span className={`flex h-6 w-6 items-center justify-center rounded-full border text-[0.68rem] font-semibold ${complete ? "border-primary bg-primary text-primary-foreground" : current ? "border-primary text-primary" : "border-border text-muted-foreground"}`}>
+                    {complete ? <CheckCircle className="h-3.5 w-3.5" /> : index + 1}
+                  </span>
+                  <span className={`text-xs font-semibold ${complete || current ? "text-foreground" : "text-muted-foreground"}`}>{stage.label}</span>
+                </div>
+                <p className="mt-2 text-[0.68rem] leading-4 text-muted-foreground">{complete ? "Complete" : current ? "Current gate" : "Pending"}</p>
+              </div>
+            );
+          })}
+        </div>
+        <div className="flex items-center justify-between gap-4 border-t bg-muted/35 px-4 py-3 lg:border-l lg:border-t-0">
+          <div>
+            <p className="docket-label">Template readiness</p>
+            <p className="mt-1 font-heading text-2xl font-semibold">{readiness.overallProgress}%</p>
+          </div>
+          <div className="approval-stamp">{hasFinal ? <ShieldCheck className="h-5 w-5" /> : <ClipboardCheck className="h-5 w-5" />}<span className="sr-only">{hasFinal ? "Final" : "Controlled draft"}</span></div>
+        </div>
+      </div>
+    </section>
+  );
+}
+
 function ViewGrid({ claim }) {
   const fields = [
     ["Business Line", claim.business_line], ["Status", claim.status], ["Priority", claim.priority],
@@ -140,6 +183,7 @@ function ViewGrid({ claim }) {
     ["Deductible", claim.deductible ? `$${claim.deductible.toLocaleString()}` : null],
     ["Date of Loss", claim.date_of_loss], ["Date of Intimation", claim.date_of_intimation],
     ["Surveyor", claim.surveyor], ["Country", claim.country],
+    ["Prepared By", claim.prepared_by], ["Reviewed By", claim.reviewed_by], ["Approved By", claim.approved_by],
     ["Vessel", claim.vessel_name], ["Container", claim.container_number],
     ["Port of Loading", claim.port_of_loading], ["Port of Discharge", claim.port_of_discharge],
     ["Cause of Loss", claim.cause_of_loss], ["Claim Amount", claim.claim_amount ? `$${claim.claim_amount.toLocaleString()}` : null],
@@ -174,6 +218,9 @@ function EditForm({ form, setForm }) {
       <Field label="Date of Intimation"><Input type="date" value={form.date_of_intimation || ""} onChange={(e) => set("date_of_intimation", e.target.value)} /></Field>
       <Field label="Surveyor"><Input value={form.surveyor || ""} onChange={(e) => set("surveyor", e.target.value)} /></Field>
       <Field label="Country"><Input value={form.country || ""} onChange={(e) => set("country", e.target.value)} /></Field>
+      <Field label="Prepared By"><Input value={form.prepared_by || ""} onChange={(e) => set("prepared_by", e.target.value)} /></Field>
+      <Field label="Reviewed By"><Input value={form.reviewed_by || ""} onChange={(e) => set("reviewed_by", e.target.value)} /></Field>
+      <Field label="Approved By"><Input value={form.approved_by || ""} onChange={(e) => set("approved_by", e.target.value)} /></Field>
       <Field label="Vessel Name"><Input value={form.vessel_name || ""} onChange={(e) => set("vessel_name", e.target.value)} /></Field>
       <Field label="Container Number"><Input value={form.container_number || ""} onChange={(e) => set("container_number", e.target.value)} /></Field>
       <Field label="Port of Loading"><Input value={form.port_of_loading || ""} onChange={(e) => set("port_of_loading", e.target.value)} /></Field>
@@ -198,22 +245,31 @@ function ReportSection({ claimId, reports, onChanged }) {
       await appClient.functions.invoke("generateReport", { claim_id: claimId });
       await onChanged();
     } catch (e) {
-      alert(e.response?.data?.error || e.message);
+      toast({ variant: "destructive", title: "Draft report could not be generated", description: e.response?.data?.error || e.message });
     } finally {
       setGenerating(false);
     }
   };
 
   const approve = async (r) => {
-    await appClient.entities.ReportVersion.update(r.id, { status: "Final" });
+    const user = await appClient.auth.me();
+    await appClient.entities.ReportVersion.update(r.id, {
+      status: "Final",
+      issue_state: "Final",
+      approved_by: user.full_name || user.email,
+      approved_date: new Date().toISOString(),
+    });
     await appClient.entities.Claim.update(claimId, { status: "Report Final" });
     await onChanged();
   };
 
   return (
-    <Card className="p-5">
-      <div className="flex items-center justify-between mb-4">
-        <h3 className="font-heading font-semibold text-sm">Report Versions</h3>
+    <Card className="docket-surface p-5 shadow-none">
+      <div className="mb-5 flex flex-col justify-between gap-3 border-b pb-4 sm:flex-row sm:items-center">
+        <div>
+          <h3 className="font-heading text-xl font-semibold">Controlled report versions</h3>
+          <p className="mt-1 text-xs text-muted-foreground">Issued versions remain immutable; subsequent corrections create a new controlled version.</p>
+        </div>
         <Button onClick={generate} disabled={generating} className="ula-gradient text-white hover:opacity-90">
           <Sparkles className="w-4 h-4 mr-2" /> {generating ? "Generating…" : "Generate Draft Report"}
         </Button>
@@ -224,13 +280,16 @@ function ReportSection({ claimId, reports, onChanged }) {
           <p className="text-sm">No report versions yet. Run AI analysis first, then generate a draft.</p>
         </div>
       ) : (
-        <div className="space-y-3">
+        <div className="space-y-4">
           {reports.slice().reverse().map((r) => (
-            <div key={r.id} className="border border-border rounded-lg p-4">
-              <div className="flex items-center justify-between mb-2">
+            <article key={r.id} className="overflow-hidden rounded-lg border bg-card">
+              <div className="flex flex-col justify-between gap-3 border-b bg-muted/35 p-4 sm:flex-row sm:items-center">
                 <div>
-                  <span className="font-medium text-sm">Version {r.version_number}</span>
-                  <span className={`ml-2 px-2 py-0.5 rounded-full text-xs ${r.status === "Final" ? "bg-emerald-100 text-emerald-700" : "bg-purple-100 text-purple-700"}`}>{r.status}</span>
+                  <div className="flex flex-wrap items-center gap-2">
+                    <span className="font-heading text-lg font-semibold">Version {r.version_number}</span>
+                    <span className={`status-mark ${r.status === "Final" ? "border-emerald-300 bg-emerald-50 text-emerald-800" : "border-violet-300 bg-violet-50 text-violet-800"}`}>{r.status}</span>
+                  </div>
+                  <p className="mt-1 text-xs text-muted-foreground">{r.template_name || "ULA Claim Report"} · {r.evidence_count ?? "—"} evidence items · {r.readiness?.overall_progress ?? "—"}% ready</p>
                 </div>
                 <div className="flex gap-2">
                   <Button size="sm" variant="outline" onClick={() => setActiveReport(activeReport === r.id ? null : r.id)}>
@@ -239,13 +298,22 @@ function ReportSection({ claimId, reports, onChanged }) {
                   {r.status !== "Final" && <Button size="sm" onClick={() => approve(r)} className="ula-gradient text-white"><CheckCircle className="w-3.5 h-3.5 mr-1" /> Approve Final</Button>}
                 </div>
               </div>
-              <p className="text-xs text-muted-foreground">Generated by {r.generated_by} · {new Date(r.created_date).toLocaleDateString()}</p>
+              <div className="grid border-b sm:grid-cols-4">
+                {(r.assignments || []).map((assignment) => (
+                  <div key={assignment.role} className="border-b p-3 last:border-b-0 sm:border-b-0 sm:border-r sm:last:border-r-0">
+                    <p className="docket-label">{assignment.label}</p>
+                    <p className="mt-1 truncate text-xs font-semibold">{assignment.name}</p>
+                  </div>
+                ))}
+                {!r.assignments?.length && <div className="p-3 text-xs text-muted-foreground">Legacy version without recorded responsibility assignments.</div>}
+              </div>
+              <p className="px-4 py-3 text-xs text-muted-foreground">Generated by {r.generated_by} · {new Date(r.created_date).toLocaleDateString()}</p>
               {activeReport === r.id && (
-                <div className="mt-3 pt-3 border-t border-border prose prose-sm max-w-none">
+                <div className="ledger-grid prose prose-sm max-w-none border-t px-5 py-6 sm:px-8">
                   <ReactMarkdown>{r.content}</ReactMarkdown>
                 </div>
               )}
-            </div>
+            </article>
           ))}
         </div>
       )}

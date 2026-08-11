@@ -6,7 +6,7 @@ import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter, DialogTrigger } from "@/components/ui/dialog";
-import { CalendarDays, Plus, Check, X, UserPlus, Plane } from "lucide-react";
+import { Plus, Check, X, UserPlus, Plane } from "lucide-react";
 
 const MONTHS = ["January","February","March","April","May","June","July","August","September","October","November","December"];
 const DOW = ["Sun","Mon","Tue","Wed","Thu","Fri","Sat"];
@@ -35,10 +35,10 @@ export default function AnnualLeave() {
 
   return (
     <div className="space-y-6">
-      <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-3">
+      <div className="docket-header">
         <div>
-          <h2 className="text-2xl font-heading font-bold flex items-center gap-2"><CalendarDays className="w-6 h-6 text-primary" /> Annual Leave Management</h2>
-          <p className="text-sm text-muted-foreground mt-1">15 Annual Leave days per employee, plus TOIL earned from working public holidays.</p>
+          <h2 className="docket-title">Annual leave control</h2>
+          <p className="docket-subtitle">Track the existing 15-day annual leave allowance, TOIL balances, requests, approvals, and team availability.</p>
         </div>
         <div className="flex gap-2">
           <AddEmployeeDialog onAdded={load} />
@@ -49,16 +49,16 @@ export default function AnnualLeave() {
         </div>
       </div>
 
-      <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
-        <Card className="p-4"><p className="text-xs text-muted-foreground uppercase tracking-wide">Employees</p><p className="text-2xl font-bold mt-1">{employees.length}</p></Card>
-        <Card className="p-4"><p className="text-xs text-muted-foreground uppercase tracking-wide">Pending Requests</p><p className="text-2xl font-bold mt-1">{leaves.filter((l) => l.status === "Pending").length}</p></Card>
-        <Card className="p-4"><p className="text-xs text-muted-foreground uppercase tracking-wide">Approved (this period)</p><p className="text-2xl font-bold mt-1">{leaves.filter((l) => l.status === "Approved").length}</p></Card>
-        <Card className="p-4"><p className="text-xs text-muted-foreground uppercase tracking-wide">Total Days Remaining</p><p className="text-2xl font-bold mt-1">{totalRemaining}</p></Card>
+      <div className="metric-strip grid-cols-2 md:grid-cols-4">
+        <div className="metric-cell"><p className="docket-label">Employees</p><p className="mt-1 font-heading text-3xl font-semibold">{employees.length}</p></div>
+        <div className="metric-cell"><p className="docket-label">Pending requests</p><p className="mt-1 font-heading text-3xl font-semibold">{leaves.filter((l) => l.status === "Pending").length}</p></div>
+        <div className="metric-cell"><p className="docket-label">Approved this period</p><p className="mt-1 font-heading text-3xl font-semibold">{leaves.filter((l) => l.status === "Approved").length}</p></div>
+        <div className="metric-cell"><p className="docket-label">Days remaining</p><p className="mt-1 font-heading text-3xl font-semibold">{totalRemaining}</p></div>
       </div>
 
       <div className="grid grid-cols-1 lg:grid-cols-2 gap-5">
-        <Card className="p-5">
-          <h3 className="font-heading font-semibold text-sm mb-4">Employee Balances</h3>
+        <Card className="docket-surface p-5 shadow-none">
+          <h3 className="mb-4 border-b pb-3 font-heading text-xl font-semibold">Employee balances</h3>
           <div className="space-y-3">
             {employees.length === 0 ? <p className="text-sm text-muted-foreground text-center py-6">No employees yet.</p> : employees.map((e) => {
               const annual = Math.max(0, (e.annual_leave_total || 15) - (e.annual_leave_used || 0));
@@ -80,9 +80,9 @@ export default function AnnualLeave() {
           </div>
         </Card>
 
-        <Card className="p-5">
+        <Card className="docket-surface p-5 shadow-none">
           <div className="flex items-center justify-between mb-4">
-            <h3 className="font-heading font-semibold text-sm">Company Calendar</h3>
+            <h3 className="font-heading text-xl font-semibold">Company calendar</h3>
             <div className="flex items-center gap-2">
               <Button size="icon" variant="ghost" onClick={() => setViewDate(new Date(viewDate.getFullYear(), viewDate.getMonth() - 1, 1))}><Plus className="w-4 h-4 rotate-45" /></Button>
               <span className="text-sm font-medium w-32 text-center">{MONTHS[viewDate.getMonth()]} {viewDate.getFullYear()}</span>
@@ -93,8 +93,8 @@ export default function AnnualLeave() {
         </Card>
       </div>
 
-      <Card className="p-5">
-        <h3 className="font-heading font-semibold text-sm mb-4">Leave Requests</h3>
+      <Card className="docket-surface p-5 shadow-none">
+        <h3 className="mb-4 border-b pb-3 font-heading text-xl font-semibold">Leave requests</h3>
         {leaves.length === 0 ? <p className="text-sm text-muted-foreground text-center py-6">No leave requests yet.</p> : (
           <div className="overflow-x-auto">
             <table className="w-full text-sm">
@@ -169,8 +169,8 @@ function CalendarGrid({ viewDate, leaves }) {
 }
 
 function LeaveBadge({ status }) {
-  const map = { Pending: "bg-amber-100 text-amber-700", Approved: "bg-emerald-100 text-emerald-700", Rejected: "bg-red-100 text-red-700" };
-  return <span className={`px-2 py-0.5 rounded-full text-xs font-medium ${map[status]}`}>{status}</span>;
+  const map = { Pending: "border-amber-300 bg-amber-50 text-amber-800", Approved: "border-emerald-300 bg-emerald-50 text-emerald-800", Rejected: "border-red-300 bg-red-50 text-red-800" };
+  return <span className={`status-mark ${map[status]}`}>{status}</span>;
 }
 
 function daysBetween(start, end) {
