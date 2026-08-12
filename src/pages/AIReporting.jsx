@@ -23,7 +23,7 @@ import { toast } from "@/components/ui/use-toast";
 import DocumentUploader from "@/components/DocumentUploader";
 import { REPORT_WORKFLOW_ROLES, reportReadiness } from "@/lib/reportTemplates";
 
-const BUSINESS_LINES = ["Yacht", "Property", "Marine Cargo (Reefer/GFS)", "Marine Cargo (Non-Reefer)", "Bulk Vessel", "Air Shipment (NET)", "Land Shipment", "Fidelity Claims", "Unclassified"];
+const BUSINESS_LINES = ["Yacht", "Property", "Marine Cargo (Reefer/GFS)", "Marine Cargo (Non-Reefer)", "Bulk Vessel", "Air Shipment (NET)", "Land Shipment", "Fidelity Claims", "Requires Review", "Unclassified"];
 const STEPS = ["Select Claim", "Upload Evidence", "AI Analysis", "Review & Edit", "Generate Report"];
 
 export default function AIReporting() {
@@ -34,6 +34,7 @@ export default function AIReporting() {
   const [documents, setDocuments] = useState([]);
   const [analyzing, setAnalyzing] = useState(false);
   const [analysis, setAnalysis] = useState(null);
+  const [analysisError, setAnalysisError] = useState("");
   const [edited, setEdited] = useState({});
   const [generating, setGenerating] = useState(false);
   const navigate = useNavigate();
@@ -52,6 +53,7 @@ export default function AIReporting() {
     setEdited(selected);
     setDocuments(await appClient.entities.ClaimDocument.filter({ claim_id: id }));
     setAnalysis(null);
+    setAnalysisError("");
   };
 
   const createClaim = async () => {
@@ -68,14 +70,23 @@ export default function AIReporting() {
 
   const runAnalysis = async () => {
     setAnalyzing(true);
+    setAnalysisError("");
     try {
       const response = await appClient.functions.invoke("analyseClaim", { claim_id: selectedClaimId });
       setAnalysis(response.data.analysis);
       await selectClaim(selectedClaimId);
       setAnalysis(response.data.analysis);
+      const suggestions = response.data.analysis.suggested_claim_data || {};
+      setEdited((current) => Object.fromEntries(Object.entries({ ...current, ...suggestions }).map(([key, value]) => {
+        const existing = current[key];
+        const canSuggest = existing === undefined || existing === null || existing === "" || (key === "business_line" && existing === "Unclassified");
+        return [key, canSuggest ? value : existing];
+      })));
       setStep(3);
     } catch (error) {
-      toast({ variant: "destructive", title: "Analysis could not be completed", description: error.response?.data?.error || error.message });
+      const message = error.response?.data?.error || error.message;
+      setAnalysisError(message);
+      toast({ variant: "destructive", title: "Analysis could not be completed", description: message });
     } finally {
       setAnalyzing(false);
     }
@@ -106,7 +117,7 @@ export default function AIReporting() {
       <div className="docket-header">
         <div>
           <h2 className="docket-title">Controlled reporting workspace</h2>
-          <p className="docket-subtitle">Register evidence, run a conservative local completeness analysis, verify every field, and generate a unified ULA draft for professional review.</p>
+          <p className="docket-subtitle">Register evidence, analyze every source with the configured document-understanding service, verify every suggestion, and generate a unified ULA draft for professional review.</p>
         </div>
         <span className="status-mark border-amber-300 bg-amber-50 text-amber-800"><ShieldCheck className="h-3.5 w-3.5" /> Human approval required</span>
       </div>
@@ -147,9 +158,9 @@ export default function AIReporting() {
       {step === 2 && claim && (
         <Card className="docket-surface p-8 text-center shadow-none">
           {analyzing ? (
-            <div className="flex flex-col items-center"><Loader2 className="mb-4 h-11 w-11 animate-spin text-primary" /><h3 className="font-heading text-xl font-semibold">Checking template completeness…</h3><p className="mx-auto mt-2 max-w-md text-sm text-muted-foreground">The local adapter is matching registered metadata and evidence categories to the selected report template. External OCR and AI extraction are not enabled.</p></div>
+            <div className="flex flex-col items-center"><Loader2 className="mb-4 h-11 w-11 animate-spin text-primary" /><h3 className="font-heading text-xl font-semibold">Analyzing the complete evidence set…</h3><p className="mx-auto mt-2 max-w-md text-sm text-muted-foreground">The configured AI service is reading document text, scanned PDF pages, and images together. Every suggested fact must remain linked to its source for review.</p></div>
           ) : (
-            <><FileText className="mx-auto mb-4 h-11 w-11 text-primary" /><h3 className="font-heading text-xl font-semibold">Ready to review {documents.length} source document(s)</h3><p className="mx-auto mt-2 max-w-md text-sm text-muted-foreground">Local mode checks the evidence register against the unified template and marks missing information explicitly. It does not fabricate or silently infer absent facts.</p><Button onClick={runAnalysis} className="mt-5"><Sparkles /> Run AI Analysis</Button></>
+            <><FileText className="mx-auto mb-4 h-11 w-11 text-primary" /><h3 className="font-heading text-xl font-semibold">Ready to review {documents.length} source document(s)</h3><p className="mx-auto mt-2 max-w-md text-sm text-muted-foreground">All registered evidence is submitted to the configured AI provider for content-based classification and extraction. Unsupported facts remain marked for confirmation.</p>{analysisError && <div className="mx-auto mt-4 max-w-xl rounded-md border border-destructive/30 bg-destructive/5 p-3 text-left text-sm text-destructive" role="alert"><strong>AI analysis unavailable.</strong> {analysisError.replace(/^AI analysis unavailable\s*[—-]\s*/i, "")}</div>}<Button onClick={runAnalysis} className="mt-5"><Sparkles /> Run AI Analysis</Button></>
           )}
           <div className="mt-6 flex justify-center"><Button variant="ghost" onClick={() => setStep(1)}><ArrowLeft /> Back to upload</Button></div>
         </Card>
@@ -205,6 +216,7 @@ function ReviewStep({ analysis, edited, setEdited, readiness, onSave, onBack, on
         <Card className="docket-surface border-primary/30 bg-primary/5 p-4 shadow-none">
           <div className="flex items-start justify-between gap-4"><div><p className="text-sm font-semibold">Template classification: <span className="text-primary">{analysis?.template_name || readiness.template.name}</span></p><p className="mt-1 text-xs leading-5 text-muted-foreground">{analysis?.summary || "Completeness analysis has not been run."}</p></div>{analysis && <div className="text-right"><p className="docket-label">Confidence</p><p className={`font-heading text-2xl font-semibold ${confidenceClass}`}>{analysis.confidence}%</p></div>}</div>
           {analysis?.missing_documents?.length > 0 && <div className="mt-3 flex items-start gap-2 border-t border-primary/20 pt-3 text-xs text-amber-800"><AlertTriangle className="mt-0.5 h-4 w-4 shrink-0" /><span><strong>Evidence categories still required:</strong> {analysis.missing_documents.join(", ")}</span></div>}
+          {analysis?.warnings?.length > 0 && <div className="mt-3 border-t border-primary/20 pt-3 text-left text-xs text-amber-800"><strong>Review warnings:</strong><ul className="mt-1 list-disc space-y-1 pl-5">{analysis.warnings.map((warning) => <li key={warning}>{warning}</li>)}</ul></div>}
         </Card>
         <ReadinessPanel readiness={readiness} />
       </div>
@@ -237,8 +249,8 @@ function ReviewStep({ analysis, edited, setEdited, readiness, onSave, onBack, on
 
       {analysis?.evidence_sources?.length > 0 && (
         <Card className="docket-surface overflow-hidden shadow-none">
-          <div className="border-b bg-muted/35 px-5 py-4"><h3 className="font-heading text-xl font-semibold">Evidence provenance</h3><p className="mt-1 text-xs text-muted-foreground">Registered sources remain reviewable; local mode does not invent page-level citations.</p></div>
-          <div className="divide-y">{analysis.evidence_sources.map((source) => <div key={source.id} className="grid gap-2 px-5 py-3 text-xs sm:grid-cols-[70px_1fr_1fr_auto] sm:items-center"><span className="font-mono text-muted-foreground">{source.id}</span><span className="font-semibold">{source.field}</span><span className="truncate text-muted-foreground">{source.source}</span><span className="flex items-center gap-1 text-primary"><Link2 className="h-3.5 w-3.5" /> {source.review_state}</span></div>)}</div>
+          <div className="border-b bg-muted/35 px-5 py-4"><h3 className="font-heading text-xl font-semibold">Evidence provenance</h3><p className="mt-1 text-xs text-muted-foreground">Each AI suggestion is linked to the document and supporting passage that produced it.</p></div>
+          <div className="divide-y">{analysis.evidence_sources.map((source) => <div key={source.id} className="grid gap-2 px-5 py-3 text-xs sm:grid-cols-[70px_1fr_1.4fr_auto] sm:items-start"><span className="font-mono text-muted-foreground">{source.id}</span><span className="font-semibold">{source.field}</span><span className="text-muted-foreground"><span className="font-semibold text-foreground">{source.source}</span>{source.matched_text && <span className="mt-1 block leading-5">“{source.matched_text}”</span>}</span><span className="flex items-center gap-1 text-primary"><Link2 className="h-3.5 w-3.5" /> {source.review_state}</span></div>)}</div>
         </Card>
       )}
 

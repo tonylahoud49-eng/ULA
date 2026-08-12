@@ -196,7 +196,18 @@ export const FALLBACK_REPORT_TEMPLATE = template(
   [],
 );
 
+export const REQUIRES_REVIEW_REPORT_TEMPLATE = template(
+  "requires-review",
+  "Report Template Requires Review",
+  [],
+  ["Policy", "Claim Form", "Supporting Evidence"],
+  [],
+);
+
 export function getReportTemplate(businessLine) {
+  if (businessLine === "Requires Review" || businessLine === "Other / Requires Review") {
+    return REQUIRES_REVIEW_REPORT_TEMPLATE;
+  }
   return REPORT_TEMPLATES[businessLine] || FALLBACK_REPORT_TEMPLATE;
 }
 
@@ -215,14 +226,28 @@ export function reportReadiness(claim = {}, documents = []) {
     const value = claim[field];
     return value === undefined || value === null || value === "";
   });
-  const searchableDocuments = documents
-    .flatMap((document) => [document.file_name, document.file_type, document.category])
-    .filter(Boolean)
-    .join(" ")
-    .toLowerCase();
   const missingDocuments = reportTemplate.requiredDocuments.filter((required) => {
-    const terms = required.toLowerCase().split(/\s+|\//).filter((term) => term.length > 3);
-    return terms.length && !terms.some((term) => searchableDocuments.includes(term));
+    const requiredValue = required.toLowerCase();
+    return !documents.some((document) => {
+      const contentCategories = Array.isArray(document.detected_categories)
+        ? document.detected_categories.map((category) => String(category).toLowerCase())
+        : [];
+
+      if (document.content_analysis_basis === "ai-content" || document.content_analysis_basis === "extracted-text") {
+        return contentCategories.some((category) =>
+          category === requiredValue || category.includes(requiredValue) || requiredValue.includes(category),
+        );
+      }
+
+      // Before content analysis has run, preserve the existing manually assigned
+      // type/category behavior. Filenames are intentionally not treated as proof.
+      const manualMetadata = [document.file_type, document.category]
+        .filter(Boolean)
+        .join(" ")
+        .toLowerCase();
+      const terms = requiredValue.split(/\s+|\//).filter((term) => term.length > 3);
+      return terms.length > 0 && terms.some((term) => manualMetadata.includes(term));
+    });
   });
   const completedFields = reportTemplate.requiredFields.length - missingFields.length;
   const completedDocuments = reportTemplate.requiredDocuments.length - missingDocuments.length;

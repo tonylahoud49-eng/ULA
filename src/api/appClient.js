@@ -1,8 +1,6 @@
 import { documentStorage } from "@/api/documentStorage";
-import {
-  createLocalReportAnalysis,
-  createUnifiedReportDraft,
-} from "@/lib/reportingEngine";
+import { analyzeClaimWithProvider } from "@/api/aiAnalysisClient";
+import { createUnifiedReportDraft } from "@/lib/reportingEngine";
 
 const DATABASE_KEY = "ula_claims_hub_database_v1";
 const AUTH_KEY = "ula_claims_hub_auth_v1";
@@ -84,11 +82,42 @@ let databasePreparation;
 
 const migrateLegacyDocumentContent = async () => {
   const database = readJson(DATABASE_KEY, emptyDatabase);
-  const documents = database.ClaimDocument || [];
   let changed = false;
+  const locallyAnalyzedClaimIds = new Set();
+
+  database.Claim = (database.Claim || []).map((claim) => {
+    const legacyAnalysis = /local template|local analysis|extracted document text/i.test(claim.ai_classification_source || "");
+    if (!legacyAnalysis) return claim;
+    locallyAnalyzedClaimIds.add(claim.id);
+    const cleaned = { ...claim };
+    delete cleaned.ai_confidence;
+    delete cleaned.ai_classification_source;
+    delete cleaned.ai_suggested_business_line;
+    delete cleaned.report_template_id;
+    delete cleaned.report_template_name;
+    delete cleaned.ai_analyzed_at;
+    cleaned.ai_analysis_status = "not-run";
+    cleaned.missing_documents = [];
+    changed = true;
+    return cleaned;
+  });
+
+  const documents = database.ClaimDocument || [];
 
   const migratedDocuments = [];
-  for (const document of documents) {
+  for (const originalDocument of documents) {
+    const document = { ...originalDocument };
+    if (locallyAnalyzedClaimIds.has(document.claim_id)) {
+      delete document.detected_categories;
+      delete document.detected_category_evidence;
+      delete document.content_analysis_basis;
+      delete document.content_analysis_provider;
+      delete document.content_analysis_warnings;
+      delete document.content_analyzed_at;
+      delete document.extracted_character_count;
+      delete document.extraction_status;
+      changed = true;
+    }
     const embeddedEntry = embeddedDocumentEntry(document);
     if (!embeddedEntry) {
       migratedDocuments.push(document);
@@ -354,31 +383,39 @@ const buildAnalysis = async ({ claim_id: claimId }) => {
   const documents = await entities.ClaimDocument.filter({ claim_id: claimId });
   if (!documents.length) throw createError("No documents uploaded for this claim");
 
-  const requiredFields = ["insured", "insurer", "policy_number", "date_of_loss", "cause_of_loss"];
-  const missingDocuments = requiredFields
-    .filter((field) => !claim[field])
-    .map((field) => field.replaceAll("_", " "));
-  const classified = claim.business_line && claim.business_line !== "Unclassified";
-  const unifiedAnalysis = createLocalReportAnalysis({ claim, documents });
-  const analysis = unifiedAnalysis || {
-    ...clone(claim),
-    business_line: claim.business_line || "Unclassified",
-    confidence: classified ? 75 : 25,
-    missing_documents: missingDocuments,
-    evidence_sources: documents.map((document) => ({
-      field: "Uploaded evidence",
-      source: document.file_name,
-      confidence: "Low",
-    })),
-    summary: `Local review prepared from ${documents.length} uploaded document(s). Automated extraction requires an external AI service.`,
-  };
+  const analysis = await analyzeClaimWithProvider({ claim, documents });
+  await Promise.all(documents.map((document) => {
+    const detections = analysis.document_types
+      .map((type) => ({
+        category: type.document_type,
+        confidence: type.confidence,
+        sources: type.sources.filter((source) => source.document_id === document.id),
+      }))
+      .filter((type) => type.sources.length);
+    return entities.ClaimDocument.update(document.id, {
+      extraction_status: "complete",
+      detected_categories: detections.map((type) => type.category),
+      detected_category_evidence: detections.map((type) => ({
+        category: type.category,
+        confidence: type.confidence,
+        excerpts: type.sources.map((source) => source.supporting_text),
+        pages: type.sources.map((source) => source.page).filter(Boolean),
+      })),
+      content_analysis_basis: "ai-content",
+      content_analysis_provider: `${analysis.provider}:${analysis.model}`,
+      content_analyzed_at: analysis.analyzed_at,
+    });
+  }));
 
   await entities.Claim.update(claimId, {
     ai_confidence: analysis.confidence,
-    ai_classification_source: "Local template and completeness review",
-    report_template_id: analysis.template_id,
-    report_template_name: analysis.template_name,
-    missing_documents: analysis.missing_documents || missingDocuments,
+    ai_classification_source: `${analysis.provider}:${analysis.model}`,
+    ai_suggested_business_line: analysis.business_line,
+    ai_analysis_status: analysis.status,
+    ai_analyzed_at: analysis.analyzed_at,
+    ai_suggested_report_template_id: analysis.template_id,
+    ai_suggested_report_template_name: analysis.template_name,
+    missing_documents: analysis.missing_documents,
   });
   return { data: { analysis, claim_id: claimId, document_count: documents.length } };
 };

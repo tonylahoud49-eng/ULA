@@ -14,7 +14,7 @@ import ReactMarkdown from "react-markdown";
 import { toast } from "@/components/ui/use-toast";
 import { REPORT_LIFECYCLE, reportReadiness } from "@/lib/reportTemplates";
 
-const BUSINESS_LINES = ["Yacht", "Property", "Marine Cargo (Reefer/GFS)", "Marine Cargo (Non-Reefer)", "Bulk Vessel", "Air Shipment (NET)", "Land Shipment", "Fidelity Claims", "Unclassified"];
+const BUSINESS_LINES = ["Yacht", "Property", "Marine Cargo (Reefer/GFS)", "Marine Cargo (Non-Reefer)", "Bulk Vessel", "Air Shipment (NET)", "Land Shipment", "Fidelity Claims", "Requires Review", "Unclassified"];
 const STATUSES = ["New", "Under Investigation", "Pending Documents", "Report Draft", "Report Final", "Closed"];
 
 export default function ClaimDetail() {
@@ -25,6 +25,7 @@ export default function ClaimDetail() {
   const [loading, setLoading] = useState(true);
   const [analyzing, setAnalyzing] = useState(false);
   const [analysis, setAnalysis] = useState(null);
+  const [analysisError, setAnalysisError] = useState("");
   const [editing, setEditing] = useState(false);
   const [form, setForm] = useState({});
   const readiness = useMemo(() => reportReadiness(claim || {}, documents), [claim, documents]);
@@ -45,12 +46,15 @@ export default function ClaimDetail() {
 
   const runAnalysis = async () => {
     setAnalyzing(true);
+    setAnalysisError("");
     try {
       const res = await appClient.functions.invoke("analyseClaim", { claim_id: id });
       setAnalysis(res.data.analysis);
       await load();
     } catch (e) {
-      toast({ variant: "destructive", title: "Analysis could not be completed", description: e.response?.data?.error || e.message });
+      const message = e.response?.data?.error || e.message;
+      setAnalysisError(message);
+      toast({ variant: "destructive", title: "Analysis could not be completed", description: message });
     } finally {
       setAnalyzing(false);
     }
@@ -90,7 +94,7 @@ export default function ClaimDetail() {
           <div className="flex items-start gap-3">
             <Sparkles className="w-5 h-5 text-primary mt-0.5" />
             <div className="flex-1">
-              <p className="text-sm font-semibold">Local analysis complete — readiness confidence: {analysis.confidence}%</p>
+              <p className="text-sm font-semibold">AI analysis complete — classification confidence: {analysis.confidence}%</p>
               <p className="text-xs text-muted-foreground mt-1">{analysis.summary}</p>
               {analysis.missing_documents && analysis.missing_documents.length > 0 && (
                 <div className="mt-2 flex items-start gap-2 text-xs text-amber-700">
@@ -100,6 +104,12 @@ export default function ClaimDetail() {
               )}
             </div>
           </div>
+        </Card>
+      )}
+
+      {analysisError && !analysis && (
+        <Card className="docket-surface border-destructive/30 bg-destructive/5 p-4 text-sm text-destructive shadow-none" role="alert">
+          <strong>AI analysis unavailable.</strong> {analysisError.replace(/^AI analysis unavailable\s*[—-]\s*/i, "")}
         </Card>
       )}
 

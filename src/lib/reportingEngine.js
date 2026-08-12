@@ -11,47 +11,6 @@ const uniqueSections = (sections) => sections.filter((section, index, items) =>
   items.findIndex((candidate) => candidate.id === section.id) === index,
 );
 
-export function createLocalReportAnalysis({ claim, documents }) {
-  const readiness = reportReadiness(claim, documents);
-  const classified = claim.business_line && claim.business_line !== "Unclassified";
-  const confidence = Math.min(92, Math.max(classified ? 45 : 20, Math.round(readiness.overallProgress * 0.8)));
-
-  return {
-    ...claim,
-    business_line: claim.business_line || "Unclassified",
-    template_id: readiness.template.id,
-    template_name: readiness.template.name,
-    confidence,
-    missing_fields: readiness.missingFields,
-    missing_documents: readiness.missingDocuments,
-    field_progress: readiness.fieldProgress,
-    document_progress: readiness.documentProgress,
-    overall_progress: readiness.overallProgress,
-    section_readiness: uniqueSections(readiness.template.sections).map((section) => ({
-      id: section.id,
-      title: section.title,
-      owner: section.owner,
-      human_approval_required: Boolean(section.humanApproval),
-    })),
-    evidence_sources: documents.map((document, index) => ({
-      id: `E-${String(index + 1).padStart(2, "0")}`,
-      field: document.category || document.file_type || "Uploaded evidence",
-      source: document.file_name,
-      confidence: "Source registered",
-      review_state: "Needs professional review",
-    })),
-    human_review_required: [
-      "Cause of loss",
-      "Policy coverage",
-      "Adjustment",
-      "Liability",
-      "Recommendations",
-      "Conclusion",
-    ],
-    summary: `${readiness.template.name} selected from the claim business line. ${documents.length} source document(s) are registered; local development mode checks completeness but does not perform external OCR or AI extraction.`,
-  };
-}
-
 export function createUnifiedReportDraft({ claim, documents, versions, generatedBy }) {
   const template = getReportTemplate(claim.business_line);
   const readiness = reportReadiness(claim, documents);
@@ -80,7 +39,7 @@ export function createUnifiedReportDraft({ claim, documents, versions, generated
   const sectionBody = (section) => {
     switch (section.id) {
       case "executive_summary":
-        return `This is a controlled **Draft** prepared using the ${template.name}. It is based on registered claim metadata and ${documents.length} source document(s). Local development mode does not perform external OCR or make professional determinations. Cause, coverage, adjustment, liability, recommendations, and conclusion require human review.`;
+        return `This is a controlled **Draft** prepared using the ${template.name}. It is based on registered claim metadata and ${documents.length} source document(s). AI-assisted extraction does not make professional determinations. Cause, coverage, adjustment, liability, recommendations, and conclusion require human review.`;
       case "appointment":
         return confirmed(claim.description, "The appointment scope and instructions require confirmation from the claim file.");
       case "investigation":
