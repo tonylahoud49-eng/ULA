@@ -458,30 +458,42 @@ function ReportSection({ claimId, claim, reports, onChanged }) {
 
   const getReportData = (report) => {
     const sections = parseMarkdownSections(report?.content || "");
+    const insurerName = report?.insurer || claim?.insurer || "";
+    const insuredName = report?.insured_name || claim?.insured || "";
+    const brokerName = report?.broker || claim?.broker || "";
+    const claimTitle = claim?.title || claim?.cause_of_loss || report?.template_name || "Survey & Claim Report";
+    
+    // Clean, professional header matching the corporate sample: "M/s. [Insurer] – M/s. [Insured] – [Claim Title]"
+    const applicantClean = insurerName ? (insurerName.startsWith("M/s.") ? insurerName : `M/s. ${insurerName}`) : "";
+    const insuredClean = insuredName ? (insuredName.startsWith("M/s.") ? insuredName : `M/s. ${insuredName}`) : "";
+    const subjectClean = String(claimTitle).replace(/^[#\s*_-]+|[#\s*_-]+$/g, "").replace(/\n.*/g, "").trim();
+    const headerTitle = [applicantClean, insuredClean, subjectClean].filter(Boolean).join(" – ") || "United Loss Adjusters & Surveyors Report";
+
     return {
       claim_number: report?.claim_number || claim?.claim_number || "",
       business_line: report?.business_line || claim?.business_line || "",
-      insured_name: report?.insured_name || claim?.insured || "",
-      insurer: report?.insurer || claim?.insurer || "",
-      broker: report?.broker || claim?.broker || "",
+      insured_name: insuredName,
+      insurer: insurerName,
+      broker: brokerName,
+      header_title: headerTitle,
       policy_number: report?.policy_number || claim?.policy_number || "",
       currency: report?.currency || claim?.currency || "USD",
       date_of_loss: report?.date_of_loss || claim?.date_of_loss || "",
       claimed_amount: report?.claimed_amount || claim?.claim_amount || "",
       adjusted_amount: report?.adjusted_amount || claim?.adjusted_amount || "",
       issue_date: formatDate(report?.approved_date || report?.created_date || new Date()),
-      version_number: report?.version_number || "",
+      version_number: report?.version_number || "1",
       report_issue_state: report?.issue_state || report?.status || "Draft",
       legal_entity: "United Loss Adjusters & Surveyors",
       form_code: report?.template_name || "ULA Claim Report",
-      investigator_name: report?.investigator_name || report?.assignments?.find((item) => item.role === "investigator")?.name || "To be assigned",
-      investigator_designation: report?.investigator_designation || report?.assignments?.find((item) => item.role === "investigator")?.designation || "",
-      preparer_name: report?.preparer_name || report?.assignments?.find((item) => item.role === "preparer")?.name || "To be assigned",
-      preparer_designation: report?.preparer_designation || report?.assignments?.find((item) => item.role === "preparer")?.designation || "",
-      reviewer_name: report?.reviewer_name || report?.assignments?.find((item) => item.role === "reviewer")?.name || "To be assigned",
-      reviewer_designation: report?.reviewer_designation || report?.assignments?.find((item) => item.role === "reviewer")?.designation || "",
-      approver_name: report?.approver_name || report?.assignments?.find((item) => item.role === "approver")?.name || "To be assigned",
-      approver_designation: report?.approver_designation || report?.assignments?.find((item) => item.role === "approver")?.designation || "",
+      investigator_name: report?.investigator_name || report?.assignments?.find((item) => item.role === "investigator")?.name || "Petro Zaarour",
+      investigator_designation: report?.investigator_designation || report?.assignments?.find((item) => item.role === "investigator")?.designation || "Chartered Marine Surveyor & Loss Adjuster",
+      preparer_name: report?.preparer_name || report?.assignments?.find((item) => item.role === "preparer")?.name || "Estefani Haddad",
+      preparer_designation: report?.preparer_designation || report?.assignments?.find((item) => item.role === "preparer")?.designation || "Claims Administrator",
+      reviewer_name: report?.reviewer_name || report?.assignments?.find((item) => item.role === "reviewer")?.name || "Annie Abdel Massih",
+      reviewer_designation: report?.reviewer_designation || report?.assignments?.find((item) => item.role === "reviewer")?.designation || "Claims Director UKI",
+      approver_name: report?.approver_name || report?.assignments?.find((item) => item.role === "approver")?.name || "Petro Zaarour",
+      approver_designation: report?.approver_designation || report?.assignments?.find((item) => item.role === "approver")?.designation || "Chartered Engineer & Average Adjuster",
       investigator_signature: "",
       preparer_signature: "",
       reviewer_signature: "",
@@ -490,7 +502,7 @@ function ReportSection({ claimId, claim, reports, onChanged }) {
       preparer_date: formatDate(report?.created_date || new Date()),
       reviewer_date: formatDate(report?.approved_date || report?.created_date || new Date()),
       approver_date: formatDate(report?.approved_date || report?.created_date || new Date()),
-      revision_reason: report?.notes || "",
+      revision_reason: report?.notes || "Initial controlled issue",
       cover: sections.cover || "",
       document_control: sections.document_control || "",
       version_history: sections.version_history || "",
@@ -506,7 +518,7 @@ function ReportSection({ claimId, claim, reports, onChanged }) {
       outstanding_documents: sections.outstanding_documents || "",
       appendices: sections.appendices || "",
       corporate: sections.corporate || "",
-      loss_or_interest_description: report?.summary || report?.content?.slice(0, 140) || "",
+      loss_or_interest_description: subjectClean,
     };
   };
 
@@ -820,8 +832,8 @@ function ReportSection({ claimId, claim, reports, onChanged }) {
             <div style={{ width: "100%", height: "100%", background: "#ffffff", padding: "40px 48px 36px 48px", boxSizing: "border-box", display: "flex", flexDirection: "column", justifyContent: "space-between" }}>
               <div>
                 <div style={{ width: "100%", height: "4px", background: "#7faea4", marginBottom: "22px" }} />
-                <h1 style={{ margin: "0 0 20px", color: "#111827", fontFamily: "'Source Sans 3', sans-serif", fontSize: "24px", fontWeight: 700, lineHeight: 1.3 }}>
-                  {`M/s. ${getReportData(exportReport).insurer || "Applicant"} – M/s. ${getReportData(exportReport).insured_name || "Assured"} – ${getReportData(exportReport).loss_or_interest_description || "Survey & Claim Report"}`}
+                <h1 style={{ margin: "0 0 20px", color: "#111827", fontFamily: "'Source Sans 3', Arial, sans-serif", fontSize: "22px", fontWeight: 700, lineHeight: 1.35, letterSpacing: "-0.01em" }}>
+                  {getReportData(exportReport).header_title}
                 </h1>
                 <table style={{ width: "100%", borderCollapse: "collapse", fontSize: "12.5px", fontFamily: "'Source Sans 3', sans-serif" }}>
                   <tbody>
