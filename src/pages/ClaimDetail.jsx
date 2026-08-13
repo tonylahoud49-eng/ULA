@@ -419,15 +419,30 @@ function ControlledReportPreview({ report, data }) {
             ))}
           </div>
 
-          <section className="report-closing-page" aria-label="ULA corporate information" style={{ background: "#ffffff", padding: "2.5rem 2rem", borderTop: "4px solid #7faea4", textAlign: "center" }}>
-            <img src={ulaLogo} alt="United Loss Adjusters & Surveyors" style={{ width: "120px", height: "auto", margin: "0 auto 1.25rem" }} />
-            <div style={{ textAlign: "left", maxWidth: "28rem", margin: "0 auto 1.5rem", fontSize: "0.8rem", color: "#374151", lineHeight: 1.6 }}>
-              <p style={{ margin: "0 0 0.5rem" }}><strong>Contact person:</strong> Petro Zaarour, Director</p>
-              <p style={{ margin: "0 0 0.5rem" }}><strong>UK:</strong> 71-75 Shelton Street, Covent Garden, London WC2H 9JQ<br /><strong>Middle East:</strong> Mina Tower, Ain Warda Street, Beirut, Lebanon</p>
-              <p style={{ margin: "0" }}><strong>24/7 Claims:</strong> +44 (0) 20 3287 3326 | claims@unitedlossadjusters.com</p>
+          <section className="report-closing-page" aria-label="ULA corporate information" style={{ background: "#ffffff", padding: "2.5rem 2.5rem", borderTop: "4px solid #7faea4" }}>
+            <div style={{ textAlign: "center", marginBottom: "1.25rem" }}>
+              <img src={ulaLogo} alt="United Loss Adjusters & Surveyors" style={{ width: "150px", height: "auto", margin: "0 auto" }} />
             </div>
-            <img src={ulaJusticeStatue} alt="Lady Justice" style={{ width: "200px", height: "220px", objectFit: "cover", margin: "0 auto 1.25rem", borderRadius: "2px", border: "1px solid #e5e7eb" }} />
-            <p style={{ maxWidth: "30rem", margin: "0 auto", fontSize: "0.68rem", color: "#6b7280", lineHeight: 1.5 }}>
+
+            <div style={{ display: "grid", gridTemplateColumns: "1.1fr 0.9fr", gap: "1.5rem", padding: "1.25rem", background: "#f8faf9", borderRadius: "6px", border: "1px solid #e2ece8", marginBottom: "1.25rem", fontSize: "0.85rem", color: "#1f2937", lineHeight: 1.55 }}>
+              <div>
+                <p style={{ margin: "0 0 0.5rem" }}><strong style={{ color: "#0f5146", fontSize: "0.9rem" }}>Key Contact:</strong><br /><strong>Petro Zaarour</strong>, Director</p>
+                <p style={{ margin: "0 0 0.5rem" }}><strong>24/7 Support:</strong> +44 (0) 20 3287 3326 | WhatsApp: +44 (0) 7 375 110 573</p>
+                <p style={{ margin: "0" }}><strong>Claims Email:</strong> claims@unitedlossadjusters.com<br /><strong>Web:</strong> https://www.unitedlossadjusters.com/</p>
+              </div>
+              <div style={{ borderLeft: "1px solid #d8e6e0", paddingLeft: "1.25rem" }}>
+                <p style={{ margin: "0 0 0.5rem" }}><strong style={{ color: "#0f5146", fontSize: "0.9rem" }}>Global Locations:</strong></p>
+                <p style={{ margin: "0 0 0.4rem" }}><strong>United Kingdom:</strong> 71-75 Shelton Street, Covent Garden, London WC2H 9JQ</p>
+                <p style={{ margin: "0 0 0.4rem" }}><strong>Middle East:</strong> Mina Tower, Ain Warda Street, Beirut, Lebanon</p>
+                <p style={{ margin: "0", fontSize: "0.75rem", color: "#6b7280" }}>Reg. in England &amp; Wales (No. 14407381)</p>
+              </div>
+            </div>
+
+            <div style={{ textAlign: "center", margin: "1rem 0" }}>
+              <img src={ulaJusticeStatue} alt="Lady Justice" style={{ width: "100%", maxHeight: "360px", objectFit: "cover", objectPosition: "center 22%", borderRadius: "4px", border: "1px solid #e5e7eb" }} />
+            </div>
+
+            <p style={{ margin: "1.25rem 0 0", fontSize: "0.75rem", color: "#6b7280", lineHeight: 1.55, textAlign: "justify", borderTop: "1px solid #e5e7eb", paddingTop: "0.75rem" }}>
               United Loss Adjusters &amp; Surveyors Limited (ULA). This controlled report is issued without prejudice to the rights and defences of all parties concerned.
             </p>
           </section>
@@ -1047,38 +1062,55 @@ function ReportSection({ claimId, claim, reports, onChanged }) {
 
           {/* Final Page: Corporate Closing Page — Framed with sage border on left/right/bottom (NO TOP BORDER), Lady Justice statue & offices */}
           <div ref={pdfClosingRef} style={{ width: "794px", height: "1123px", background: "#85b2a9", padding: "0 32px 32px 32px", boxSizing: "border-box", overflow: "hidden" }}>
-            <div style={{ width: "100%", height: "100%", background: "#ffffff", padding: "48px 48px 24px 48px", boxSizing: "border-box", display: "flex", flexDirection: "column", justifyContent: "space-between", alignItems: "stretch" }}>
-              <div style={{ textAlign: "center", marginBottom: "12px" }}>
-                <img src={ulaLogo} alt="ULA" style={{ width: "140px", height: "auto", margin: "0 auto", display: "block" }} />
-              </div>
-              
-              <div style={{ textAlign: "left", width: "100%", fontSize: "11px", color: "#1f2937", lineHeight: 1.55, marginBottom: "8px" }}>
-                <p style={{ margin: "0 0 8px" }}>
-                  <strong style={{ color: "#111827", fontSize: "11.5px" }}>Contact person</strong><br />
-                  <span style={{ textDecoration: "underline", color: "#111827" }}>Petro Zaarour</span><br />
-                  <span style={{ color: "#4b5563" }}>Director</span>
-                </p>
-                <p style={{ margin: "0 0 6px", fontSize: "10.5px" }}>
-                  <strong>United Kingdom:</strong> 71-75 Shelton Street, Covent Garden | London, England - WC2H 9JQ<br />
-                  <strong>Middle East:</strong> Mina Tower, Ain Warda Street | Beirut, Lebanon - WG2G+5CX
-                </p>
-                <p style={{ margin: "0 0 6px", fontSize: "10.5px" }}>
-                  <strong>Registered name:</strong> United Loss Adjusters and Surveyors Ltd.
-                </p>
-                <p style={{ margin: "0 0 6px", fontSize: "10.5px" }}>
-                  <strong>24/7 Contacts &amp; Claim Support</strong> – T: +44 (0) 20 3287 3326 | M/WhatsApp: +44 (0) 7 375 110 573<br />
-                  <strong>Office E:</strong> <a href="mailto:claims@unitedlossadjusters.com" style={{ color: "#1f8a79", textDecoration: "underline" }}>claims@unitedlossadjusters.com</a><br />
-                  <strong>W:</strong> <a href="https://www.unitedlossadjusters.com/" style={{ color: "#1f8a79", textDecoration: "underline" }}>https://www.unitedlossadjusters.com/</a>
-                </p>
+            <div style={{ width: "100%", height: "100%", background: "#ffffff", padding: "44px 50px 32px 50px", boxSizing: "border-box", display: "flex", flexDirection: "column", justifyContent: "space-between", alignItems: "stretch" }}>
+              <div>
+                <div style={{ textAlign: "center", marginBottom: "14px" }}>
+                  <img src={ulaLogo} alt="United Loss Adjusters & Surveyors" style={{ width: "165px", height: "auto", margin: "0 auto", display: "block" }} />
+                </div>
+                
+                {/* 2-Column Structured Contact & Global Office Information */}
+                <div style={{ display: "grid", gridTemplateColumns: "1.1fr 0.9fr", gap: "24px", padding: "16px 20px", background: "#f8faf9", borderRadius: "4px", border: "1px solid #e2ece8", marginBottom: "8px", fontFamily: "'Source Sans 3', Arial, sans-serif" }}>
+                  <div style={{ fontSize: "11.5px", color: "#1f2937", lineHeight: 1.55 }}>
+                    <p style={{ margin: "0 0 6px" }}>
+                      <strong style={{ color: "#0f5146", fontSize: "12.5px" }}>Key Contact</strong><br />
+                      <span style={{ fontWeight: 700, textDecoration: "underline", color: "#111827" }}>Petro Zaarour</span> · <span style={{ color: "#4b5563" }}>Director</span>
+                    </p>
+                    <p style={{ margin: "0 0 4px" }}>
+                      <strong>24/7 Support:</strong> +44 (0) 20 3287 3326<br />
+                      <strong>Mobile / WhatsApp:</strong> +44 (0) 7 375 110 573
+                    </p>
+                    <p style={{ margin: 0 }}>
+                      <strong>Office Email:</strong> <a href="mailto:claims@unitedlossadjusters.com" style={{ color: "#1f8a79", textDecoration: "underline" }}>claims@unitedlossadjusters.com</a><br />
+                      <strong>Web:</strong> <a href="https://www.unitedlossadjusters.com/" style={{ color: "#1f8a79", textDecoration: "underline" }}>https://www.unitedlossadjusters.com/</a>
+                    </p>
+                  </div>
+
+                  <div style={{ fontSize: "11.5px", color: "#1f2937", lineHeight: 1.55, borderLeft: "1px solid #d8e6e0", paddingLeft: "20px" }}>
+                    <p style={{ margin: "0 0 6px" }}>
+                      <strong style={{ color: "#0f5146", fontSize: "12.5px" }}>Global Locations</strong>
+                    </p>
+                    <p style={{ margin: "0 0 4px" }}>
+                      <strong>United Kingdom:</strong> 71-75 Shelton Street, Covent Garden, London WC2H 9JQ
+                    </p>
+                    <p style={{ margin: "0 0 4px" }}>
+                      <strong>Middle East:</strong> Mina Tower, Ain Warda Street, Beirut, Lebanon - WG2G+5CX
+                    </p>
+                    <p style={{ margin: 0, fontSize: "10px", color: "#6b7280" }}>
+                      Registered in England &amp; Wales (No. 14407381)
+                    </p>
+                  </div>
+                </div>
               </div>
 
-              <div style={{ textAlign: "center", display: "flex", alignItems: "center", justifyContent: "center", margin: "6px auto 10px" }}>
-                <img src={ulaJusticeStatue} alt="Lady Justice" style={{ width: "268px", height: "385px", objectFit: "contain", display: "block" }} />
+              {/* Perfectly Proportioned High-Resolution Landmark Image */}
+              <div style={{ textAlign: "center", width: "100%", margin: "6px 0 10px" }}>
+                <img src={ulaJusticeStatue} alt="Lady Justice at the Old Bailey London" style={{ width: "100%", maxHeight: "390px", objectFit: "cover", objectPosition: "center 22%", display: "block", borderRadius: "3px", border: "1px solid #d1d5db", boxShadow: "0 2px 8px rgba(0,0,0,0.06)" }} />
               </div>
 
-              <div style={{ textAlign: "justify", width: "100%", fontSize: "7.8px", color: "#6b7280", lineHeight: 1.45, borderTop: "1px solid #e5e7eb", paddingTop: "8px" }}>
-                <p style={{ margin: "0 0 4px" }}>
-                  United Loss Adjusters &amp; Surveyors Ltd., ULA and any variants are trading names of United Loss Adjusters &amp; Surveyors, its subsidiaries and affiliates. United Loss Adjusters &amp; Surveyors is a limited company registered in England &amp; Wales (Reg. 14407381).
+              {/* Complete Legal & Regulatory Disclaimers */}
+              <div style={{ textAlign: "justify", width: "100%", fontSize: "8.5px", color: "#4b5563", lineHeight: 1.55, borderTop: "1.5px solid #7faea4", paddingTop: "12px", fontFamily: "'Source Sans 3', Arial, sans-serif" }}>
+                <p style={{ margin: "0 0 5px" }}>
+                  <strong>United Loss Adjusters &amp; Surveyors Ltd. (ULA)</strong> and any variants are trading names of United Loss Adjusters &amp; Surveyors, its subsidiaries and affiliates. United Loss Adjusters &amp; Surveyors is a limited company registered in England &amp; Wales (Company Reg. No. 14407381).
                 </p>
                 <p style={{ margin: 0 }}>
                   United Loss Adjusters &amp; Surveyors Limited (ULA), its affiliates and subsidiaries and their respective officers, employees or agents are, individually and collectively, referred to in this clause as 'ULA'. ULA assumes no responsibility and shall not be liable to any person for any loss, damage or expense caused by reliance on the information or advice in this document or howsoever provided, unless that person has signed a contract or had agreed on a written or oral proposal with the relevant ULA entity for the provision of this information or advice and in that case any responsibility or liability is exclusively on the terms and conditions set out in that contract, proposal or referenced terms and conditions.
