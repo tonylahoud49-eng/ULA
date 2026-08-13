@@ -575,8 +575,11 @@ function ReportSection({ claimId, claim, reports, onChanged }) {
         });
         zip.file(entryName, xml);
       };
-      await replacePlaceholders("word/document.xml");
-      await replacePlaceholders("word/footer1.xml");
+      for (const fileName of Object.keys(zip.files)) {
+        if (fileName.startsWith("word/") && fileName.endsWith(".xml")) {
+          await replacePlaceholders(fileName);
+        }
+      }
       setExportProgress({ active: true, format: "DOCX", progress: 85, stage: "Packing OpenXML document package..." });
       const blob = await zip.generateAsync({ type: "blob", mimeType: "application/vnd.openxmlformats-officedocument.wordprocessingml.document" });
       downloadBlob(blob, baseFileName(report, "docx"));
@@ -1069,8 +1072,8 @@ function ReportSection({ claimId, claim, reports, onChanged }) {
                 </p>
               </div>
 
-              <div style={{ textAlign: "center", display: "flex", alignItems: "center", justifyContent: "center", margin: "6px 0 12px" }}>
-                <img src={ulaJusticeStatue} alt="Lady Justice" style={{ width: "230px", height: "350px", objectFit: "contain", display: "block", margin: "0 auto" }} />
+              <div style={{ textAlign: "center", display: "flex", alignItems: "center", justifyContent: "center", margin: "6px auto 10px" }}>
+                <img src={ulaJusticeStatue} alt="Lady Justice" style={{ width: "268px", height: "385px", objectFit: "contain", display: "block" }} />
               </div>
 
               <div style={{ textAlign: "justify", width: "100%", fontSize: "7.8px", color: "#6b7280", lineHeight: 1.45, borderTop: "1px solid #e5e7eb", paddingTop: "8px" }}>
