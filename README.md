@@ -15,15 +15,35 @@ copy .env.example .env
 npm run dev
 ```
 
-`npm run dev` starts the Vite frontend and the local server-side API together. Add an OpenAI API key to `.env` before using **Run AI Analysis**:
+`npm run dev` starts the Vite frontend and the local server-side API together. Configure at least one AI provider in `.env` before using **Run AI Analysis**. Set `AI_PROVIDER` to your preferred provider; any other provider with a configured API key becomes an automatic fallback.
+
+**Google Gemini** (recommended — free key from [aistudio.google.com/apikey](https://aistudio.google.com/apikey)):
+
+```dotenv
+AI_PROVIDER=gemini
+GEMINI_API_KEY=your_gemini_key
+GEMINI_MODEL=gemini-2.5-flash
+```
+
+**OpenAI:**
 
 ```dotenv
 AI_PROVIDER=openai
-OPENAI_API_KEY=your_server_side_key
+OPENAI_API_KEY=your_openai_key
 OPENAI_MODEL=gpt-5.6-terra
 ```
 
-The key is read only by `server/index.mjs`; it is never exposed through a `VITE_` variable or included in the browser bundle. If the key or provider is unavailable, the app reports that AI analysis is unavailable and does not substitute a local/mock confidence score.
+**OpenRouter** (free models available — key from [openrouter.ai/keys](https://openrouter.ai/keys)):
+
+```dotenv
+AI_PROVIDER=openrouter
+OPENROUTER_API_KEY=your_openrouter_key
+OPENROUTER_MODEL=google/gemma-4-31b-it:free
+```
+
+Configure multiple keys for automatic fallback. For example, setting `AI_PROVIDER=gemini` with both `GEMINI_API_KEY` and `OPENROUTER_API_KEY` will try Gemini first and fall back to OpenRouter on rate limits or errors.
+
+Keys are read only by `server/index.mjs`; they are never exposed through a `VITE_` variable or included in the browser bundle. If no provider is configured, the app reports that AI analysis is unavailable and does not substitute a local/mock confidence score.
 
 Create a production build with:
 
@@ -42,7 +62,7 @@ npm run build
 
 ## AI document analysis
 
-The current provider is OpenAI through the Responses API using structured output. The model is configurable with `OPENAI_MODEL`; `gpt-5.6-terra` is the default. Every analysis request sends the registered evidence set together:
+Three providers are supported: OpenAI (Responses API), Google Gemini, and OpenRouter (both via Chat Completions API with structured output). Models are configurable per provider; defaults are `gpt-5.6-terra`, `gemini-2.5-flash`, and `google/gemma-4-31b-it:free`. Every analysis request sends the registered evidence set together:
 
 - Searchable and scanned PDFs are supplied as PDF file inputs; searchable page text is also extracted for verifiable citations.
 - PNG, JPEG, WebP, and GIF evidence is supplied as vision input.

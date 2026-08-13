@@ -1,8 +1,16 @@
 import React from 'react';
+import { appClient } from "@/api/appClient";
+import { Button } from "@/components/ui/button";
+import { LogOut } from "lucide-react";
 
 const UserNotRegisteredError = () => {
+  const handleLogout = async () => {
+    await appClient.auth.logout();
+    window.location.href = "/login";
+  };
+
   return (
-    <div className="flex flex-col items-center justify-center min-h-screen bg-gradient-to-b from-white to-slate-50">
+    <div className="flex flex-col items-center justify-center min-h-screen bg-gradient-to-b from-white to-slate-50 p-4">
       <div className="max-w-md w-full p-8 bg-white rounded-lg shadow-lg border border-slate-100">
         <div className="text-center">
           <div className="inline-flex items-center justify-center w-16 h-16 mb-6 rounded-full bg-orange-100">
@@ -12,16 +20,19 @@ const UserNotRegisteredError = () => {
           </div>
           <h1 className="text-3xl font-bold text-slate-900 mb-4">Access Restricted</h1>
           <p className="text-slate-600 mb-8">
-            You are not registered to use this application. Please contact the app administrator to request access.
+            Your account is pending administrator approval. Please contact the app administrator to request access.
           </p>
-          <div className="p-4 bg-slate-50 rounded-md text-sm text-slate-600">
-            <p>If you believe this is an error, you can:</p>
+          <div className="p-4 bg-slate-50 rounded-md text-sm text-slate-600 mb-6 text-left">
+            <p className="font-semibold">Local Testing Instructions:</p>
             <ul className="list-disc list-inside mt-2 space-y-1">
-              <li>Verify you are logged in with the correct account</li>
-              <li>Contact the app administrator for access</li>
-              <li>Try logging out and back in again</li>
+              <li>Click the button below to sign out.</li>
+              <li>Sign in as <code className="bg-slate-100 px-1 py-0.5 rounded text-primary">admin@ula.com</code> (Google SSO or password: <code className="bg-slate-100 px-1 py-0.5 rounded">admin123</code>).</li>
+              <li>Go to the **Users** tab in the sidebar and approve your pending account.</li>
             </ul>
           </div>
+          <Button onClick={handleLogout} className="w-full h-11 ula-gradient text-white">
+            <LogOut className="w-4 h-4 mr-2" /> Back to Login
+          </Button>
         </div>
       </div>
     </div>

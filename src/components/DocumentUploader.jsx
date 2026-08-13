@@ -14,6 +14,7 @@ const errorMessage = (error) => error?.response?.data?.error || error?.message |
 
 export default function DocumentUploader({ claimId, documents, onChanged }) {
   const [uploading, setUploading] = useState(false);
+  const [dragging, setDragging] = useState(false);
   const [type, setType] = useState("PDF");
   const [category, setCategory] = useState("Other");
 
@@ -52,6 +53,26 @@ export default function DocumentUploader({ claimId, documents, onChanged }) {
     }
   };
 
+  const onDragOver = (e) => {
+    e.preventDefault();
+    e.stopPropagation();
+    setDragging(true);
+  };
+
+  const onDragLeave = (e) => {
+    e.preventDefault();
+    e.stopPropagation();
+    setDragging(false);
+  };
+
+  const onDrop = (e) => {
+    e.preventDefault();
+    e.stopPropagation();
+    setDragging(false);
+    const files = Array.from(e.dataTransfer.files);
+    if (files.length) handleFiles(files);
+  };
+
   const remove = async (doc) => {
     try {
       await appClient.entities.ClaimDocument.delete(doc.id);
@@ -87,15 +108,27 @@ export default function DocumentUploader({ claimId, documents, onChanged }) {
           </Select>
         </div>
       </div>
-
-      <label className="m-5 flex cursor-pointer flex-col items-center justify-center rounded-md border border-dashed border-primary/45 bg-primary/[0.025] p-8 transition-colors hover:border-primary hover:bg-primary/5">
-        <input type="file" multiple className="hidden" onChange={(e) => handleFiles(Array.from(e.target.files))} />
+      <div
+        className={`m-5 flex cursor-pointer flex-col items-center justify-center rounded-md border border-dashed p-8 transition-colors ${dragging ? "border-primary bg-primary/10 ring-2 ring-primary/30" : "border-primary/45 bg-primary/[0.025] hover:border-primary hover:bg-primary/5"}`}
+        onDragOver={onDragOver}
+        onDragEnter={onDragOver}
+        onDragLeave={onDragLeave}
+        onDrop={onDrop}
+        onClick={() => document.getElementById(`file-input-${claimId}`)?.click()}
+        onKeyDown={(e) => { if (e.key === "Enter" || e.key === " ") document.getElementById(`file-input-${claimId}`)?.click(); }}
+        role="button"
+        tabIndex={0}
+        aria-label="Drop files here or click to browse"
+      >
+        <input id={`file-input-${claimId}`} type="file" multiple className="hidden" onChange={(e) => { handleFiles(Array.from(e.target.files)); e.target.value = ""; }} />
         {uploading ? (
           <><Loader2 className="w-8 h-8 text-primary animate-spin mb-2" /><p className="text-sm text-muted-foreground">Uploading…</p></>
+        ) : dragging ? (
+          <><UploadCloud className="w-8 h-8 text-primary mb-2 animate-bounce" /><p className="text-sm font-semibold text-primary">Drop files here</p><p className="text-xs text-muted-foreground mt-1">Release to upload all selected files</p></>
         ) : (
-          <><UploadCloud className="w-8 h-8 text-primary mb-2" /><p className="text-sm font-semibold">Add source evidence</p><p className="text-xs text-muted-foreground mt-1">PDF, Word, Excel, email, invoice, policy, transport record, or photograph</p></>
+          <><UploadCloud className="w-8 h-8 text-primary mb-2" /><p className="text-sm font-semibold">Add source evidence</p><p className="text-xs text-muted-foreground mt-1">Drop files here, or click to browse · PDF, Word, Excel, email, images, and more</p></>
         )}
-      </label>
+      </div>
 
       <div className="border-t px-5 py-4">
         {documents.length === 0 ? (

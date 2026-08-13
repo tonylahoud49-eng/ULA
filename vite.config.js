@@ -9,6 +9,17 @@ export default defineConfig({
       "/api": "http://127.0.0.1:8787",
     },
   },
+  optimizeDeps: {
+    include: [
+      "react",
+      "react-dom",
+      "react-router-dom",
+      "@tanstack/react-query",
+      "lucide-react",
+      "clsx",
+      "tailwind-merge",
+    ],
+  },
   resolve: {
     alias: {
       "@": fileURLToPath(new URL("./src", import.meta.url)),

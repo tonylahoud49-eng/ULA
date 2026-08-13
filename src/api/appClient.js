@@ -19,7 +19,24 @@ const emptyDatabase = () => Object.fromEntries(
 );
 
 const emptyAuth = () => ({
-  accounts: [],
+  accounts: [
+    {
+      id: "admin-id",
+      email: "admin@ula.com",
+      full_name: "ULA Administrator",
+      passwordHash: "240eb518e1d234d74a7ca33d1c47db5515438c3505d9e504c5409ec8b7c6ee5d", // SHA-256 for "admin123"
+      status: "approved",
+      role: "admin",
+    },
+    {
+      id: "local-user-id",
+      email: "local.user@ula.test",
+      full_name: "Local User",
+      passwordHash: "",
+      status: "approved",
+      role: "user",
+    }
+  ],
   sessionUserId: null,
   pendingVerification: null,
   resetRequests: {},
@@ -174,6 +191,9 @@ const currentUser = () => {
   const auth = readJson(AUTH_KEY, emptyAuth);
   const account = auth.accounts.find((item) => item.id === auth.sessionUserId);
   if (!account) throw createError("Authentication required", 401);
+  if (account.status === "pending") {
+    throw createError("User access is pending administrator approval", 403, "user_not_registered");
+  }
   const { passwordHash: _passwordHash, ...user } = account;
   return clone(user);
 };
@@ -303,6 +323,8 @@ const auth = {
       throw createError("Invalid verification code", 400);
     }
     const { verificationCode: _verificationCode, ...account } = pending;
+    account.status = "pending";
+    account.role = "user";
     state.accounts.push(account);
     state.sessionUserId = account.id;
     state.pendingVerification = null;
@@ -327,15 +349,18 @@ const auth = {
     writeJson(AUTH_KEY, state);
   },
 
-  async loginWithProvider(_provider, returnTo = "/") {
+  async loginWithProvider(provider, returnTo = "/", email, name) {
     const state = readJson(AUTH_KEY, emptyAuth);
-    let account = state.accounts.find((item) => item.email === "local.user@ula.test");
+    const targetEmail = normalizeEmail(email || "local.user@ula.test");
+    let account = state.accounts.find((item) => item.email === targetEmail);
     if (!account) {
       account = {
         id: createId(),
-        email: "local.user@ula.test",
-        full_name: "Local User",
+        email: targetEmail,
+        full_name: name || targetEmail.split("@")[0] || "Local User",
         passwordHash: "",
+        status: targetEmail.endsWith("@ula.com") || targetEmail.endsWith("@ula.test") ? "approved" : "pending",
+        role: targetEmail === "admin@ula.com" ? "admin" : "user",
       };
       state.accounts.push(account);
     }

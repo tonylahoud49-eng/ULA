@@ -58,13 +58,19 @@ app.post("/api/ai/analyze", upload.array("files", maxFiles), async (request, res
   } catch (error) {
     const isProviderError = Number(error?.status) >= 400;
     const statusCode = isProviderError ? 502 : 500;
-    const providerMessage = error?.status === 401
+    let providerMessage = error?.status === 401
       ? "AI provider credentials were rejected. Check the server configuration."
       : error?.status === 429
         ? "The AI provider rate or usage limit was reached. Try again later or review the provider account."
         : "The AI provider could not complete this evidence analysis.";
+    
+    // Expose the raw provider error message for easy debugging
+    if (error.message) {
+      providerMessage = `${providerMessage} (Details: ${error.message})`;
+    }
+    
     return response.status(statusCode).json({
-      error: `AI analysis unavailable — ${isProviderError ? providerMessage : error.message || providerMessage}`,
+      error: `AI analysis unavailable — ${providerMessage}`,
       code: "ai-analysis-failed",
     });
   }

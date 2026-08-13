@@ -1,0 +1,103 @@
+================================================================================
+                          COMMERCIAL INVOICE
+================================================================================
+
+INVOICE NUMBER:         JXP-INV-2026-00412
+INVOICE DATE:           10 June 2026
+
+SELLER / EXPORTER:
+  Jiangsu Precision Machinery Manufacturing Co., Ltd.
+  No. 88 Huangpu Industrial Road, Pudong New Area
+  Shanghai 200120, People's Republic of China
+  Tax ID: 91320000MA1EXAMPLE
+  Contact: Mr. Wei Zhang, Export Manager
+  Tel: +86 21 5888 7766
+  Email: export@jiangsu-precision.cn
+
+BUYER / IMPORTER:
+  Levantine Trading & Logistics S.A.L.
+  Beirut Central District, Block 12, P.O. Box 11-2345
+  Beirut, Lebanon
+  Tax ID: LB-87654321
+  Contact: Mr. Ahmad Nassar, Procurement Director
+  Tel: +961 1 999 888
+  Email: procurement@levantine-trading.com
+
+PURCHASE ORDER:         LT-2026-0088
+ORDER DATE:             15 April 2026
+
+TERMS OF SALE:          CIF Beirut Port, Lebanon (Incoterms 2020)
+TERMS OF PAYMENT:       Irrevocable L/C at sight — 100%
+L/C NUMBER:             LC-2026-BDL-009823 (Banque du Liban)
+
+COUNTRY OF ORIGIN:      People's Republic of China
+PORT OF LOADING:        Shanghai, China
+PORT OF DISCHARGE:      Beirut, Lebanon
+VESSEL:                 MV Pacific Endeavour
+B/L NUMBER:             COSCO-SH-BEY-2026-07891
+
+================================================================================
+ITEM DETAILS
+================================================================================
+
+ No.  Description                          Qty   Unit Price (USD)  Total (USD)
+ ---  -----------------------------------  ----  ----------------  -----------
+  1   CNC Milling Machine Model JXP-500    12       22,500.00      270,000.00
+      - 5-axis, 10,000 RPM spindle
+      - Siemens 840D control system
+      - Automatic tool changer (24-pos)
+      - Including installation kit
+
+  2   CNC Lathe Unit Model JXP-320L         8       15,000.00      120,000.00
+      - 2-axis, 4,500 RPM
+      - Fanuc 0i-TF Plus control
+      - 12-station turret
+      - Hydraulic chuck and tailstock
+
+  3   Electrical Control Panels             15        2,000.00       30,000.00
+      - VFD drives, PLC modules
+      - HMI touch screens
+      - Wiring harnesses
+
+  4   Spare Parts & Accessories Kit          7        2,500.00       17,500.00
+      - Cutting tools assortment
+      - Bearings, belts, filters
+      - Coolant pumps
+
+  5   Installation Manuals & Tooling         5        1,100.00        5,500.00
+      - Technical documentation
+      - Alignment and calibration tools
+
+================================================================================
+
+  SUBTOTAL (FOB Shanghai):                                        443,000.00
+  Ocean Freight (Shanghai–Beirut):                                 28,500.00
+  Marine Insurance Premium:                                         1,697.50
+  -----------------------------------------------------------------------
+  TOTAL CIF BEIRUT:                                    USD       473,197.50
+  -----------------------------------------------------------------------
+
+TOTAL PACKAGES:         47
+TOTAL GROSS WEIGHT:     18,000 kg
+TOTAL NET WEIGHT:       14,200 kg
+
+================================================================================
+BANKING DETAILS
+================================================================================
+Beneficiary:    Jiangsu Precision Machinery Manufacturing Co., Ltd.
+Bank:           Bank of China, Shanghai Pudong Branch
+Account No.:    6228 4800 1234 5678 901
+SWIFT:          BKCHCNBJ300
+
+================================================================================
+
+We hereby certify that this invoice is true and correct in all respects.
+
+_________________________
+Mr. Wei Zhang
+Export Manager
+Jiangsu Precision Machinery Manufacturing Co., Ltd.
+
+Company Seal Applied
+
+================================================================================

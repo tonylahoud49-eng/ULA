@@ -1,6 +1,7 @@
-import { Toaster } from "@/components/ui/toaster"
-import { QueryClientProvider } from '@tanstack/react-query'
-import { queryClientInstance } from '@/lib/query-client'
+import { lazy, Suspense } from "react";
+import { Toaster } from "@/components/ui/toaster";
+import { QueryClientProvider } from '@tanstack/react-query';
+import { queryClientInstance } from '@/lib/query-client';
 import { BrowserRouter as Router, Route, Routes, Navigate } from 'react-router-dom';
 import PageNotFound from './lib/PageNotFound';
 import { AuthProvider, useAuth } from '@/lib/AuthContext';
@@ -8,25 +9,34 @@ import UserNotRegisteredError from '@/components/UserNotRegisteredError';
 import ScrollToTop from './components/ScrollToTop';
 import ProtectedRoute from '@/components/ProtectedRoute';
 import Layout from '@/components/Layout';
-import Dashboard from '@/pages/Dashboard';
-import Claims from '@/pages/Claims';
-import ClaimDetail from '@/pages/ClaimDetail';
-import AIReporting from '@/pages/AIReporting';
-import AnnualLeave from '@/pages/AnnualLeave';
-import Login from '@/pages/Login';
-import Register from '@/pages/Register';
-import ForgotPassword from '@/pages/ForgotPassword';
-import ResetPassword from '@/pages/ResetPassword';
-import OAuthConsent from '@/pages/OAuthConsent';
+
+// Lazy-load page components for code splitting & fast initial render
+const Dashboard = lazy(() => import('@/pages/Dashboard'));
+const Claims = lazy(() => import('@/pages/Claims'));
+const ClaimDetail = lazy(() => import('@/pages/ClaimDetail'));
+const AIReporting = lazy(() => import('@/pages/AIReporting'));
+const AnnualLeave = lazy(() => import('@/pages/AnnualLeave'));
+const Login = lazy(() => import('@/pages/Login'));
+const Register = lazy(() => import('@/pages/Register'));
+const ForgotPassword = lazy(() => import('@/pages/ForgotPassword'));
+const ResetPassword = lazy(() => import('@/pages/ResetPassword'));
+const OAuthConsent = lazy(() => import('@/pages/OAuthConsent'));
+const AdminUsers = lazy(() => import('@/pages/AdminUsers'));
+
+const PageFallback = () => (
+  <div className="flex min-h-[300px] w-full items-center justify-center p-8">
+    <div className="h-8 w-8 animate-spin rounded-full border-4 border-slate-200 border-t-slate-800" />
+  </div>
+);
 
 const AuthenticatedApp = () => {
-  const { isLoadingAuth, isLoadingPublicSettings, authError, navigateToLogin } = useAuth();
+  const { user, isLoadingAuth, isLoadingPublicSettings, authError, navigateToLogin } = useAuth();
 
   // Show loading spinner while checking app public settings or auth
   if (isLoadingPublicSettings || isLoadingAuth) {
     return (
-      <div className="fixed inset-0 flex items-center justify-center">
-        <div className="w-8 h-8 border-4 border-slate-200 border-t-slate-800 rounded-full animate-spin"></div>
+      <div className="fixed inset-0 flex items-center justify-center bg-background/80 backdrop-blur-sm">
+        <div className="h-8 w-8 animate-spin rounded-full border-4 border-slate-200 border-t-primary"></div>
       </div>
     );
   }
@@ -44,23 +54,26 @@ const AuthenticatedApp = () => {
 
   // Render the main app
   return (
-    <Routes>
-      <Route path="/login" element={<Login />} />
-      <Route path="/register" element={<Register />} />
-      <Route path="/forgot-password" element={<ForgotPassword />} />
-      <Route path="/reset-password" element={<ResetPassword />} />
-      <Route path="/oauth/consent" element={<OAuthConsent />} />
-      <Route element={<ProtectedRoute unauthenticatedElement={<Navigate to="/login" replace />} />}>
-        <Route element={<Layout />}>
-          <Route path="/" element={<Dashboard />} />
-          <Route path="/claims" element={<Claims />} />
-          <Route path="/claims/:id" element={<ClaimDetail />} />
-          <Route path="/ai-reporting" element={<AIReporting />} />
-          <Route path="/annual-leave" element={<AnnualLeave />} />
+    <Suspense fallback={<PageFallback />}>
+      <Routes>
+        <Route path="/login" element={<Login />} />
+        <Route path="/register" element={<Register />} />
+        <Route path="/forgot-password" element={<ForgotPassword />} />
+        <Route path="/reset-password" element={<ResetPassword />} />
+        <Route path="/oauth/consent" element={<OAuthConsent />} />
+        <Route element={<ProtectedRoute unauthenticatedElement={<Navigate to="/login" replace />} />}>
+          <Route element={<Layout />}>
+            <Route path="/" element={<Dashboard />} />
+            <Route path="/claims" element={<Claims />} />
+            <Route path="/claims/:id" element={<ClaimDetail />} />
+            <Route path="/ai-reporting" element={<AIReporting />} />
+            <Route path="/annual-leave" element={<AnnualLeave />} />
+            <Route path="/users" element={user?.role === 'admin' ? <AdminUsers /> : <Navigate to="/" replace />} />
+          </Route>
         </Route>
-      </Route>
-      <Route path="*" element={<PageNotFound />} />
-    </Routes>
+        <Route path="*" element={<PageNotFound />} />
+      </Routes>
+    </Suspense>
   );
 };
 

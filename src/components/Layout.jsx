@@ -9,6 +9,7 @@ import {
   LayoutDashboard,
   LogOut,
   Menu,
+  Shield,
   X,
 } from "lucide-react";
 import { appClient } from "@/api/appClient";
@@ -28,6 +29,7 @@ const pageTitles = {
   "/claims": "Claims Register",
   "/ai-reporting": "Reporting Workspace",
   "/annual-leave": "Annual Leave",
+  "/users": "User Administration",
 };
 
 export default function Layout() {
@@ -67,7 +69,7 @@ export default function Layout() {
           </div>
         </div>
 
-        <nav aria-label="Primary navigation" className="flex-1 px-3 py-5">
+        <nav aria-label="Primary navigation" className="flex-1 px-3 py-5 overflow-y-auto">
           <div className="mb-3 px-3 text-[0.65rem] font-semibold uppercase tracking-[0.14em] text-sidebar-foreground/45">Operations</div>
           <div className="space-y-1">
             {navItems.map((item) => {
@@ -90,6 +92,26 @@ export default function Layout() {
               );
             })}
           </div>
+
+          {user?.role === "admin" && (
+            <>
+              <div className="mt-6 mb-3 px-3 text-[0.65rem] font-semibold uppercase tracking-[0.14em] text-sidebar-foreground/45">Administration</div>
+              <div className="space-y-1">
+                <NavLink
+                  to="/users"
+                  onClick={() => setOpen(false)}
+                  className={({ isActive }) => `group flex items-center gap-3 rounded-md px-3 py-3 transition-colors ${isActive ? "bg-sidebar-primary text-sidebar-primary-foreground" : "text-sidebar-foreground/76 hover:bg-sidebar-accent hover:text-white"}`}
+                >
+                  <Shield className="h-[18px] w-[18px] shrink-0" aria-hidden="true" />
+                  <span className="min-w-0 flex-1">
+                    <span className="block text-sm font-semibold leading-tight">Users</span>
+                    <span className="mt-0.5 block text-[0.68rem] leading-tight opacity-65">Access management</span>
+                  </span>
+                  <ChevronRight className="h-4 w-4 opacity-0 transition-opacity group-hover:opacity-70" aria-hidden="true" />
+                </NavLink>
+              </div>
+            </>
+          )}
         </nav>
 
         <div className="border-t border-sidebar-border p-4">

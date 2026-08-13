@@ -33,14 +33,12 @@ export const AuthProvider = ({ children }) => {
     }
   };
 
-  const checkAppState = async () => {
-    setIsLoadingPublicSettings(true);
-    await checkUserAuth();
-    setIsLoadingPublicSettings(false);
-  };
-
   useEffect(() => {
-    checkAppState();
+    let mounted = true;
+    checkUserAuth().finally(() => {
+      if (mounted) setIsLoadingPublicSettings(false);
+    });
+    return () => { mounted = false; };
   }, []);
 
   const logout = async (shouldRedirect = true) => {
@@ -66,7 +64,6 @@ export const AuthProvider = ({ children }) => {
       logout,
       navigateToLogin,
       checkUserAuth,
-      checkAppState,
     }}>
       {children}
     </AuthContext.Provider>

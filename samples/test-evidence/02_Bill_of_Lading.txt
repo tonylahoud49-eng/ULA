@@ -1,0 +1,122 @@
+================================================================================
+                           BILL OF LADING
+                     (Non-Negotiable Copy for Record)
+================================================================================
+
+B/L NUMBER:             COSCO-SH-BEY-2026-07891
+BOOKING NUMBER:         BK-2026-064421
+
+CARRIER:                COSCO Shipping Lines Co., Ltd.
+VESSEL:                 MV Pacific Endeavour
+VOYAGE NUMBER:          V.226E
+FLAG:                   Panama
+IMO NUMBER:             9876543
+
+--------------------------------------------------------------------------------
+SHIPPER
+--------------------------------------------------------------------------------
+Jiangsu Precision Machinery Manufacturing Co., Ltd.
+No. 88 Huangpu Industrial Road, Pudong New Area
+Shanghai 200120, People's Republic of China
+Tel: +86 21 5888 7766
+
+--------------------------------------------------------------------------------
+CONSIGNEE
+--------------------------------------------------------------------------------
+Levantine Trading & Logistics S.A.L.
+Beirut Central District, Block 12
+P.O. Box 11-2345
+Beirut, Lebanon
+Tel: +961 1 999 888
+
+NOTIFY PARTY:           Same as Consignee
+
+--------------------------------------------------------------------------------
+PORT OF LOADING
+--------------------------------------------------------------------------------
+Shanghai Port, China (CNSHA)
+Date of Loading:        17 June 2026
+
+--------------------------------------------------------------------------------
+PORT OF DISCHARGE
+--------------------------------------------------------------------------------
+Beirut Port, Lebanon (LBBEY)
+Expected Arrival:       12 July 2026
+
+--------------------------------------------------------------------------------
+PLACE OF DELIVERY
+--------------------------------------------------------------------------------
+CY/CY — Beirut Port Container Terminal
+
+--------------------------------------------------------------------------------
+CONTAINER AND SEAL DETAILS
+--------------------------------------------------------------------------------
+Container No.       Type/Size       Seal No.        Tare (kg)
+CSLU 7234561        40' HC (45G1)   SH-882341       3,800
+CSLU 7234562        20' GP (22G1)   SH-882342       2,200
+
+Total Containers: 2
+Total Packages:   47
+
+--------------------------------------------------------------------------------
+DESCRIPTION OF GOODS
+--------------------------------------------------------------------------------
+SAID TO CONTAIN:
+
+47 (FORTY-SEVEN) PACKAGES COMPRISING:
+
+  12 x Wooden Crates — CNC Milling Machines, Model JXP-500
+       Gross Weight: 8,400 kg
+       Dimensions: 2.4m x 1.8m x 2.1m each
+
+  8 x Wooden Crates — CNC Lathe Units, Model JXP-320L
+       Gross Weight: 5,600 kg
+       Dimensions: 2.0m x 1.5m x 1.8m each
+
+  15 x Cardboard Cartons — Electrical Control Panels and Components
+       Gross Weight: 2,250 kg
+
+  7 x Wooden Crates — Spare Parts and Accessories Kit
+       Gross Weight: 1,400 kg
+
+  5 x Pallets (shrink-wrapped) — Installation Manuals and Tooling
+       Gross Weight: 350 kg
+
+TOTAL GROSS WEIGHT:     18,000 kg
+TOTAL MEASUREMENT:      58.6 CBM
+
+FREIGHT:                Prepaid
+INCOTERM:               CIF Beirut
+
+--------------------------------------------------------------------------------
+MARKS AND NUMBERS
+--------------------------------------------------------------------------------
+LEVANTINE TRADING
+BEIRUT / LEBANON
+C/NO: 1-47
+PO: LT-2026-0088
+HANDLE WITH CARE — HEAVY MACHINERY — THIS SIDE UP
+KEEP DRY — PROTECT FROM MOISTURE
+
+--------------------------------------------------------------------------------
+CLEAN ON BOARD
+--------------------------------------------------------------------------------
+Shipped on board in apparent good order and condition (unless otherwise noted
+herein) the total number of containers or packages indicated above.
+
+This bill of lading is clean — no adverse remarks noted at the time of loading.
+
+ON BOARD DATE:          17 June 2026
+
+--------------------------------------------------------------------------------
+
+Signed for the Master of MV Pacific Endeavour
+
+_________________________
+As Agent for COSCO Shipping Lines Co., Ltd.
+Shanghai, 17 June 2026
+
+No. of Original B/L:   3/3
+Place of Issue:         Shanghai, China
+
+================================================================================

@@ -6,7 +6,7 @@ import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter, DialogTrigger } from "@/components/ui/dialog";
-import { Plus, Check, X, UserPlus, Plane } from "lucide-react";
+import { Plus, Check, X, UserPlus, Plane, ChevronLeft, ChevronRight } from "lucide-react";
 
 const MONTHS = ["January","February","March","April","May","June","July","August","September","October","November","December"];
 const DOW = ["Sun","Mon","Tue","Wed","Thu","Fri","Sat"];
@@ -84,9 +84,9 @@ export default function AnnualLeave() {
           <div className="flex items-center justify-between mb-4">
             <h3 className="font-heading text-xl font-semibold">Company calendar</h3>
             <div className="flex items-center gap-2">
-              <Button size="icon" variant="ghost" onClick={() => setViewDate(new Date(viewDate.getFullYear(), viewDate.getMonth() - 1, 1))}><Plus className="w-4 h-4 rotate-45" /></Button>
+              <Button size="icon" variant="ghost" onClick={() => setViewDate(new Date(viewDate.getFullYear(), viewDate.getMonth() - 1, 1))}><ChevronLeft className="w-4 h-4" /></Button>
               <span className="text-sm font-medium w-32 text-center">{MONTHS[viewDate.getMonth()]} {viewDate.getFullYear()}</span>
-              <Button size="icon" variant="ghost" onClick={() => setViewDate(new Date(viewDate.getFullYear(), viewDate.getMonth() + 1, 1))}><Plus className="w-4 h-4 -rotate-45" /></Button>
+              <Button size="icon" variant="ghost" onClick={() => setViewDate(new Date(viewDate.getFullYear(), viewDate.getMonth() + 1, 1))}><ChevronRight className="w-4 h-4" /></Button>
             </div>
           </div>
           <CalendarGrid viewDate={viewDate} leaves={leaves} />

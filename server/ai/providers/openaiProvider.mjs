@@ -179,4 +179,5 @@ export function createOpenAIProvider({ apiKey, model, client } = {}) {
   };
 }
 
+export { SYSTEM_INSTRUCTIONS, promptText, toDataUrl, enforceGrounding };
 export const openAIProviderInternals = { promptText, enforceGrounding };

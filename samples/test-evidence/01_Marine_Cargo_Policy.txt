@@ -1,0 +1,139 @@
+================================================================================
+                        MARINE CARGO INSURANCE POLICY
+================================================================================
+
+POLICY NUMBER:          MCP-2026-041887
+CERTIFICATE NUMBER:     CERT-2026-07-00234
+
+INSURER:                GlobalShield Insurance PLC
+                        Tower Bridge House, St Katharine's Way
+                        London, EC1A 2BN, United Kingdom
+
+INSURED:                Levantine Trading & Logistics S.A.L.
+                        Beirut Central District, Block 12
+                        Beirut, Lebanon
+
+BROKER:                 Meridian Marine Brokers Ltd
+                        Lloyd's of London, One Lime Street
+                        London, EC3M 7HA
+
+--------------------------------------------------------------------------------
+PERIOD OF INSURANCE
+--------------------------------------------------------------------------------
+From:   01 January 2026
+To:     31 December 2026
+Both dates inclusive, at 12:00 noon local standard time.
+
+--------------------------------------------------------------------------------
+SUBJECT MATTER INSURED
+--------------------------------------------------------------------------------
+Industrial machinery, CNC equipment, electrical components, spare parts, and
+associated accessories as per commercial invoice and packing list attached.
+
+--------------------------------------------------------------------------------
+AGREED VALUE / SUM INSURED
+--------------------------------------------------------------------------------
+Sum Insured:            USD 485,000.00
+Basis of Valuation:     CIF + 10% (Invoice value plus 10%)
+Currency:               United States Dollars
+
+--------------------------------------------------------------------------------
+VOYAGE / TRANSIT
+--------------------------------------------------------------------------------
+From:       Shanghai, People's Republic of China
+To:         Beirut Port, Lebanon
+Via:        Any port(s) and/or place(s) in any order
+Conveyance: MV Pacific Endeavour (or substitute vessel)
+Sailing:    On or about 15 June 2026
+
+Transhipment is permitted.
+On-deck stowage is covered, subject to a USD 5,000 additional deductible.
+
+--------------------------------------------------------------------------------
+CONDITIONS OF INSURANCE
+--------------------------------------------------------------------------------
+Institute Cargo Clauses (A) — 01/01/2009
+Institute War Clauses (Cargo) — 01/01/2009
+Institute Strikes Clauses (Cargo) — 01/01/2009
+
+Including but not limited to:
+  - Theft, pilferage, and non-delivery
+  - Fresh and/or rainwater damage
+  - Breakage
+  - Denting, bending, scratching
+  - Shortage in weight or quantity
+  - Hook and/or oil damage
+  - Contact with other cargo
+  - Heating, sweat and/or moisture damage
+
+--------------------------------------------------------------------------------
+DEDUCTIBLE
+--------------------------------------------------------------------------------
+Each and every loss:    USD 2,500.00
+Applies to each and every claim except total loss of the entire consignment.
+
+--------------------------------------------------------------------------------
+POLICY LIMIT
+--------------------------------------------------------------------------------
+Maximum liability per conveyance:    USD 500,000.00
+Annual aggregate limit:              USD 2,000,000.00
+
+--------------------------------------------------------------------------------
+WARRANTIES AND CONDITIONS
+--------------------------------------------------------------------------------
+1.  Goods to be new, unused, and packed in export-standard packaging.
+2.  Goods must be stuffed in clean, dry, and undamaged containers.
+3.  FCL/FCL basis (full container load) unless otherwise agreed.
+4.  Container inspection to be conducted prior to stuffing.
+5.  Notice of any claim to be given to Underwriters within 30 days of
+    discovery of loss or damage.
+6.  Survey to be arranged by Lloyd's Agent or nominated surveyor within
+    72 hours of discharge.
+
+--------------------------------------------------------------------------------
+EXCLUSIONS
+--------------------------------------------------------------------------------
+This policy does not cover:
+  - Inherent vice or nature of the subject matter insured
+  - Delay, loss of market, or consequential loss of any kind
+  - Ordinary wear and tear, leakage, or loss in weight/volume
+  - Insufficiency or unsuitability of packing
+  - Insolvency or financial default of owners/operators
+  - Nuclear, chemical, biological, or radiological risks
+  - Cyber attack or electronic malfunction
+  - Sanctions — as per sanctions limitation and exclusion clause
+
+--------------------------------------------------------------------------------
+CLAIMS
+--------------------------------------------------------------------------------
+Claims settling agents:     United Loss Adjusters & Surveyors (ULA)
+                            Regional Office — Beirut, Lebanon
+                            Email: claims@ula-global.com
+
+In the event of loss or damage:
+  1. Note damage on delivery receipt and retain all documentation
+  2. Notify claims settling agents within 72 hours
+  3. Preserve damaged goods and packaging for survey inspection
+  4. Do not dispose of damaged goods without surveyor's written consent
+
+Loss Payee:  Levantine Trading & Logistics S.A.L.
+
+--------------------------------------------------------------------------------
+PREMIUM
+--------------------------------------------------------------------------------
+Rate:       0.35% of sum insured
+Premium:    USD 1,697.50
+War Risk:   Included (subject to 48 hours automatic termination clause)
+
+--------------------------------------------------------------------------------
+
+Signed on behalf of GlobalShield Insurance PLC
+
+_________________________
+James R. Whitfield
+Senior Marine Underwriter
+Date: 28 December 2025
+
+================================================================================
+                          END OF POLICY DOCUMENT
+================================================================================

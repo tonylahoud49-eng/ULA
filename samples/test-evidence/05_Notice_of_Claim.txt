@@ -1,0 +1,136 @@
+================================================================================
+                          NOTICE OF CLAIM
+                   (Formal Loss Notification Letter)
+================================================================================
+
+                                                    Date: 15 July 2026
+
+To:     GlobalShield Insurance PLC
+        Tower Bridge House, St Katharine's Way
+        London, EC1A 2BN, United Kingdom
+        Attn: Marine Claims Department
+
+CC:     Meridian Marine Brokers Ltd
+        Lloyd's of London, One Lime Street
+        London, EC3M 7HA
+
+CC:     United Loss Adjusters & Surveyors (ULA)
+        Regional Office — Beirut, Lebanon
+        Email: claims@ula-global.com
+
+From:   Levantine Trading & Logistics S.A.L.
+        Beirut Central District, Block 12
+        P.O. Box 11-2345
+        Beirut, Lebanon
+
+Subject: FORMAL NOTICE OF CLAIM — Policy No. MCP-2026-041887
+         Loss/Damage to CNC Machinery Shipment ex-Shanghai to Beirut
+
+================================================================================
+
+Dear Sirs,
+
+We hereby give formal notice of a claim under the above-referenced Marine
+Cargo Insurance Policy in respect of loss and/or damage sustained by our
+consignment of CNC machinery and associated equipment.
+
+CLAIM PARTICULARS:
+
+  Policy Number:          MCP-2026-041887
+  Certificate Number:     CERT-2026-07-00234
+  Insured:                Levantine Trading & Logistics S.A.L.
+  Bill of Lading:         COSCO-SH-BEY-2026-07891
+  Vessel:                 MV Pacific Endeavour, Voyage V.226E
+  Port of Loading:        Shanghai, China
+  Port of Discharge:      Beirut Port, Lebanon
+  Date of Loading:        17 June 2026
+  Date of Discharge:      13 July 2026
+  Container Numbers:      CSLU 7234561 (40'HC), CSLU 7234562 (20'GP)
+  Invoice Number:         JXP-INV-2026-00412
+  Invoice Value (CIF):    USD 473,197.50
+
+DATE OF DISCOVERY OF DAMAGE:    14 July 2026
+
+NATURE AND EXTENT OF DAMAGE:
+
+Upon taking delivery of Container CSLU 7234561 on 13 July 2026, our
+receiving team observed that the container door seals appeared intact.
+However, upon opening and destuffing on 14 July 2026 at our warehouse
+(Beirut Port Free Zone, Warehouse 7), the following damage was discovered:
+
+  1. WATER DAMAGE — Cases 3, 5, 7, and 9 (CNC Milling Machines JXP-500,
+     S/N: JXP500-26-003, -005, -007, -009):
+     Extensive moisture/water ingress inside the wooden crates.
+     Visible rust and corrosion on unpainted machined surfaces, spindle
+     housings, and ball screw assemblies. Water staining on Siemens 840D
+     control units. Wooden crate interiors wet; silica gel desiccant packs
+     saturated.
+
+  2. PHYSICAL IMPACT DAMAGE — Case 11 (CNC Milling Machine JXP-500,
+     S/N: JXP500-26-011):
+     Crate shows evidence of being dropped or struck during handling.
+     Machine base cracked; spindle misaligned; tool changer arm bent.
+     Control panel display shattered.
+
+  3. TILTING / IMPROPER HANDLING — Case 12 (CNC Milling Machine JXP-500,
+     S/N: JXP500-26-012):
+     Crate received tilted on its side. Machine shifted within crate.
+     Levelling bolts sheared; coolant reservoir cracked and leaked.
+
+  TOTAL UNITS AFFECTED: 6 of 12 milling machines (50% of consignment)
+
+Container CSLU 7234562 (20'GP) was received without visible external
+damage. Contents are being inspected but no damage has been discovered
+to date.
+
+PRELIMINARY ESTIMATED CLAIM:
+
+  4 x Water-damaged machines @ USD 22,500 each       USD  90,000.00
+  1 x Impact-damaged machine (likely beyond repair)   USD  22,500.00
+  1 x Tilt-damaged machine                            USD  22,500.00
+  Repair / restoration costs (estimate)                USD  35,000.00
+  Loss of production / consequential (reserved)        TBD
+  ---------------------------------------------------------------
+  PRELIMINARY TOTAL:                          approx. USD 170,000.00
+
+  (Final quantum subject to detailed survey, assessment, and
+   repair quotations.)
+
+ACTIONS TAKEN:
+
+  1. Damage was noted on the delivery receipt / equipment interchange
+     receipt (EIR) at the time of container collection.
+  2. All damaged goods and packaging have been preserved in their current
+     state at Warehouse 7 for survey inspection.
+  3. Photographs have been taken and are available upon request.
+  4. Formal protest letter has been lodged with COSCO Shipping Lines
+     and the port terminal operator.
+  5. ULA has been notified and a survey has been requested.
+
+DOCUMENTS AVAILABLE:
+
+  - Insurance Policy / Certificate
+  - Bill of Lading (3/3 originals)
+  - Commercial Invoice
+  - Packing List
+  - Equipment Interchange Receipt with damage remarks
+  - Photographs of damaged units and container interior
+  - Protest letter to carrier
+
+We respectfully request that you acknowledge this claim and arrange for
+a survey to be conducted at the earliest opportunity. The damaged goods
+remain available for inspection at the above warehouse address.
+
+We reserve all rights under the policy and at law.
+
+Yours faithfully,
+
+_________________________
+Mr. Ahmad Nassar
+Procurement Director
+Levantine Trading & Logistics S.A.L.
+
+Tel: +961 1 999 888
+Email: procurement@levantine-trading.com
+
+================================================================================
