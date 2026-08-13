@@ -1,0 +1,19 @@
+UNITED LOSS ADJUSTERS & SURVEYORS (ULA)
+PRELIMINARY ATTENDANCE & SURVEY REPORT
+Date of Attendance: 14 March 2026
+Surveyor: Petro Zaarour, Chartered Marine Surveyor & Loss Adjuster
+Location: Cargo Handling Facility, Beirut Airport Freight Terminal
+Subject: Inspection of 4 wooden crates containing diagnostic analyzers ex Flight SF-802
+
+FINDINGS:
+1. Physical shock indicators on Crates #2 and #3 were activated (red latch tripped > 25G impact).
+2. Internal casing on Analyzer Unit #2 showed hairline fracture across laser optic mounting.
+3. Cold chain temperature data logger recorded temperature excursion to +28.4C for 6 hours due to delayed tarmac transfer.
+4. Technical calibration testing indicates Unit #2 is beyond economical repair (Total Loss).
+5. Unit #1 and Sensor Arrays #3-#4 tested compliant and operational after recalibration.
+
+RECOMMENDED QUANTUM ADJUSTMENT:
+- Total Loss Unit #2: USD 38,000.00
+- Recalibration & Inspection Cost: USD 4,200.00
+- Less Agreed Policy Deductible: (USD 2,500.00)
+- Net Concluded Payable Quantum: USD 39,700.00

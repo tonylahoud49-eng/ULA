@@ -1,0 +1,14 @@
+COMMERCIAL INVOICE
+Invoice No: INV-2026-991 | Date: 08 March 2026
+Seller: BioTech Precision Instruments GmbH, Siemensstrasse 14, Frankfurt, Germany
+Buyer: Levant Medical Supplies SAL, Hamra Street, Beirut, Lebanon
+Terms: CIP Beirut Airport (Incoterms 2020)
+--------------------------------------------------------------------------------
+Item | Description | Qty | Unit Price (USD) | Total (USD)
+1    | Precision Analyzer Core Unit Mod-X4  | 2  | 38,000.00 | 76,000.00
+2    | Optical Calibration Module Sens-9    | 2  | 14,500.00 | 29,000.00
+3    | Reagent Sensor Interface Arrays      | 4  | 3,375.00  | 13,500.00
+--------------------------------------------------------------------------------
+Total Commercial Value: USD 118,500.00
+Payment Terms: Confirmed Irrevocable Letter of Credit
+Insurer Notified: Lia Assurex SAL

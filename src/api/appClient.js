@@ -458,74 +458,7 @@ const buildReport = async ({ claim_id: claimId, edited_data: editedData }) => {
     versions,
     generatedBy: user.full_name || user.email,
   });
-  const value = (item, fallback = "Requires confirmation — document not provided") => item || fallback;
-  const content = unifiedDraft.content || `# ${value(claim.claim_number, "Claim Report")}
-
-## Cover Page
-
-- **Claim:** ${value(claim.title)}
-- **Business Line:** ${value(claim.business_line, "Unclassified")}
-- **Insured:** ${value(claim.insured)}
-- **Insurer:** ${value(claim.insurer)}
-- **Surveyor:** ${value(claim.surveyor, "To be assigned")}
-- **Date:** ${new Date().toLocaleDateString()}
-
-## Report Summary
-
-This locally generated draft is based on the information entered in the claim record and the uploaded evidence list. Professional review and confirmation are required before finalization.
-
-## Claim Summary Table
-
-| Field | Value |
-| --- | --- |
-| Policy Number | ${value(claim.policy_number)} |
-| Date of Loss | ${value(claim.date_of_loss)} |
-| Cause of Loss | ${value(claim.cause_of_loss)} |
-| Claim Amount | ${value(claim.claim_amount, "To be quantified")} |
-
-## Findings
-
-${value(claim.description)}
-
-## Cause of Loss
-
-${value(claim.cause_of_loss)}
-
-## Policy Analysis
-
-Policy terms, limits, exclusions, and deductible require professional review against the complete policy documentation.
-
-## Adjustment
-
-The adjustment remains subject to verification of supporting evidence and claimed values.
-
-## Liability Discussion
-
-Liability has not been independently determined in this local draft.
-
-## Recommendations
-
-Review all supporting documents, confirm outstanding information, and obtain insurer instructions before finalizing the report.
-
-## Conclusion
-
-This document is a draft for review and is not a final coverage or liability determination.
-
-## Appendices
-
-${documents.length ? documents.map((document) => `- ${document.file_name} (${document.file_type || "Other"})`).join("\n") : "- No supporting documents uploaded"}
-
-## Supporting Documents
-
-See the appendices above.
-
-## Outstanding Documents
-
-${claim.missing_documents?.length ? claim.missing_documents.map((item) => `- ${item}`).join("\n") : "- None identified"}
-
-## Photo References
-
-${documents.filter((document) => document.file_type === "Photo").map((document) => `- ${document.file_name}`).join("\n") || "- No photo evidence uploaded"}`;
+  const content = unifiedDraft.content;
 
   const report = await entities.ReportVersion.create({
     claim_id: claimId,

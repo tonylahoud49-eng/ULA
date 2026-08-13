@@ -1,0 +1,21 @@
+LOSS ADJUSTER ATTENDANCE & CAUSE OF LOSS REPORT
+Surveying Firm: United Loss Adjusters & Surveyors Ltd (ULA)
+Surveyor Attended: Annie Abdel Massih, Chartered Engineer
+Date of Loss: 24 February 2026 | Date of Attendance: 25 February 2026
+Incident: Water ingress and ceiling collapse following overhead main freeze/rupture.
+
+INVESTIGATION SUMMARY:
+Inspection of warehouse bay 3 revealed catastrophic rupture of 4-inch main distribution riser on mezzanine floor. Escaping water accumulated on suspended acoustic ceiling causing partial collapse over finished goods storage.
+
+DAMAGES NOTED:
+1. Suspended ceiling grid and insulation tiles: 180 sqm destroyed.
+2. Palletized packaging stock (Grade A retail cartons): 450 units water-soaked.
+3. Electrical sub-distribution board Bay 3: Short-circuited and contaminated.
+
+ADJUSTMENT SUMMARY:
+- Building Repair Quotation (Apex Contractors Ltd): GBP 34,200.00
+- Damaged Stock (Cost Price basis): GBP 28,400.00
+- Electrical Rewiring & Testing: GBP 8,900.00
+- Total Claimed: GBP 71,500.00
+- Less Policy Deductible: (GBP 10,000.00)
+- Net Concluded Adjusted Amount: GBP 61,500.00

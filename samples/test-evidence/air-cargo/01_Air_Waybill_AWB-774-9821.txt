@@ -1,0 +1,12 @@
+AIR WAYBILL / LETTRE DE TRANSPORT AERIEN
+AWB Number: 774-9821-4402
+Airport of Departure: Frankfurt Airport (FRA), Germany
+Airport of Destination: Beirut Rafic Hariri International Airport (BEY), Lebanon
+Shipper: BioTech Precision Instruments GmbH, Frankfurt, Germany
+Consignee: Levant Medical Supplies SAL, Beirut, Lebanon
+Carrier: SkyFreight Cargo Airlines (Flight SF-802)
+Handling Info: TEMPERATURE CONTROLLED (+2C to +8C). CRITICAL MEDICAL SENSORS.
+Commodity: 4 Crates Temperature-Sensitive Diagnostic Analyzers
+Gross Weight: 340.0 kg | Declared Value for Carriage: USD 118,500.00
+Flight Date: 12 March 2026
+Condition at Destination: Cargo arrived with broken seals and external shock sensor triggered.
