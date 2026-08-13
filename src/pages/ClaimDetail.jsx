@@ -444,7 +444,7 @@ function ControlledReportPreview({ report, data }) {
             </div>
 
             <div style={{ textAlign: "center", margin: "1rem auto" }}>
-              <img src={ulaJusticeStatue} alt="Lady Justice" style={{ width: "268px", height: "385px", display: "block", margin: "0 auto" }} />
+              <img src={ulaJusticeStatue} alt="Lady Justice" style={{ width: "300px", height: "435px", objectFit: "cover", display: "block", margin: "0 auto" }} />
             </div>
 
             <p style={{ margin: "1.25rem auto 0", maxWidth: "34rem", fontSize: "0.75rem", color: "#6b7280", lineHeight: 1.55, textAlign: "justify", borderTop: "1px solid #e5e7eb", paddingTop: "0.75rem" }}>
@@ -1094,9 +1094,9 @@ function ReportSection({ claimId, claim, reports, onChanged }) {
                 </div>
               </div>
 
-              {/* Authentic Lady Justice Statue from Sample Word Document */}
-              <div style={{ textAlign: "center", display: "flex", alignItems: "center", justifyContent: "center", margin: "8px auto" }}>
-                <img src={ulaJusticeStatue} alt="Lady Justice" style={{ width: "268px", height: "385px", display: "block" }} />
+              {/* Authentic Lady Justice Statue from Fidelity Sample */}
+              <div style={{ textAlign: "center", display: "flex", alignItems: "center", justifyContent: "center", margin: "6px auto 10px" }}>
+                <img src={ulaJusticeStatue} alt="Lady Justice" style={{ width: "310px", height: "450px", objectFit: "cover", display: "block" }} />
               </div>
 
               {/* Complete Legal & Regulatory Disclaimers */}
