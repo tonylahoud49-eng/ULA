@@ -41,7 +41,10 @@ const sourceSchema = z.object({
   page: z.number().int().positive().nullable(),
   supporting_text: z.string(),
   confidence: z.number().min(0).max(1),
-  evidence_mode: z.enum(["extracted_text", "document_vision", "image_vision"]),
+  evidence_mode: z.preprocess(
+    (value) => value ?? "extracted_text",
+    z.enum(["extracted_text", "document_vision", "image_vision"]),
+  ),
 });
 
 const fieldSchema = z.object({

@@ -2,7 +2,7 @@ import OpenAI from "openai";
 import { zodResponseFormat } from "openai/helpers/zod";
 import { claimAnalysisSchema } from "../claimAnalysisSchema.mjs";
 import { evidenceText } from "../../evidence/extractEvidence.mjs";
-import { SYSTEM_INSTRUCTIONS, promptText, toDataUrl, enforceGrounding } from "./openaiProvider.mjs";
+import { SYSTEM_INSTRUCTIONS, promptText, toDataUrl, enforceGrounding, parseStructuredJson } from "./openaiProvider.mjs";
 
 /**
  * OpenRouter provider — uses the OpenAI SDK pointed at OpenRouter's API.
@@ -20,6 +20,11 @@ const DEFAULT_MODEL = "google/gemma-4-31b-it:free";
 
 export function createOpenRouterProvider({ apiKey, model, client } = {}) {
   const resolvedModel = model || DEFAULT_MODEL;
+  const modelCandidates = [...new Set([
+    resolvedModel,
+    resolvedModel.endsWith(":free") ? resolvedModel.replace(/:free$/, "") : null,
+    resolvedModel.includes(":free") ? DEFAULT_MODEL : null,
+  ].filter(Boolean))];
   const openai = client || new OpenAI({
     apiKey,
     baseURL: OPENROUTER_BASE_URL,
@@ -75,34 +80,45 @@ export function createOpenRouterProvider({ apiKey, model, client } = {}) {
         cleanSchema(responseFormat.json_schema.schema);
       }
 
-      const response = await openai.chat.completions.create({
-        model: resolvedModel,
-        messages: [
-          { role: "system", content: SYSTEM_INSTRUCTIONS },
-          { role: "user", content: userContent },
-        ],
-        response_format: responseFormat,
-      });
+      let lastError;
+      for (const candidateModel of modelCandidates) {
+        try {
+          const response = await openai.chat.completions.create({
+            model: candidateModel,
+            messages: [
+              { role: "system", content: SYSTEM_INSTRUCTIONS },
+              { role: "user", content: userContent },
+            ],
+            response_format: responseFormat,
+          });
 
-      const choice = response.choices?.[0];
-      if (!choice?.message?.content) {
-        throw new Error("The AI provider returned no structured analysis.");
+          const choice = response.choices?.[0];
+          if (!choice?.message?.content) {
+            throw new Error("The AI provider returned no structured analysis.");
+          }
+
+          let parsed;
+          try {
+            parsed = claimAnalysisSchema.parse(parseStructuredJson(choice.message.content));
+          } catch (parseError) {
+            throw new Error(`The AI provider returned invalid structured output: ${parseError.message}`);
+          }
+
+          return {
+            provider: "openrouter",
+            model: candidateModel,
+            response_id: response.id || null,
+            analyzed_at: new Date().toISOString(),
+            analysis: enforceGrounding(parsed, evidence),
+          };
+        } catch (error) {
+          lastError = error;
+          if (Number(error?.status) !== 404 || candidateModel === modelCandidates.at(-1)) {
+            throw error;
+          }
+        }
       }
-
-      let parsed;
-      try {
-        parsed = claimAnalysisSchema.parse(JSON.parse(choice.message.content));
-      } catch (parseError) {
-        throw new Error(`The AI provider returned invalid structured output: ${parseError.message}`);
-      }
-
-      return {
-        provider: "openrouter",
-        model: resolvedModel,
-        response_id: response.id || null,
-        analyzed_at: new Date().toISOString(),
-        analysis: enforceGrounding(parsed, evidence),
-      };
+      throw lastError;
     },
   };
 }

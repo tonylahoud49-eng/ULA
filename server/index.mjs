@@ -60,6 +60,8 @@ app.post("/api/ai/analyze", upload.array("files", maxFiles), async (request, res
     const statusCode = isProviderError ? 502 : 500;
     let providerMessage = error?.status === 401
       ? "AI provider credentials were rejected. Check the server configuration."
+      : error?.status === 404
+        ? "The configured AI model or endpoint was not found. Check the provider model name in the server environment."
       : error?.status === 429
         ? "The AI provider rate or usage limit was reached. Try again later or review the provider account."
         : "The AI provider could not complete this evidence analysis.";

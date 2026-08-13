@@ -1,6 +1,7 @@
 import fs from "node:fs/promises";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
+import JSZip from "jszip";
 import {
   AlignmentType,
   BorderStyle,
@@ -28,6 +29,13 @@ const currentFile = fileURLToPath(import.meta.url);
 const projectRoot = path.resolve(path.dirname(currentFile), "..");
 const outputDir = path.join(projectRoot, "samples", "templates");
 const logo = await fs.readFile(path.join(outputDir, "assets", "ula-logo.png"));
+const sourceSample = await fs.readFile(path.join(projectRoot, "samples", "Property Sample.docx"));
+const sourceSampleZip = await JSZip.loadAsync(sourceSample);
+const justiceArtwork = await sourceSampleZip.file("word/media/image12.png")?.async("nodebuffer");
+
+if (!justiceArtwork) {
+  throw new Error("The ULA justice artwork could not be read from the approved Property sample.");
+}
 
 const colors = {
   teal: "1F8A79",
@@ -97,6 +105,58 @@ const sectionPlaceholder = (section) => [
     : []),
 ];
 
+const controlledCover = (template) => [
+  new Paragraph({
+    alignment: AlignmentType.CENTER,
+    spacing: { before: 360, after: 220 },
+    children: [new ImageRun({ data: logo, transformation: { width: 148, height: 148 }, type: "png" })],
+  }),
+  new Paragraph({
+    alignment: AlignmentType.CENTER,
+    spacing: { after: 80 },
+    children: [text("UNITED LOSS ADJUSTERS & SURVEYORS", { bold: true, size: 17, color: colors.teal })],
+  }),
+  new Paragraph({
+    style: "Title",
+    alignment: AlignmentType.CENTER,
+    spacing: { before: 420, after: 130 },
+    children: [text(template.name, { bold: true, size: 48 })],
+  }),
+  new Paragraph({
+    alignment: AlignmentType.CENTER,
+    spacing: { after: 360 },
+    children: [text("{{report_issue_state}} REPORT", { bold: true, size: 22, color: colors.teal })],
+  }),
+  new Table({
+    width: { size: 100, type: WidthType.PERCENTAGE },
+    rows: [
+      new TableRow({ children: [labelCell("INSURED"), valueCell("{{insured_name}}") ] }),
+      new TableRow({ children: [labelCell("INSURER"), valueCell("{{insurer}}") ] }),
+      new TableRow({ children: [labelCell("ULA REFERENCE"), valueCell("{{claim_number}}") ] }),
+    ],
+  }),
+  new Paragraph({ spacing: { before: 260 }, children: [new PageBreak()] }),
+];
+
+const finalCorporatePage = () => [
+  new Paragraph({ children: [new PageBreak()] }),
+  new Table({
+    width: { size: 100, type: WidthType.PERCENTAGE },
+    rows: [new TableRow({ children: [new TableCell({
+      shading: { fill: colors.teal },
+      borders: { top: { style: BorderStyle.SINGLE, size: 10, color: colors.teal }, bottom: { style: BorderStyle.SINGLE, size: 10, color: colors.teal }, left: { style: BorderStyle.SINGLE, size: 10, color: colors.teal }, right: { style: BorderStyle.SINGLE, size: 10, color: colors.teal } },
+      margins: { top: 420, right: 420, bottom: 420, left: 420 },
+      children: [
+        new Paragraph({ alignment: AlignmentType.CENTER, children: [new ImageRun({ data: justiceArtwork, transformation: { width: 270, height: 270 }, type: "png" })] }),
+        new Paragraph({ alignment: AlignmentType.CENTER, spacing: { before: 180, after: 90 }, children: [new ImageRun({ data: logo, transformation: { width: 86, height: 86 }, type: "png" })] }),
+        new Paragraph({ alignment: AlignmentType.CENTER, children: [text("UNITED LOSS ADJUSTERS & SURVEYORS", { bold: true, size: 20, color: colors.white })] }),
+        new Paragraph({ alignment: AlignmentType.CENTER, spacing: { before: 130, after: 180 }, children: [text("Independent loss adjusting, surveying and claims consultancy", { size: 16, color: colors.white })] }),
+        new Paragraph({ alignment: AlignmentType.CENTER, children: [text("This controlled report is issued subject to ULA's agreed terms, conditions and professional review requirements.", { size: 15, color: colors.white })] }),
+      ],
+    })] })],
+  }),
+];
+
 function buildDocument(template) {
   const allSections = template.sections.filter((section, index, items) =>
     items.findIndex((candidate) => candidate.id === section.id) === index,
@@ -147,23 +207,7 @@ function buildDocument(template) {
         }),
       },
       children: [
-        new Paragraph({
-          alignment: AlignmentType.CENTER,
-          spacing: { after: 280 },
-          children: [new ImageRun({ data: logo, transformation: { width: 168, height: 168 }, type: "png" })],
-        }),
-        new Paragraph({ style: "Title", alignment: AlignmentType.CENTER, children: [text(template.name, { bold: true, size: 46 })] }),
-        new Paragraph({ alignment: AlignmentType.CENTER, children: [text("{{report_issue_state}} REPORT", { bold: true, size: 22, color: colors.teal })] }),
-        new Paragraph({ alignment: AlignmentType.CENTER, spacing: { before: 500 }, children: [text("{{insured_name}}", { bold: true, size: 30 })] }),
-        new Paragraph({ alignment: AlignmentType.CENTER, children: [text("{{loss_or_interest_description}}", { size: 24 })] }),
-        new Paragraph({ spacing: { before: 500 } }),
-        fieldTable([
-          ["ULA Reference", "{{claim_number}}"],
-          ["Policy", "{{policy_number}}"],
-          ["Date of Loss", "{{date_of_loss}}"],
-          ["Date of Issue", "{{issue_date}}"],
-        ]),
-        new Paragraph({ children: [new PageBreak()] }),
+        ...controlledCover(template),
         new Paragraph({ heading: HeadingLevel.HEADING_1, children: [text("Document Control", { bold: true, size: 28, color: colors.teal })] }),
         new Table({
           width: { size: 100, type: WidthType.PERCENTAGE },
@@ -188,6 +232,7 @@ function buildDocument(template) {
           ["Adjusted Amount", "{{currency}} {{adjusted_amount}}"],
         ]),
         ...allSections.flatMap(sectionPlaceholder),
+        ...finalCorporatePage(),
       ],
     }],
   });
@@ -199,6 +244,7 @@ const documents = [
 ];
 
 await fs.mkdir(outputDir, { recursive: true });
+await fs.writeFile(path.join(outputDir, "assets", "ula-justice.png"), justiceArtwork);
 for (const [filename, template] of documents) {
   const buffer = await Packer.toBuffer(buildDocument(template));
   await fs.writeFile(path.join(outputDir, filename), buffer);

@@ -33,6 +33,7 @@ export default function AIReporting() {
   const [claim, setClaim] = useState(null);
   const [documents, setDocuments] = useState([]);
   const [analyzing, setAnalyzing] = useState(false);
+  const [analysisProgress, setAnalysisProgress] = useState({ active: false, progress: 0, stage: "", step: 1, totalSteps: 4 });
   const [analysis, setAnalysis] = useState(null);
   const [analysisError, setAnalysisError] = useState("");
   const [edited, setEdited] = useState({});
@@ -71,8 +72,20 @@ export default function AIReporting() {
   const runAnalysis = async () => {
     setAnalyzing(true);
     setAnalysisError("");
+    setAnalysisProgress({ active: true, progress: 15, stage: "Ingesting evidence files & extracting OCR metadata...", step: 1, totalSteps: 4 });
+    const timer1 = setTimeout(() => {
+      setAnalysisProgress({ active: true, progress: 45, stage: "Classifying document categories & confidence scoring...", step: 2, totalSteps: 4 });
+    }, 500);
+    const timer2 = setTimeout(() => {
+      setAnalysisProgress({ active: true, progress: 75, stage: "Extracting salient facts & policy coverage positions...", step: 3, totalSteps: 4 });
+    }, 1200);
+
     try {
       const response = await appClient.functions.invoke("analyseClaim", { claim_id: selectedClaimId });
+      clearTimeout(timer1);
+      clearTimeout(timer2);
+      setAnalysisProgress({ active: true, progress: 100, stage: "Analysis complete! Finalizing suggestions...", step: 4, totalSteps: 4 });
+      await new Promise((r) => setTimeout(r, 300));
       setAnalysis(response.data.analysis);
       await selectClaim(selectedClaimId);
       setAnalysis(response.data.analysis);
@@ -84,11 +97,14 @@ export default function AIReporting() {
       })));
       setStep(3);
     } catch (error) {
+      clearTimeout(timer1);
+      clearTimeout(timer2);
       const message = error.response?.data?.error || error.message;
       setAnalysisError(message);
       toast({ variant: "destructive", title: "Analysis could not be completed", description: message });
     } finally {
       setAnalyzing(false);
+      setAnalysisProgress({ active: false, progress: 0, stage: "", step: 1, totalSteps: 4 });
     }
   };
 
@@ -148,17 +164,41 @@ export default function AIReporting() {
       {step === 1 && claim && (
         <div className="space-y-4">
           <Card className="docket-surface border-primary/25 bg-primary/5 p-4 shadow-none">
-            <div className="flex flex-wrap items-center justify-between gap-3"><p className="text-sm">Reporting on <span className="font-semibold">{claim.title}</span> ({claim.claim_number})</p><span className="status-mark border-primary/30 bg-card text-primary">{readiness.template.name}</span></div>
+            <div className="flex flex-col justify-between gap-2 sm:flex-row sm:items-center">
+              <div><p className="docket-label">Active claim</p><h3 className="font-heading text-lg font-semibold">{claim.title} ({claim.claim_number})</h3></div>
+              <p className="text-xs text-muted-foreground">{claim.business_line} · {documents.length} evidence file(s)</p>
+            </div>
           </Card>
           <DocumentUploader claimId={selectedClaimId} documents={documents} onChanged={reloadDocs} />
-          <div className="flex justify-between"><Button variant="outline" onClick={() => setStep(0)}><ArrowLeft /> Back</Button><Button onClick={() => setStep(2)} disabled={!documents.length}>Continue <ArrowRight /></Button></div>
+          <div className="flex justify-between">
+            <Button variant="outline" onClick={() => setStep(0)}><ArrowLeft /> Change claim</Button>
+            <Button onClick={() => setStep(2)} disabled={!documents.length}>Continue to AI Analysis <ArrowRight /></Button>
+          </div>
         </div>
       )}
 
       {step === 2 && claim && (
         <Card className="docket-surface p-8 text-center shadow-none">
           {analyzing ? (
-            <div className="flex flex-col items-center"><Loader2 className="mb-4 h-11 w-11 animate-spin text-primary" /><h3 className="font-heading text-xl font-semibold">Analyzing the complete evidence set…</h3><p className="mx-auto mt-2 max-w-md text-sm text-muted-foreground">The configured AI service is reading document text, scanned PDF pages, and images together. Every suggested fact must remain linked to its source for review.</p></div>
+            <div className="mx-auto max-w-lg space-y-4 py-4 text-left">
+              <div className="flex items-center justify-between">
+                <div className="flex items-center gap-2 text-primary">
+                  <Sparkles className="h-5 w-5 animate-spin text-primary" />
+                  <h3 className="font-heading text-lg font-semibold uppercase tracking-wider">AI Evidence Analysis in Progress</h3>
+                </div>
+                <span className="font-mono text-sm font-bold text-primary">{analysisProgress.progress}%</span>
+              </div>
+              <div className="h-2.5 w-full overflow-hidden rounded-full bg-primary/15">
+                <div
+                  className="h-full bg-primary transition-all duration-500 ease-out rounded-full"
+                  style={{ width: `${analysisProgress.progress}%` }}
+                />
+              </div>
+              <div className="flex items-center justify-between text-xs text-muted-foreground">
+                <span>{analysisProgress.stage}</span>
+                <span className="font-mono text-[0.7rem]">Step {analysisProgress.step} of {analysisProgress.totalSteps}</span>
+              </div>
+            </div>
           ) : (
             <><FileText className="mx-auto mb-4 h-11 w-11 text-primary" /><h3 className="font-heading text-xl font-semibold">Ready to review {documents.length} source document(s)</h3><p className="mx-auto mt-2 max-w-md text-sm text-muted-foreground">All registered evidence is submitted to the configured AI provider for content-based classification and extraction. Unsupported facts remain marked for confirmation.</p>{analysisError && <div className="mx-auto mt-4 max-w-xl rounded-md border border-destructive/30 bg-destructive/5 p-3 text-left text-sm text-destructive" role="alert"><strong>AI analysis unavailable.</strong> {analysisError.replace(/^AI analysis unavailable\s*[—-]\s*/i, "")}</div>}<Button onClick={runAnalysis} className="mt-5"><Sparkles /> Run AI Analysis</Button></>
           )}

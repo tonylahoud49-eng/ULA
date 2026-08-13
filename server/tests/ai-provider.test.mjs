@@ -329,4 +329,42 @@ test("openrouter provider sends a Chat Completions request without sending PDF i
   assert.equal(request.response_format.type, "json_schema");
 });
 
+test("openrouter provider retries the base model slug after a 404", async () => {
+  const calls = [];
+  const client = {
+    chat: {
+      completions: {
+        create: async (value) => {
+          calls.push(value.model);
+          if (calls.length === 1) {
+            const error = new Error("Not Found");
+            error.status = 404;
+            throw error;
+          }
+          return {
+            id: "chatcmpl-openrouter-retry",
+            choices: [{ message: { content: JSON.stringify(structuredAnalysis) } }],
+          };
+        },
+      },
+    },
+  };
+  const provider = createOpenRouterProvider({ client, model: "google/gemma-4-26b-a4b-it:free" });
+  const evidence = [{
+    document_id: "combined-1",
+    document_name: "upload-a.docx",
+    mime_type: "text/plain",
+    kind: "text",
+    extraction_status: "extracted",
+    pages: [{ page: null, text: textSource.supporting_text }],
+  }];
+  const result = await provider.analyze({
+    claim: { id: "claim-1" },
+    evidence,
+    files: [{ mimetype: "text/plain", buffer: Buffer.from(textSource.supporting_text) }],
+  });
+  assert.equal(result.provider, "openrouter");
+  assert.deepEqual(calls, ["google/gemma-4-26b-a4b-it:free", "google/gemma-4-26b-a4b-it"]);
+});
+
 

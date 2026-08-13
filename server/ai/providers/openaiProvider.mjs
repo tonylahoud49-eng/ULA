@@ -21,6 +21,20 @@ Non-negotiable evidence rules:
 
 const toDataUrl = (file) => `data:${file.mimetype || "application/octet-stream"};base64,${file.buffer.toString("base64")}`;
 
+function stripJsonFences(value) {
+  const text = String(value || "").trim();
+  const fenced = text.match(/^```(?:json)?\s*([\s\S]*?)\s*```$/i);
+  return fenced ? fenced[1].trim() : text;
+}
+
+function parseStructuredJson(value) {
+  const text = stripJsonFences(value);
+  const start = text.indexOf("{");
+  const end = text.lastIndexOf("}");
+  const candidate = start >= 0 && end > start ? text.slice(start, end + 1) : text;
+  return JSON.parse(candidate);
+}
+
 function promptText(claim, evidence, styleReferences) {
   const evidenceSections = evidence.map((item) => {
     const text = evidenceText(item);
@@ -179,5 +193,5 @@ export function createOpenAIProvider({ apiKey, model, client } = {}) {
   };
 }
 
-export { SYSTEM_INSTRUCTIONS, promptText, toDataUrl, enforceGrounding };
-export const openAIProviderInternals = { promptText, enforceGrounding };
+export { SYSTEM_INSTRUCTIONS, promptText, toDataUrl, enforceGrounding, stripJsonFences, parseStructuredJson };
+export const openAIProviderInternals = { promptText, enforceGrounding, stripJsonFences, parseStructuredJson };

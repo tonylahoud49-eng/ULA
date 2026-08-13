@@ -5,6 +5,7 @@ import { createGeminiProvider } from "./providers/geminiProvider.mjs";
 const PROVIDER_CONFIGS = {
   gemini: {
     keyVar: "GEMINI_API_KEY",
+    fallbackKeyVars: ["GEMINI_API_KEY_2"],
     modelVar: "GEMINI_MODEL",
     defaultModel: "gemini-2.5-flash",
     factory: createGeminiProvider,
@@ -32,7 +33,9 @@ function statusForProvider(name, env) {
     return { configured: false, provider: name, model: null, reason: `Unsupported AI provider: ${name}.` };
   }
   const model = env[config.modelVar] || config.defaultModel;
-  if (!env[config.keyVar]) {
+  const hasPrimaryKey = Boolean(env[config.keyVar]);
+  const hasFallbackKey = (config.fallbackKeyVars || []).some((keyVar) => Boolean(env[keyVar]));
+  if (!hasPrimaryKey && !hasFallbackKey) {
     return {
       configured: false,
       provider: name,
@@ -73,7 +76,8 @@ function instantiate(name, env) {
   const config = PROVIDER_CONFIGS[name];
   if (!config) return null;
   const model = env[config.modelVar] || config.defaultModel;
-  return config.factory({ apiKey: env[config.keyVar], model });
+  const apiKey = env[config.keyVar] || (config.fallbackKeyVars || []).map((keyVar) => env[keyVar]).find(Boolean);
+  return config.factory({ apiKey, model });
 }
 
 export function createConfiguredProvider(env = process.env) {

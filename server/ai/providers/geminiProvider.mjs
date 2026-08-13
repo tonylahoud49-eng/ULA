@@ -1,7 +1,7 @@
 import OpenAI from "openai";
 import { zodResponseFormat } from "openai/helpers/zod";
 import { claimAnalysisSchema } from "../claimAnalysisSchema.mjs";
-import { SYSTEM_INSTRUCTIONS, promptText, toDataUrl, enforceGrounding } from "./openaiProvider.mjs";
+import { SYSTEM_INSTRUCTIONS, promptText, toDataUrl, enforceGrounding, parseStructuredJson } from "./openaiProvider.mjs";
 
 /**
  * Gemini provider — uses the OpenAI SDK pointed at Google's OpenAI-compatible endpoint.
@@ -69,14 +69,29 @@ export function createGeminiProvider({ apiKey, model, client } = {}) {
         cleanSchema(responseFormat.json_schema.schema);
       }
 
-      const response = await openai.chat.completions.create({
-        model: resolvedModel,
-        messages: [
-          { role: "system", content: SYSTEM_INSTRUCTIONS },
-          { role: "user", content: userContent },
-        ],
-        response_format: responseFormat,
-      });
+      let response;
+      try {
+        response = await openai.chat.completions.create({
+          model: resolvedModel,
+          messages: [
+            { role: "system", content: SYSTEM_INSTRUCTIONS },
+            { role: "user", content: userContent },
+          ],
+          response_format: responseFormat,
+        });
+      } catch (error) {
+        if (Number(error?.status) === 404) {
+          response = await openai.chat.completions.create({
+            model: resolvedModel,
+            messages: [
+              { role: "system", content: SYSTEM_INSTRUCTIONS },
+              { role: "user", content: userContent },
+            ],
+          });
+        } else {
+          throw error;
+        }
+      }
 
       const choice = response.choices?.[0];
       if (!choice?.message?.content) {
@@ -85,7 +100,7 @@ export function createGeminiProvider({ apiKey, model, client } = {}) {
 
       let parsed;
       try {
-        parsed = claimAnalysisSchema.parse(JSON.parse(choice.message.content));
+        parsed = claimAnalysisSchema.parse(parseStructuredJson(choice.message.content));
       } catch (parseError) {
         throw new Error(`The AI provider returned invalid structured output: ${parseError.message}`);
       }
