@@ -815,45 +815,45 @@ function ReportSection({ claimId, claim, reports, onChanged }) {
       {/* Hidden container for PDF export */}
       {exportReport && (
         <div style={{ position: "absolute", left: "-9999px", top: "-9999px", width: "794px" }}>
-          {/* Page 1: Cover Page — Framed with sage border, top teal line, metadata table, logo tagline, and skyscrapers */}
-          <div ref={pdfCoverRef} style={{ width: "794px", height: "1123px", background: "#85b2a9", padding: "30px", boxSizing: "border-box", overflow: "hidden" }}>
-            <div style={{ width: "100%", height: "100%", background: "#ffffff", padding: "36px 44px", boxSizing: "border-box", display: "flex", flexDirection: "column", justifyContent: "space-between" }}>
+          {/* Page 1: Cover Page — Framed with sage border on left/right/bottom (NO TOP BORDER), top teal line, metadata table, logo tagline, and skyscrapers */}
+          <div ref={pdfCoverRef} style={{ width: "794px", height: "1123px", background: "#85b2a9", padding: "0 32px 32px 32px", boxSizing: "border-box", overflow: "hidden" }}>
+            <div style={{ width: "100%", height: "100%", background: "#ffffff", padding: "40px 48px 36px 48px", boxSizing: "border-box", display: "flex", flexDirection: "column", justifyContent: "space-between" }}>
               <div>
-                <div style={{ width: "100%", height: "4px", background: "#7faea4", marginBottom: "20px" }} />
-                <h1 style={{ margin: "0 0 18px", color: "#111827", fontFamily: "'Source Sans 3', sans-serif", fontSize: "24px", fontWeight: 700, lineHeight: 1.3 }}>
+                <div style={{ width: "100%", height: "4px", background: "#7faea4", marginBottom: "22px" }} />
+                <h1 style={{ margin: "0 0 20px", color: "#111827", fontFamily: "'Source Sans 3', sans-serif", fontSize: "24px", fontWeight: 700, lineHeight: 1.3 }}>
                   {`M/s. ${getReportData(exportReport).insurer || "Applicant"} – M/s. ${getReportData(exportReport).insured_name || "Assured"} – ${getReportData(exportReport).loss_or_interest_description || "Survey & Claim Report"}`}
                 </h1>
                 <table style={{ width: "100%", borderCollapse: "collapse", fontSize: "12.5px", fontFamily: "'Source Sans 3', sans-serif" }}>
                   <tbody>
                     <tr>
-                      <td style={{ padding: "6px 0", borderBottom: "1px solid #7faea4", width: "32%", fontWeight: 700, color: "#111827" }}>ULA reference:</td>
-                      <td style={{ padding: "6px 0", borderBottom: "1px solid #7faea4", color: "#374151" }}>{getReportData(exportReport).claim_number}</td>
+                      <td style={{ padding: "6.5px 0", borderBottom: "1px solid #7faea4", width: "32%", fontWeight: 700, color: "#111827" }}>ULA reference:</td>
+                      <td style={{ padding: "6.5px 0", borderBottom: "1px solid #7faea4", color: "#374151" }}>{getReportData(exportReport).claim_number}</td>
                     </tr>
                     <tr>
-                      <td style={{ padding: "6px 0", borderBottom: "1px solid #7faea4", fontWeight: 700, color: "#111827" }}>Applicant’s Name:</td>
-                      <td style={{ padding: "6px 0", borderBottom: "1px solid #7faea4", color: "#374151" }}>M/s. {getReportData(exportReport).insurer}</td>
+                      <td style={{ padding: "6.5px 0", borderBottom: "1px solid #7faea4", fontWeight: 700, color: "#111827" }}>Applicant’s Name:</td>
+                      <td style={{ padding: "6.5px 0", borderBottom: "1px solid #7faea4", color: "#374151" }}>M/s. {getReportData(exportReport).insurer}</td>
                     </tr>
                     <tr>
-                      <td style={{ padding: "6px 0", borderBottom: "1px solid #7faea4", fontWeight: 700, color: "#111827" }}>Policy Holder:</td>
-                      <td style={{ padding: "6px 0", borderBottom: "1px solid #7faea4", color: "#374151" }}>{getReportData(exportReport).broker || getReportData(exportReport).insured_name}</td>
+                      <td style={{ padding: "6.5px 0", borderBottom: "1px solid #7faea4", fontWeight: 700, color: "#111827" }}>Policy Holder:</td>
+                      <td style={{ padding: "6.5px 0", borderBottom: "1px solid #7faea4", color: "#374151" }}>{getReportData(exportReport).broker || getReportData(exportReport).insured_name}</td>
                     </tr>
                     <tr>
-                      <td style={{ padding: "6px 0", borderBottom: "1px solid #7faea4", fontWeight: 700, color: "#111827" }}>Assured’s Name:</td>
-                      <td style={{ padding: "6px 0", borderBottom: "1px solid #7faea4", color: "#374151" }}>M/s. {getReportData(exportReport).insured_name}</td>
+                      <td style={{ padding: "6.5px 0", borderBottom: "1px solid #7faea4", fontWeight: 700, color: "#111827" }}>Assured’s Name:</td>
+                      <td style={{ padding: "6.5px 0", borderBottom: "1px solid #7faea4", color: "#374151" }}>M/s. {getReportData(exportReport).insured_name}</td>
                     </tr>
                     <tr>
-                      <td style={{ padding: "6px 0", borderBottom: "1px solid #7faea4", fontWeight: 700, color: "#111827" }}>Policy No.:</td>
-                      <td style={{ padding: "6px 0", borderBottom: "1px solid #7faea4", color: "#374151" }}>{getReportData(exportReport).policy_number}</td>
+                      <td style={{ padding: "6.5px 0", borderBottom: "1px solid #7faea4", fontWeight: 700, color: "#111827" }}>Policy No.:</td>
+                      <td style={{ padding: "6.5px 0", borderBottom: "1px solid #7faea4", color: "#374151" }}>{getReportData(exportReport).policy_number}</td>
                     </tr>
                     <tr>
-                      <td style={{ padding: "6px 0", borderBottom: "1px solid #7faea4", color: "#374151" }} colSpan={2}>{getReportData(exportReport).issue_date}</td>
+                      <td style={{ padding: "6.5px 0", borderBottom: "1px solid #7faea4", color: "#374151" }} colSpan={2}>{getReportData(exportReport).issue_date}</td>
                     </tr>
                   </tbody>
                 </table>
               </div>
 
-              <div style={{ textAlign: "center", margin: "10px 0 6px" }}>
-                <img src={ulaLogo} alt="ULA" style={{ width: "135px", height: "auto", margin: "0 auto 6px", display: "block" }} />
+              <div style={{ textAlign: "center", margin: "12px 0 8px" }}>
+                <img src={ulaLogo} alt="ULA" style={{ width: "140px", height: "auto", margin: "0 auto 6px", display: "block" }} />
                 <p style={{ color: "#1f8a79", fontSize: "11.5px", fontWeight: 700, margin: "6px 0 0", textAlign: "center" }}>
                   It’s about time you receive the quality of service and expertise your firm deserves.
                 </p>
@@ -1030,30 +1030,37 @@ function ReportSection({ claimId, claim, reports, onChanged }) {
             </div>
           </div>
 
-          {/* Final Page: Corporate Closing Page — Framed with Lady Justice statue & offices */}
-          <div ref={pdfClosingRef} style={{ width: "794px", height: "1123px", background: "#85b2a9", padding: "30px", boxSizing: "border-box", overflow: "hidden" }}>
-            <div style={{ width: "100%", height: "100%", background: "#ffffff", padding: "36px 44px", boxSizing: "border-box", display: "flex", flexDirection: "column", justifyContent: "space-between", alignItems: "center" }}>
-              <img src={ulaLogo} alt="ULA" style={{ width: "135px", height: "auto", margin: "4px auto 12px", display: "block" }} />
-              <div style={{ textAlign: "left", width: "100%", fontSize: "10.5px", color: "#374151", lineHeight: 1.5 }}>
+          {/* Final Page: Corporate Closing Page — Framed with sage border on left/right/bottom (NO TOP BORDER), Lady Justice statue & offices */}
+          <div ref={pdfClosingRef} style={{ width: "794px", height: "1123px", background: "#85b2a9", padding: "0 32px 32px 32px", boxSizing: "border-box", overflow: "hidden" }}>
+            <div style={{ width: "100%", height: "100%", background: "#ffffff", padding: "48px 48px 24px 48px", boxSizing: "border-box", display: "flex", flexDirection: "column", justifyContent: "space-between", alignItems: "stretch" }}>
+              <div style={{ textAlign: "center", marginBottom: "12px" }}>
+                <img src={ulaLogo} alt="ULA" style={{ width: "140px", height: "auto", margin: "0 auto", display: "block" }} />
+              </div>
+              
+              <div style={{ textAlign: "left", width: "100%", fontSize: "11px", color: "#1f2937", lineHeight: 1.55, marginBottom: "8px" }}>
                 <p style={{ margin: "0 0 8px" }}>
-                  <strong style={{ color: "#111827" }}>Contact person</strong><br />
-                  <span style={{ textDecoration: "underline" }}>Petro Zaarour</span><br />
-                  Director
+                  <strong style={{ color: "#111827", fontSize: "11.5px" }}>Contact person</strong><br />
+                  <span style={{ textDecoration: "underline", color: "#111827" }}>Petro Zaarour</span><br />
+                  <span style={{ color: "#4b5563" }}>Director</span>
                 </p>
-                <p style={{ margin: "0 0 6px" }}>
+                <p style={{ margin: "0 0 6px", fontSize: "10.5px" }}>
                   <strong>United Kingdom:</strong> 71-75 Shelton Street, Covent Garden | London, England - WC2H 9JQ<br />
                   <strong>Middle East:</strong> Mina Tower, Ain Warda Street | Beirut, Lebanon - WG2G+5CX
                 </p>
-                <p style={{ margin: "0 0 6px" }}>
+                <p style={{ margin: "0 0 6px", fontSize: "10.5px" }}>
                   <strong>Registered name:</strong> United Loss Adjusters and Surveyors Ltd.
                 </p>
-                <p style={{ margin: "0 0 6px" }}>
-                  <strong>24/7 Contacts &amp; Claim Support:</strong> T: +44 (0) 20 3287 3326 | M/WhatsApp: +44 (0) 7 375 110 573<br />
+                <p style={{ margin: "0 0 6px", fontSize: "10.5px" }}>
+                  <strong>24/7 Contacts &amp; Claim Support</strong> – T: +44 (0) 20 3287 3326 | M/WhatsApp: +44 (0) 7 375 110 573<br />
                   <strong>Office E:</strong> <a href="mailto:claims@unitedlossadjusters.com" style={{ color: "#1f8a79", textDecoration: "underline" }}>claims@unitedlossadjusters.com</a><br />
                   <strong>W:</strong> <a href="https://www.unitedlossadjusters.com/" style={{ color: "#1f8a79", textDecoration: "underline" }}>https://www.unitedlossadjusters.com/</a>
                 </p>
               </div>
-              <img src={ulaJusticeStatue} alt="Lady Justice" style={{ width: "240px", height: "260px", objectFit: "cover", margin: "8px auto", border: "1px solid #e5e7eb" }} />
+
+              <div style={{ textAlign: "center", display: "flex", alignItems: "center", justifyContent: "center", margin: "6px 0 12px" }}>
+                <img src={ulaJusticeStatue} alt="Lady Justice" style={{ width: "230px", height: "350px", objectFit: "contain", display: "block", margin: "0 auto" }} />
+              </div>
+
               <div style={{ textAlign: "justify", width: "100%", fontSize: "7.8px", color: "#6b7280", lineHeight: 1.45, borderTop: "1px solid #e5e7eb", paddingTop: "8px" }}>
                 <p style={{ margin: "0 0 4px" }}>
                   United Loss Adjusters &amp; Surveyors Ltd., ULA and any variants are trading names of United Loss Adjusters &amp; Surveyors, its subsidiaries and affiliates. United Loss Adjusters &amp; Surveyors is a limited company registered in England &amp; Wales (Reg. 14407381).
