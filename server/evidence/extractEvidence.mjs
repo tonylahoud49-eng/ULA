@@ -1,5 +1,6 @@
 import path from "node:path";
 import { fileURLToPath } from "node:url";
+import { createCanvas } from "@napi-rs/canvas";
 import JSZip from "jszip";
 import readXlsxFile from "read-excel-file/node";
 import { simpleParser } from "mailparser";
@@ -7,6 +8,37 @@ import { simpleParser } from "mailparser";
 const TEXT_EXTENSIONS = new Set([".txt", ".csv", ".json", ".xml", ".html", ".htm", ".md", ".rtf"]);
 const IMAGE_EXTENSIONS = new Set([".png", ".jpg", ".jpeg", ".webp", ".gif"]);
 const normalizeWhitespace = (value) => String(value || "").replace(/\u0000/g, "").replace(/[ \t]+/g, " ").replace(/\n{3,}/g, "\n\n").trim();
+
+const pdfPageText = (items = []) => {
+  const populated = items.filter((item) => String(item.str || "").trim());
+  const rawText = normalizeWhitespace(populated.map((item) => item.str).join(" "));
+  const lines = [];
+
+  for (const item of populated) {
+    const x = Number(item.transform?.[4]) || 0;
+    const y = Number(item.transform?.[5]) || 0;
+    let line = lines.find((candidate) => Math.abs(candidate.y - y) <= 2.5);
+    if (!line) {
+      line = { y, items: [] };
+      lines.push(line);
+    }
+    line.items.push({ x, text: String(item.str).trim() });
+  }
+
+  const layoutText = normalizeWhitespace(lines
+    .sort((left, right) => right.y - left.y)
+    .map((line) => line.items
+      .sort((left, right) => left.x - right.x)
+      .map((item) => item.text)
+      .join(" "))
+    .join("\n"));
+
+  return {
+    text: layoutText || rawText,
+    raw_text: rawText && rawText !== layoutText ? rawText : undefined,
+    extraction_status: layoutText || rawText ? "extracted" : "image-only",
+  };
+};
 
 const xmlText = (xml) => normalizeWhitespace(
   String(xml || "")
@@ -21,6 +53,17 @@ const xmlText = (xml) => normalizeWhitespace(
     .replace(/&#39;/g, "'"),
 );
 
+async function renderPdfPageForVision(page, pageNumber) {
+  const viewport = page.getViewport({ scale: 1.25 });
+  const canvas = createCanvas(Math.ceil(viewport.width), Math.ceil(viewport.height));
+  await page.render({ canvasContext: canvas.getContext("2d"), viewport }).promise;
+  return {
+    page: pageNumber,
+    mime_type: "image/jpeg",
+    buffer: canvas.toBuffer("image/jpeg", 72),
+  };
+}
+
 async function extractPdf(buffer) {
   const pdfjs = await import("pdfjs-dist/legacy/build/pdf.mjs");
   const standardFontDataUrl = fileURLToPath(
@@ -29,15 +72,15 @@ async function extractPdf(buffer) {
   const task = pdfjs.getDocument({ data: new Uint8Array(buffer), disableWorker: true, standardFontDataUrl });
   const pdf = await task.promise;
   const pages = [];
+  const visionImages = [];
   for (let pageNumber = 1; pageNumber <= pdf.numPages; pageNumber += 1) {
     const page = await pdf.getPage(pageNumber);
     const content = await page.getTextContent();
-    pages.push({
-      page: pageNumber,
-      text: normalizeWhitespace(content.items.map((item) => item.str || "").join(" ")),
-    });
+    const extracted = { page: pageNumber, ...pdfPageText(content.items) };
+    pages.push(extracted);
+    if (!extracted.text) visionImages.push(await renderPdfPageForVision(page, pageNumber));
   }
-  return pages;
+  return { pages, visionImages };
 }
 
 async function extractDocx(buffer) {
@@ -101,8 +144,18 @@ export async function extractEvidenceFile(file, metadata = {}) {
 
   try {
     if (mimeType === "application/pdf" || extension === ".pdf") {
-      const pages = await extractPdf(file.buffer);
-      return { ...base, kind: "pdf", pages, extraction_status: pages.some((page) => page.text) ? "extracted" : "vision-required" };
+      const { pages, visionImages } = await extractPdf(file.buffer);
+      const searchablePageCount = pages.filter((page) => page.text).length;
+      return {
+        ...base,
+        kind: "pdf",
+        pages,
+        searchable_page_count: searchablePageCount,
+        image_only_page_count: pages.length - searchablePageCount,
+        vision_images: visionImages,
+        vision_image_count: visionImages.length,
+        extraction_status: searchablePageCount ? "extracted" : "vision-required",
+      };
     }
     if (mimeType.includes("wordprocessingml") || extension === ".docx") {
       const extracted = await extractDocx(file.buffer);

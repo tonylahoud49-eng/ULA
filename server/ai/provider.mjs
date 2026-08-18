@@ -1,8 +1,16 @@
 import { createOpenAIProvider } from "./providers/openaiProvider.mjs";
 import { createOpenRouterProvider } from "./providers/openrouterProvider.mjs";
 import { createGeminiProvider } from "./providers/geminiProvider.mjs";
+import { createAnthropicProvider } from "./providers/anthropicProvider.mjs";
 
 const PROVIDER_CONFIGS = {
+  anthropic: {
+    keyVar: "ANTHROPIC_API_KEY",
+    fallbackKeyVars: ["ANTHROTIC_API_KEY"],
+    modelVar: "ANTHROPIC_MODEL",
+    defaultModel: "claude-sonnet-5",
+    factory: createAnthropicProvider,
+  },
   gemini: {
     keyVar: "GEMINI_API_KEY",
     fallbackKeyVars: ["GEMINI_API_KEY_2"],
@@ -25,7 +33,7 @@ const PROVIDER_CONFIGS = {
 };
 
 /** Default fallback order for cloud providers. */
-const CLOUD_FALLBACK_ORDER = ["gemini", "openrouter", "openai"];
+const CLOUD_FALLBACK_ORDER = ["anthropic", "gemini", "openrouter", "openai"];
 
 function statusForProvider(name, env) {
   const config = PROVIDER_CONFIGS[name];
@@ -77,7 +85,12 @@ function instantiate(name, env) {
   if (!config) return null;
   const model = env[config.modelVar] || config.defaultModel;
   const apiKey = env[config.keyVar] || (config.fallbackKeyVars || []).map((keyVar) => env[keyVar]).find(Boolean);
-  return config.factory({ apiKey, model });
+  const options = { apiKey, model };
+  if (name === "openrouter") {
+    options.fallbackModels = env.OPENROUTER_FALLBACK_MODELS;
+    options.maxCompletionTokens = env.OPENROUTER_MAX_COMPLETION_TOKENS;
+  }
+  return config.factory(options);
 }
 
 export function createConfiguredProvider(env = process.env) {
@@ -87,7 +100,7 @@ export function createConfiguredProvider(env = process.env) {
   }
 
   const primary = instantiate(status.provider, env);
-  const fallbackInstances = (status.fallbacks || [])
+  const fallbackInstances = (status.provider === "anthropic" ? [] : status.fallbacks || [])
     .map(({ provider: name }) => instantiate(name, env))
     .filter(Boolean);
 

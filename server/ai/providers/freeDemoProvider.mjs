@@ -218,6 +218,7 @@ export function createFreeDemoProvider() {
         },
         document_types: documentTypes,
         fields: extractedFields,
+        adjustment_line_items: [],
         missing_documents: [],
         evidence_findings: findings,
         summary,

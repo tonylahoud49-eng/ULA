@@ -9,7 +9,23 @@ const createRequestError = (message, status, code) => {
   return error;
 };
 
-const numericFields = new Set(["policy_limit", "deductible", "claim_amount", "adjusted_amount"]);
+const numericFields = new Set([
+  "policy_limit",
+  "insured_value",
+  "deductible",
+  "claim_amount",
+  "gross_claim_amount",
+  "invoice_total",
+  "freight_amount",
+  "insurance_amount",
+  "fob_value",
+  "freight_invoice_total",
+  "fees_amount",
+  "salvage_amount",
+  "recovery_amount",
+  "depreciation_amount",
+  "adjusted_amount",
+]);
 
 const usableValue = (field) => {
   const value = field.normalized_value ?? field.value;
@@ -55,6 +71,7 @@ function mapAnalysis(result) {
     provider: result.provider,
     model: result.model,
     response_id: result.response_id,
+    provider_api_status: result.provider_api_status,
     analyzed_at: result.analyzed_at,
     business_line: suggestedBusinessLine,
     template_id: reportTemplate.id,
@@ -74,12 +91,14 @@ function mapAnalysis(result) {
       evidence_mode: source.evidence_mode,
     }))),
     extracted_fields: raw.fields,
+    adjustment_line_items: raw.adjustment_line_items || [],
     suggested_claim_data: suggestedClaimData,
     evidence_sources: provenance,
     evidence_findings: raw.evidence_findings,
     warnings: raw.warnings,
     human_review_required: raw.human_review_required,
     classification_rationale: raw.classification.rationale,
+    evidence_snapshot: Array.isArray(result.evidence_snapshot) ? result.evidence_snapshot : [],
   };
 }
 
@@ -123,10 +142,19 @@ export async function analyzeClaimWithProvider({ claim, documents }) {
       "ai-server-unavailable",
     );
   }
-  const body = await response.json().catch(() => ({}));
+  const responseText = await response.text();
+  let body = {};
+  try {
+    body = responseText ? JSON.parse(responseText) : {};
+  } catch {
+    body = {};
+  }
   if (!response.ok) {
+    const nonHtmlDetails = responseText && !/^\s*</.test(responseText)
+      ? ` (Details: ${responseText.slice(0, 300)})`
+      : "";
     throw createRequestError(
-      body.error || "AI analysis unavailable — the provider request failed.",
+      body.error || `AI analysis unavailable — the analysis request failed with HTTP ${response.status}.${nonHtmlDetails}`,
       response.status,
       body.code || "ai-analysis-failed",
     );

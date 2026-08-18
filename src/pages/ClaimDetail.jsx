@@ -1,6 +1,5 @@
 import React, { useEffect, useMemo, useState } from "react";
 import { useParams, Link } from "react-router-dom";
-import JSZip from "jszip";
 import { jsPDF } from "jspdf";
 import html2canvas from "html2canvas";
 import remarkGfm from "remark-gfm";
@@ -16,11 +15,22 @@ import { Label } from "@/components/ui/label";
 import { Textarea } from "@/components/ui/textarea";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
-import { ArrowLeft, Download, FileText, Sparkles, AlertTriangle, Save, CheckCircle, ClipboardCheck, ShieldCheck } from "lucide-react";
+import {
+  AlertDialog,
+  AlertDialogAction,
+  AlertDialogCancel,
+  AlertDialogContent,
+  AlertDialogDescription,
+  AlertDialogFooter,
+  AlertDialogHeader,
+  AlertDialogTitle,
+} from "@/components/ui/alert-dialog";
+import { ArrowLeft, Download, FileText, Sparkles, AlertTriangle, Save, CheckCircle, ClipboardCheck, ShieldCheck, Trash2 } from "lucide-react";
 import DocumentUploader from "@/components/DocumentUploader";
 import ReactMarkdown from "react-markdown";
 import { toast } from "@/components/ui/use-toast";
 import { REPORT_LIFECYCLE, reportReadiness } from "@/lib/reportTemplates";
+import { populateMasterReportDocx } from "@/lib/masterReportDocx";
 
 const BUSINESS_LINES = ["Yacht", "Property", "Marine Cargo (Reefer/GFS)", "Marine Cargo (Non-Reefer)", "Bulk Vessel", "Air Shipment (NET)", "Land Shipment", "Fidelity Claims", "Requires Review", "Unclassified"];
 const STATUSES = ["New", "Under Investigation", "Pending Documents", "Report Draft", "Report Final", "Closed"];
@@ -31,14 +41,13 @@ const formatDate = (value) => {
   return date.toLocaleDateString("en-GB", { day: "2-digit", month: "long", year: "numeric" });
 };
 
-const xmlEscape = (value) => String(value ?? "")
-  .replaceAll("&", "&amp;")
-  .replaceAll("<", "&lt;")
-  .replaceAll(">", "&gt;")
-  .replaceAll('"', "&quot;")
-  .replaceAll("'", "&apos;");
-
-const wordXml = (value) => xmlEscape(value).split(/\r?\n/).join("<w:br/>");
+const formatCurrencyAmount = (currency, value) => {
+  if (value === undefined || value === null || value === "") return "Not established from reviewed evidence";
+  const number = Number(value);
+  if (!Number.isFinite(number)) return "Not established from reviewed evidence";
+  const formatted = number.toLocaleString("en-US", { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+  return currency ? `${currency} ${formatted}` : formatted;
+};
 
 const parseMarkdownSections = (markdown) => {
   const sections = {};
@@ -70,6 +79,69 @@ const loadLogoDataUrl = async () => {
   } catch {
     return null;
   }
+};
+
+const canvasBlob = (canvas, type = "image/jpeg", quality = 0.84) => new Promise((resolve, reject) => {
+  canvas.toBlob((blob) => blob ? resolve(blob) : reject(new Error("The appendix page could not be rendered.")), type, quality);
+});
+
+const collectAppendixImages = async (documents, normalizedRecord) => {
+  const appendixIds = new Set((normalizedRecord?.appendices || []).map((item) => item.document_id));
+  const candidates = documents.filter((document) => appendixIds.has(document.id) && (
+    document.detected_categories?.includes("Photographs")
+    || document.file_type === "Photo"
+    || document.category === "Photo Evidence"
+    || /(?:photo|image|appendix)/i.test(document.file_name || "")
+    || /^image\//i.test(document.file_mime_type || "")
+  ));
+  const images = [];
+  for (const document of candidates) {
+    try {
+      const stored = await appClient.documentStorage.get(document.storage_key || document.file_url);
+      const mimeType = String(document.file_mime_type || stored.mimeType || stored.blob.type || "").toLowerCase();
+      if (mimeType.startsWith("image/")) {
+        images.push({
+          data: new Uint8Array(await stored.blob.arrayBuffer()),
+          content_type: mimeType,
+          extension: mimeType.includes("jpeg") ? "jpg" : mimeType.split("/")[1] || "png",
+          document_id: document.id,
+          document_name: document.file_name,
+        });
+        continue;
+      }
+      if (mimeType === "application/pdf" || /\.pdf$/i.test(document.file_name || "")) {
+        const [pdfjs, worker] = await Promise.all([
+          import("pdfjs-dist/legacy/build/pdf.mjs"),
+          import("pdfjs-dist/legacy/build/pdf.worker.min.mjs?url"),
+        ]);
+        pdfjs.GlobalWorkerOptions.workerSrc = worker.default;
+        const task = pdfjs.getDocument({ data: new Uint8Array(await stored.blob.arrayBuffer()), disableWorker: true });
+        const pdf = await task.promise;
+        for (let pageNumber = 1; pageNumber <= pdf.numPages; pageNumber += 1) {
+          const page = await pdf.getPage(pageNumber);
+          const viewport = page.getViewport({ scale: 1.35 });
+          const canvas = globalThis.document.createElement("canvas");
+          canvas.width = Math.ceil(viewport.width);
+          canvas.height = Math.ceil(viewport.height);
+          await page.render({ canvasContext: canvas.getContext("2d"), viewport }).promise;
+          const rendered = await canvasBlob(canvas);
+          images.push({
+            data: new Uint8Array(await rendered.arrayBuffer()),
+            content_type: "image/jpeg",
+            extension: "jpg",
+            document_id: document.id,
+            document_name: document.file_name,
+            page: pageNumber,
+          });
+          page.cleanup();
+        }
+        await pdf.destroy();
+      }
+    } catch (error) {
+      console.warn(`Unable to embed appendix evidence ${document.file_name}: ${error.message}`);
+    }
+  }
+  return images;
 };
 
 export default function ClaimDetail() {
@@ -150,7 +222,7 @@ export default function ClaimDetail() {
               <h2 className="docket-title truncate">{claim.title}</h2>
               <span className="status-mark border-border bg-card font-mono text-muted-foreground">{claim.claim_number}</span>
             </div>
-            <p className="docket-subtitle">{claim.business_line} · {claim.insured || "Insured requires confirmation"} · {readiness.template.name}</p>
+            <p className="docket-subtitle">{claim.business_line} · {claim.insured || "Insured not yet established"} · {readiness.template.name}</p>
           </div>
         </div>
         <Button onClick={runAnalysis} disabled={analyzing || !documents.length} className="ula-gradient text-white hover:opacity-90">
@@ -237,7 +309,7 @@ export default function ClaimDetail() {
         </TabsContent>
 
         <TabsContent value="report" className="space-y-4">
-          <ReportSection claimId={id} claim={claim} reports={reports} onChanged={load} />
+          <ReportSection claimId={id} claim={claim} documents={documents} reports={reports} onChanged={load} />
         </TabsContent>
       </Tabs>
     </div>
@@ -344,7 +416,7 @@ function ControlledReportPreview({ report, data }) {
   const sections = parseMarkdownSections(report.content);
   const entries = Object.entries(sections).filter(([key]) => !["cover_page", "document_control", "version_history", "claim_salient_details"].includes(key));
   const initials = String(data.insured_name || "ULA").split(/\s+/).filter(Boolean).slice(0, 2).map((part) => part[0]).join("") || "ULA";
-  const value = (item) => item || "Requires confirmation";
+  const value = (item) => item || "Not established from reviewed evidence";
 
   return (
     <div className="report-reader border-t">
@@ -381,7 +453,7 @@ function ControlledReportPreview({ report, data }) {
             <dl className="report-cover-facts">
               <div><dt>ULA reference</dt><dd>{value(data.claim_number)}</dd></div>
               <div><dt>Business line</dt><dd>{value(data.business_line)}</dd></div>
-              <div><dt>Date of loss</dt><dd>{formatDate(data.date_of_loss) || "Requires confirmation"}</dd></div>
+              <div><dt>Date of loss</dt><dd>{formatDate(data.date_of_loss) || "Not established from reviewed evidence"}</dd></div>
               <div><dt>Issue date</dt><dd>{data.issue_date}</dd></div>
             </dl>
           </header>
@@ -398,7 +470,7 @@ function ControlledReportPreview({ report, data }) {
                 <thead><tr><th>Responsibility</th><th>Assigned person</th><th>Professional designation</th><th>Status</th></tr></thead>
                 <tbody>
                   {(report.assignments || []).map((assignment) => <tr key={assignment.role}><td>{assignment.label}</td><td>{assignment.name}</td><td>{assignment.designation}</td><td>Pending sign-off</td></tr>)}
-                  {!report.assignments?.length && <tr><td colSpan="4">Responsibility assignments require confirmation.</td></tr>}
+                  {!report.assignments?.length && <tr><td colSpan="4">No responsibility assignments have been made.</td></tr>}
                 </tbody>
               </table>
             </div>
@@ -414,7 +486,7 @@ function ControlledReportPreview({ report, data }) {
             {entries.map(([key, body], index) => (
               <section className="report-content-section" id={`section-${key}`} key={key}>
                 <div className="report-section-heading"><span>{String(index + 3).padStart(2, "0")}</span><h2>{key.replaceAll("_", " ")}</h2></div>
-                <ReactMarkdown remarkPlugins={[remarkGfm]}>{body || "Requires confirmation."}</ReactMarkdown>
+                <ReactMarkdown remarkPlugins={[remarkGfm]}>{body || "No evidence-supported content was established for this section."}</ReactMarkdown>
               </section>
             ))}
           </div>
@@ -464,10 +536,12 @@ function ControlledReportPreview({ report, data }) {
   );
 }
 
-function ReportSection({ claimId, claim, reports, onChanged }) {
+function ReportSection({ claimId, claim, documents, reports, onChanged }) {
   const [generating, setGenerating] = useState(false);
   const [activeReport, setActiveReport] = useState(null);
   const [exportReport, setExportReport] = useState(null);
+  const [reportToDelete, setReportToDelete] = useState(null);
+  const [deletingReportId, setDeletingReportId] = useState(null);
   const [exportProgress, setExportProgress] = useState({ active: false, format: "", progress: 0, stage: "" });
 
   const pdfCoverRef = React.useRef(null);
@@ -513,23 +587,23 @@ function ReportSection({ claimId, claim, reports, onChanged }) {
       broker: brokerName,
       header_title: headerTitle,
       policy_number: report?.policy_number || claim?.policy_number || "",
-      currency: report?.currency || claim?.currency || "USD",
+      currency: report?.currency || claim?.currency || "",
       date_of_loss: report?.date_of_loss || claim?.date_of_loss || "",
-      claimed_amount: report?.claimed_amount || claim?.claim_amount || "",
-      adjusted_amount: report?.adjusted_amount || claim?.adjusted_amount || "",
+      claimed_amount: report?.claimed_amount ?? claim?.claim_amount ?? "",
+      adjusted_amount: report?.adjusted_amount ?? claim?.adjusted_amount ?? "",
       issue_date: formatDate(report?.approved_date || report?.created_date || new Date()),
       version_number: report?.version_number || "1",
       report_issue_state: report?.issue_state || report?.status || "Draft",
       legal_entity: "United Loss Adjusters & Surveyors",
       form_code: report?.template_name || "ULA Claim Report",
-      investigator_name: report?.investigator_name || report?.assignments?.find((item) => item.role === "investigator")?.name || "Petro Zaarour",
-      investigator_designation: report?.investigator_designation || report?.assignments?.find((item) => item.role === "investigator")?.designation || "Chartered Marine Surveyor & Loss Adjuster",
-      preparer_name: report?.preparer_name || report?.assignments?.find((item) => item.role === "preparer")?.name || "Estefani Haddad",
-      preparer_designation: report?.preparer_designation || report?.assignments?.find((item) => item.role === "preparer")?.designation || "Claims Administrator",
-      reviewer_name: report?.reviewer_name || report?.assignments?.find((item) => item.role === "reviewer")?.name || "Annie Abdel Massih",
-      reviewer_designation: report?.reviewer_designation || report?.assignments?.find((item) => item.role === "reviewer")?.designation || "Claims Director UKI",
-      approver_name: report?.approver_name || report?.assignments?.find((item) => item.role === "approver")?.name || "Petro Zaarour",
-      approver_designation: report?.approver_designation || report?.assignments?.find((item) => item.role === "approver")?.designation || "Chartered Engineer & Average Adjuster",
+      investigator_name: report?.investigator_name || report?.assignments?.find((item) => item.role === "investigator")?.name || "Not assigned",
+      investigator_designation: report?.investigator_designation || report?.assignments?.find((item) => item.role === "investigator")?.designation || "Not assigned",
+      preparer_name: report?.preparer_name || report?.assignments?.find((item) => item.role === "preparer")?.name || "Not assigned",
+      preparer_designation: report?.preparer_designation || report?.assignments?.find((item) => item.role === "preparer")?.designation || "Not assigned",
+      reviewer_name: report?.reviewer_name || report?.assignments?.find((item) => item.role === "reviewer")?.name || "Not assigned",
+      reviewer_designation: report?.reviewer_designation || report?.assignments?.find((item) => item.role === "reviewer")?.designation || "Not assigned",
+      approver_name: report?.approver_name || report?.assignments?.find((item) => item.role === "approver")?.name || "Not assigned",
+      approver_designation: report?.approver_designation || report?.assignments?.find((item) => item.role === "approver")?.designation || "Not assigned",
       investigator_signature: "",
       preparer_signature: "",
       reviewer_signature: "",
@@ -595,29 +669,19 @@ function ReportSection({ claimId, claim, reports, onChanged }) {
 
   const exportDocx = async (report) => {
     try {
-      setExportProgress({ active: true, format: "DOCX", progress: 20, stage: "Loading production DOCX master template..." });
+      setExportProgress({ active: true, format: "DOCX", progress: 15, stage: "Loading the approved ULA Word master..." });
       const response = await fetch(masterReportTemplate);
       if (!response.ok) throw new Error("The production report template could not be loaded.");
-      setExportProgress({ active: true, format: "DOCX", progress: 50, stage: "Injecting claim data XML placeholders & footers..." });
-      const templateBlob = await response.blob();
-      const zip = await JSZip.loadAsync(templateBlob);
-      const data = getReportData(report);
-      const replacePlaceholders = async (entryName) => {
-        const entry = zip.file(entryName);
-        if (!entry) return;
-        let xml = await entry.async("string");
-        Object.entries(data).forEach(([key, value]) => {
-          xml = xml.replaceAll(`{{${key}}}`, wordXml(value));
-        });
-        zip.file(entryName, xml);
-      };
-      for (const fileName of Object.keys(zip.files)) {
-        if (fileName.startsWith("word/") && fileName.endsWith(".xml")) {
-          await replacePlaceholders(fileName);
-        }
-      }
-      setExportProgress({ active: true, format: "DOCX", progress: 85, stage: "Packing OpenXML document package..." });
-      const blob = await zip.generateAsync({ type: "blob", mimeType: "application/vnd.openxmlformats-officedocument.wordprocessingml.document" });
+      setExportProgress({ active: true, format: "DOCX", progress: 35, stage: "Preparing active-claim appendix evidence..." });
+      const appendixImages = await collectAppendixImages(documents, report.normalized_claim_record);
+      setExportProgress({ active: true, format: "DOCX", progress: 60, stage: "Populating master paragraphs, tables, headers, footers, and appendices..." });
+      const bytes = await populateMasterReportDocx(await response.arrayBuffer(), {
+        report,
+        claim,
+        issueDate: getReportData(report).issue_date,
+      }, { appendixImages });
+      setExportProgress({ active: true, format: "DOCX", progress: 90, stage: "Packing the controlled ULA report..." });
+      const blob = new Blob([bytes], { type: "application/vnd.openxmlformats-officedocument.wordprocessingml.document" });
       downloadBlob(blob, baseFileName(report, "docx"));
       setExportProgress({ active: true, format: "DOCX", progress: 100, stage: "DOCX report downloaded" });
       await new Promise((r) => setTimeout(r, 400));
@@ -774,6 +838,34 @@ function ReportSection({ claimId, claim, reports, onChanged }) {
     await onChanged();
   };
 
+  const deleteReportVersion = async () => {
+    if (!reportToDelete || deletingReportId) return;
+
+    const reportId = reportToDelete.id;
+    const versionNumber = reportToDelete.version_number;
+    setDeletingReportId(reportId);
+
+    try {
+      await appClient.entities.ReportVersion.delete(reportId);
+      if (activeReport === reportId) setActiveReport(null);
+      if (exportReport?.id === reportId) setExportReport(null);
+      setReportToDelete(null);
+      await onChanged();
+      toast({
+        title: "Report version deleted",
+        description: `Version ${versionNumber} was deleted. The claim and other report versions were not changed.`,
+      });
+    } catch (error) {
+      toast({
+        variant: "destructive",
+        title: "Report version could not be deleted",
+        description: error.response?.data?.error || error.message,
+      });
+    } finally {
+      setDeletingReportId(null);
+    }
+  };
+
   return (
     <Card className="docket-surface p-5 shadow-none">
       <div className="mb-5 flex flex-col justify-between gap-3 border-b pb-4 sm:flex-row sm:items-center">
@@ -828,7 +920,7 @@ function ReportSection({ claimId, claim, reports, onChanged }) {
                   </div>
                   <p className="mt-1 text-xs text-muted-foreground">{r.template_name || "ULA Claim Report"} · {r.evidence_count ?? "—"} evidence items · {r.readiness?.overall_progress ?? "—"}% ready</p>
                 </div>
-                <div className="flex gap-2">
+                <div className="flex flex-wrap gap-2 sm:justify-end">
                   <Button size="sm" variant="outline" onClick={() => setActiveReport(activeReport === r.id ? null : r.id)}>
                     {activeReport === r.id ? "Hide" : "View"}
                   </Button>
@@ -843,6 +935,17 @@ function ReportSection({ claimId, claim, reports, onChanged }) {
                   </Button>
                   <Button size="sm" variant="outline" onClick={() => exportPdf(r)} disabled={!r.content}>
                     PDF
+                  </Button>
+                  <Button
+                    type="button"
+                    size="sm"
+                    variant="outline"
+                    className="h-8 w-8 border-destructive/40 p-0 text-destructive hover:border-destructive hover:bg-destructive/10 hover:text-destructive"
+                    onClick={() => setReportToDelete(r)}
+                    aria-label={`Delete report version ${r.version_number}`}
+                    title={`Delete report version ${r.version_number}`}
+                  >
+                    <Trash2 className="h-3.5 w-3.5" />
                   </Button>
                   {r.status !== "Final" && <Button size="sm" onClick={() => approve(r)} className="ula-gradient text-white"><CheckCircle className="w-3.5 h-3.5 mr-1" /> Approve Final</Button>}
                 </div>
@@ -862,6 +965,35 @@ function ReportSection({ claimId, claim, reports, onChanged }) {
           ))}
         </div>
       )}
+
+      <AlertDialog
+        open={Boolean(reportToDelete)}
+        onOpenChange={(open) => {
+          if (!open && !deletingReportId) setReportToDelete(null);
+        }}
+      >
+        <AlertDialogContent>
+          <AlertDialogHeader>
+            <AlertDialogTitle>Delete report version {reportToDelete?.version_number}?</AlertDialogTitle>
+            <AlertDialogDescription>
+              This permanently deletes only this report version. The claim and all other report versions will remain unchanged.
+            </AlertDialogDescription>
+          </AlertDialogHeader>
+          <AlertDialogFooter>
+            <AlertDialogCancel disabled={Boolean(deletingReportId)}>Cancel</AlertDialogCancel>
+            <AlertDialogAction
+              className="bg-destructive text-destructive-foreground hover:bg-destructive/90"
+              disabled={Boolean(deletingReportId)}
+              onClick={(event) => {
+                event.preventDefault();
+                void deleteReportVersion();
+              }}
+            >
+              {deletingReportId ? "Deleting…" : "Delete version"}
+            </AlertDialogAction>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
 
       {/* Hidden container for PDF export */}
       {exportReport && (
@@ -1002,11 +1134,11 @@ function ReportSection({ claimId, claim, reports, onChanged }) {
                       </tr>
                       <tr>
                         <td style={{ fontWeight: "bold", background: "#f3f7f4" }}>Claimed Amount</td>
-                        <td>{getReportData(exportReport).currency} {getReportData(exportReport).claimed_amount ? Number(getReportData(exportReport).claimed_amount).toLocaleString("en-US", { minimumFractionDigits: 2 }) : "0.00"}</td>
+                        <td>{formatCurrencyAmount(getReportData(exportReport).currency, getReportData(exportReport).claimed_amount)}</td>
                       </tr>
                       <tr>
                         <td style={{ fontWeight: "bold", background: "#f3f7f4" }}>Net Adjusted Amount</td>
-                        <td>{getReportData(exportReport).currency} {getReportData(exportReport).adjusted_amount ? Number(getReportData(exportReport).adjusted_amount).toLocaleString("en-US", { minimumFractionDigits: 2 }) : "0.00"}</td>
+                        <td>{formatCurrencyAmount(getReportData(exportReport).currency, getReportData(exportReport).adjusted_amount)}</td>
                       </tr>
                     </tbody>
                   </table>

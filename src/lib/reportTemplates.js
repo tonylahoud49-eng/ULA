@@ -71,32 +71,47 @@ const COMMON_FIELDS = [
   "cause_of_loss",
 ];
 
-const template = (id, name, requiredFields, requiredDocuments, sections, fields = []) => ({
+const COMMON_DOCUMENTS = ["Policy", "Claim Form", "Supporting Evidence"];
+
+const unique = (items) => [...new Set(items)];
+
+const ULA_MASTER_REPORT_SECTIONS = [
+  { id: "cover", title: "Cover Page", owner: "preparer", required: true },
+  { id: "document_control", title: "Document Control Page", owner: "preparer", required: true },
+  { id: "executive_summary", title: "Report Summary", owner: "preparer", required: true },
+  { id: "claim_facts", title: "Report and adjustment note", owner: "preparer", required: true },
+  { id: "interest_insured", title: "INTEREST INSURED & RELEVANT CONDITIONS OF INSURANCE POLICY", owner: "preparer", required: true },
+  { id: "surveyor_notes", title: "SURVEYOR NOTES", owner: "investigator", required: true },
+  { id: "cause", title: "CAUSE OF LOSS", owner: "reviewer", required: true, humanApproval: true },
+  { id: "warranties", title: "RELEVANT POLICY WARRANTIES & CONDITIONS", owner: "reviewer", required: true, humanApproval: true },
+  { id: "insured_value", title: "ADEQUACY OF THE INSURED VALUE", owner: "reviewer", required: true },
+  { id: "assessors", title: "APPOINTMENT OF ASSESSORS", owner: "preparer", required: false },
+  { id: "adjustment", title: "CLAIM PRESENTED ON THE POLICY & ADJUSTMENT", owner: "preparer", required: true, humanApproval: true },
+  { id: "conclusion", title: "CONCLUSION", owner: "approver", required: true, humanApproval: true },
+  { id: "supporting_documents", title: "Enclosure to this report", owner: "preparer", required: true },
+  { id: "outstanding_documents", title: "Outstanding/ Not Available Documents", owner: "preparer", required: true },
+  { id: "appendices", title: "Appendices", owner: "investigator", required: false },
+  { id: "corporate", title: "About ULA", owner: "preparer", required: true },
+];
+
+const template = (id, name, requiredFields, requiredDocuments, _sections, fields = []) => ({
   id,
   name,
   requiredFields: [...COMMON_FIELDS, ...requiredFields],
-  requiredDocuments,
-  sections: [
-    ...COMMON_REPORT_SECTIONS.slice(0, 7),
-    ...sections,
-    ...COMMON_REPORT_SECTIONS.slice(7),
-  ],
+  requiredDocuments: unique([...COMMON_DOCUMENTS, ...requiredDocuments]),
+  sections: ULA_MASTER_REPORT_SECTIONS,
   fields,
 });
 
 export const REPORT_TEMPLATES = {
-  "Air Shipment (NET)": template(
-    "air-shipment",
-    "Air Shipment Report",
-    ["shipper", "consignee", "carrier", "air_waybill", "voyage_from", "voyage_to", "commodity"],
-    ["Policy", "Air Waybill", "Commercial Invoice", "Packing List", "Survey Evidence"],
-    [
-      { id: "interest_insured", title: "Interest Insured", owner: "preparer", required: true },
-      { id: "warranties", title: "Warranties, Conditions and Insurable Interest", owner: "reviewer", required: true },
-      { id: "assessors", title: "Appointment of Assessors", owner: "preparer", required: false },
-      { id: "insured_value", title: "Adequacy of Insured Value", owner: "reviewer", required: true },
-    ],
-  ),
+  "Air Shipment (NET)": {
+    id: "air-shipment",
+    name: "Air Shipment Report",
+    requiredFields: unique([...COMMON_FIELDS, "shipper", "consignee", "carrier", "air_waybill", "voyage_from", "voyage_to", "commodity"]),
+    requiredDocuments: unique([...COMMON_DOCUMENTS, "Air Waybill", "Commercial Invoice", "Packing List", "Survey Evidence"]),
+    sections: ULA_MASTER_REPORT_SECTIONS,
+    fields: [],
+  },
   "Marine Cargo (Reefer/GFS)": template(
     "marine-reefer",
     "Marine Reefer Cargo Report",
@@ -221,22 +236,59 @@ export function reportAssignments(claim = {}, generatedBy = "") {
 }
 
 export function reportReadiness(claim = {}, documents = []) {
-  const reportTemplate = getReportTemplate(claim.business_line);
+  const resolvedBusinessLine = claim.business_line && !["Unclassified", "Requires Review"].includes(claim.business_line)
+    ? claim.business_line
+    : claim.ai_suggested_business_line || claim.business_line;
+  const reportTemplate = getReportTemplate(resolvedBusinessLine);
+  const normalizedFacts = claim.normalized_claim_record?.facts || {};
+  const suggestedValues = claim.ai_analysis?.suggested_claim_data || {};
+  const placeholder = /^(?:requires confirmation|to be confirmed|unknown|not (?:available|provided|stated|assigned|established(?: from (?:the )?reviewed evidence)?)|n\/?a|null|undefined|-+)\.?$/i;
+  const monetaryFields = new Set(["claim_amount", "deductible", "policy_limit", "insured_value"]);
+  const usable = (field, value, fact) => {
+    if (value === undefined || value === null || String(value).trim() === "" || placeholder.test(String(value).trim())) return false;
+    if (["business_line"].includes(field) && ["Unclassified", "Requires Review", "Other / Requires Review"].includes(String(value))) return false;
+    if (monetaryFields.has(field) && Number(String(value).replace(/[^0-9.-]/g, "")) === 0) {
+      return fact?.status === "supported" && (fact.sources || []).length > 0;
+    }
+    return true;
+  };
+  const readinessValue = (field) => {
+    const fact = normalizedFacts[field];
+    if (fact && fact.status !== "requires_confirmation" && usable(field, fact.value, fact)) return fact.value;
+    if (usable(field, claim[field], fact)) return claim[field];
+    return usable(field, suggestedValues[field], fact) ? suggestedValues[field] : null;
+  };
   const missingFields = reportTemplate.requiredFields.filter((field) => {
-    const value = claim[field];
-    return value === undefined || value === null || value === "";
+    return readinessValue(field) === null;
   });
+  const analyzedDocumentTypes = new Set((claim.ai_analysis?.document_types || [])
+    .filter((item) => item.sufficient_information !== false)
+    .map((item) => String(item.document_type).toLowerCase()));
   const missingDocuments = reportTemplate.requiredDocuments.filter((required) => {
     const requiredValue = required.toLowerCase();
+    const aliases = requiredValue === "survey evidence"
+      ? ["survey evidence", "survey report"]
+      : requiredValue === "supporting evidence"
+        ? ["supporting evidence", "survey report", "commercial invoice", "photographs", "incident report"]
+        : [requiredValue];
+    if ([...analyzedDocumentTypes].some((category) => aliases.some((alias) =>
+      category === alias || category.includes(alias) || alias.includes(category)))) return false;
     return !documents.some((document) => {
-      const contentCategories = Array.isArray(document.detected_categories)
-        ? document.detected_categories.map((category) => String(category).toLowerCase())
+      const detectionEvidence = Array.isArray(document.detected_category_evidence)
+        ? document.detected_category_evidence
         : [];
+      const contentCategories = (Array.isArray(document.detected_categories) ? document.detected_categories : [])
+        .filter((category) => {
+          const detail = detectionEvidence.find((item) => item.category === category);
+          if (!detail) return true;
+          return detail.sufficient_information ?? (Number(detail.confidence ?? 1) > 0);
+        })
+        .map((category) => String(category).toLowerCase());
 
       if (document.content_analysis_basis === "ai-content" || document.content_analysis_basis === "extracted-text") {
-        return contentCategories.some((category) =>
-          category === requiredValue || category.includes(requiredValue) || requiredValue.includes(category),
-        );
+        return contentCategories.some((category) => aliases.some((alias) =>
+          category === alias || category.includes(alias) || alias.includes(category),
+        ));
       }
 
       // Before content analysis has run, preserve the existing manually assigned

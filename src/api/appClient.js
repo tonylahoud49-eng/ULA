@@ -1,6 +1,14 @@
 import { documentStorage } from "@/api/documentStorage";
 import { analyzeClaimWithProvider } from "@/api/aiAnalysisClient";
 import { createUnifiedReportDraft } from "@/lib/reportingEngine";
+import { createEvidenceSnapshots } from "@/lib/evidenceSnapshot";
+import { sendLeaveNotification } from "@/api/leaveClient";
+import {
+  createPendingLeave,
+  eventForLeave,
+  recordLeaveEmailDelivery,
+  transitionLeave,
+} from "@/lib/leaveWorkflow";
 
 const DATABASE_KEY = "ula_claims_hub_database_v1";
 const AUTH_KEY = "ula_claims_hub_auth_v1";
@@ -235,6 +243,7 @@ const createEntityApi = (entityName) => ({
   async create(values) {
     await prepareDatabase();
     if (entityName === "ClaimDocument") assertDocumentMetadataOnly(values);
+    if (entityName === "Leave") throw createError("Leave requests must be created through the validated leave workflow.", 400, "leave-workflow-required");
     const database = readJson(DATABASE_KEY, emptyDatabase);
     const timestamp = new Date().toISOString();
     const record = {
@@ -252,6 +261,9 @@ const createEntityApi = (entityName) => ({
   async update(id, values) {
     await prepareDatabase();
     if (entityName === "ClaimDocument") assertDocumentMetadataOnly(values);
+    if (entityName === "Leave" && values.status && values.status !== "Pending") {
+      throw createError("Leave decisions must be made through the validated leave workflow.", 400, "leave-workflow-required");
+    }
     const database = readJson(DATABASE_KEY, emptyDatabase);
     const records = database[entityName] || [];
     const index = records.findIndex((record) => record.id === id);
@@ -414,6 +426,7 @@ const buildAnalysis = async ({ claim_id: claimId }) => {
       .map((type) => ({
         category: type.document_type,
         confidence: type.confidence,
+        sufficient_information: type.sufficient_information,
         sources: type.sources.filter((source) => source.document_id === document.id),
       }))
       .filter((type) => type.sources.length);
@@ -423,6 +436,7 @@ const buildAnalysis = async ({ claim_id: claimId }) => {
       detected_category_evidence: detections.map((type) => ({
         category: type.category,
         confidence: type.confidence,
+        sufficient_information: type.sufficient_information,
         excerpts: type.sources.map((source) => source.supporting_text),
         pages: type.sources.map((source) => source.page).filter(Boolean),
       })),
@@ -441,6 +455,7 @@ const buildAnalysis = async ({ claim_id: claimId }) => {
     ai_suggested_report_template_id: analysis.template_id,
     ai_suggested_report_template_name: analysis.template_name,
     missing_documents: analysis.missing_documents,
+    ai_analysis: analysis,
   });
   return { data: { analysis, claim_id: claimId, document_count: documents.length } };
 };
@@ -452,17 +467,43 @@ const buildReport = async ({ claim_id: claimId, edited_data: editedData }) => {
   const documents = await entities.ClaimDocument.filter({ claim_id: claimId });
   const versions = await entities.ReportVersion.filter({ claim_id: claimId });
   const user = currentUser();
+  const storedEvidence = claim.ai_analysis?.evidence_snapshot;
+  const usableStoredEvidence = (item) => {
+    if (!item || !Array.isArray(item.pages)) return false;
+    if (["failed", "unavailable", "unsupported"].includes(item.extraction_status)) return false;
+    return item.pages.some((page) => String(page.text || "").trim())
+      || ["vision-only", "vision-required"].includes(item.extraction_status);
+  };
+  const hasCompleteStoredEvidence = Array.isArray(storedEvidence)
+    && documents.every((document) => storedEvidence.some((item) => item.document_id === document.id && usableStoredEvidence(item)));
+  const evidence = hasCompleteStoredEvidence
+    ? storedEvidence
+    : await createEvidenceSnapshots(documents, (storageKey) => documentStorage.get(storageKey));
   const unifiedDraft = createUnifiedReportDraft({
     claim,
     documents,
     versions,
     generatedBy: user.full_name || user.email,
+    analysis: claim.ai_analysis,
+    evidence,
   });
   const content = unifiedDraft.content;
+  const normalizedRecord = {
+    ...unifiedDraft.normalizedRecord,
+    evidence: evidence.map((item) => ({
+      document_id: item.document_id,
+      document_name: item.document_name,
+      mime_type: item.mime_type,
+      extraction_status: item.extraction_status,
+      extraction_warning: item.warning || null,
+      extracted_content_length: item.pages?.reduce((total, page) => total + String(page.text || "").length, 0) || 0,
+    })),
+  };
+  const factValue = (field) => normalizedRecord.facts[field]?.value ?? null;
 
   const report = await entities.ReportVersion.create({
     claim_id: claimId,
-    version_number: versions.length + 1,
+    version_number: unifiedDraft.versionNumber,
     status: "Draft",
     issue_state: "Draft",
     template_id: unifiedDraft.template.id,
@@ -474,13 +515,90 @@ const buildReport = async ({ claim_id: claimId, edited_data: editedData }) => {
       missing_documents: unifiedDraft.readiness.missingDocuments,
     },
     evidence_count: documents.length,
+    normalized_claim_record: normalizedRecord,
+    business_line: normalizedRecord.business_line,
+    insured_name: factValue("insured"),
+    insurer: factValue("insurer"),
+    broker: factValue("broker"),
+    policy_number: factValue("policy_number"),
+    date_of_loss: factValue("date_of_loss"),
+    currency: normalizedRecord.financials.currency,
+    claimed_amount: normalizedRecord.financials.presented_claim,
+    adjusted_amount: normalizedRecord.financials.concluded_indemnity,
     human_approval_required: true,
     content,
     generated_by: user.full_name || user.email,
     notes: "Locally generated controlled draft; professional review required",
   });
-  await entities.Claim.update(claimId, { ...editedData, status: "Report Draft" });
+  await entities.Claim.update(claimId, {
+    ...editedData,
+    status: "Report Draft",
+    normalized_claim_record: normalizedRecord,
+  });
   return { data: { report, claim_id: claimId } };
+};
+
+const persistLeaveEmailResult = (requestId, target, delivery) => {
+  const latest = readJson(DATABASE_KEY, emptyDatabase);
+  const recorded = recordLeaveEmailDelivery(latest, requestId, target, delivery);
+  writeJson(DATABASE_KEY, recorded.database);
+  return recorded.leave;
+};
+
+const notifyLeave = async (leave, employee, target) => {
+  const event = eventForLeave(leave, target);
+  try {
+    const result = await sendLeaveNotification({ ...event, leave, employee });
+    const updatedLeave = persistLeaveEmailResult(leave.id, target, result.delivery);
+    return { leave: updatedLeave, delivery: result.delivery, email_error: null };
+  } catch (error) {
+    const previousAttempts = Number(leave.email_delivery?.[target]?.attempts || 0);
+    const delivery = error.delivery || {
+      status: "failed",
+      attempts: previousAttempts + 1,
+      idempotency_key: event.idempotency_key,
+      error: error.message,
+      code: error.code || "leave-email-delivery-failed",
+      retryable: error.status !== 400 && error.status !== 403,
+    };
+    const updatedLeave = persistLeaveEmailResult(leave.id, target, delivery);
+    return { leave: updatedLeave, delivery, email_error: error.message };
+  }
+};
+
+const submitLeaveRequest = async (payload) => {
+  await prepareDatabase();
+  const database = readJson(DATABASE_KEY, emptyDatabase);
+  const created = createPendingLeave(database, payload, { id: payload.request_id || createId() });
+  if (created.created) writeJson(DATABASE_KEY, created.database);
+  const notified = await notifyLeave(created.leave, created.employee, "admin_notification");
+  return { data: { request: notified.leave, delivery: notified.delivery, email_error: notified.email_error, created: created.created } };
+};
+
+const decideLeaveRequest = async ({ request_id: requestId, decision }) => {
+  await prepareDatabase();
+  const database = readJson(DATABASE_KEY, emptyDatabase);
+  const actor = currentUser();
+  if (actor.role !== "admin") throw createError("Only an administrator can approve or reject leave requests.", 403, "leave-admin-required");
+  const transitioned = transitionLeave(database, requestId, decision, {
+    actor: { id: actor.id, name: actor.full_name, email: actor.email },
+  });
+  if (transitioned.changed) writeJson(DATABASE_KEY, transitioned.database);
+  const notified = await notifyLeave(transitioned.leave, transitioned.employee, "employee_notification");
+  return { data: { request: notified.leave, employee: transitioned.employee, delivery: notified.delivery, email_error: notified.email_error, changed: transitioned.changed } };
+};
+
+const retryLeaveNotification = async ({ request_id: requestId, target }) => {
+  await prepareDatabase();
+  const actor = currentUser();
+  if (actor.role !== "admin") throw createError("Only an administrator can retry leave notification emails.", 403, "leave-admin-required");
+  const database = readJson(DATABASE_KEY, emptyDatabase);
+  const leave = (database.Leave || []).find((item) => item.id === requestId);
+  if (!leave) throw createError("Leave request not found", 404, "leave-request-not-found");
+  const employee = (database.Employee || []).find((item) => item.id === leave.employee_id);
+  if (!employee) throw createError("Employee not found", 404, "employee-not-found");
+  const notified = await notifyLeave(leave, employee, target);
+  return { data: { request: notified.leave, delivery: notified.delivery, email_error: notified.email_error } };
 };
 
 export const appClient = {
@@ -509,6 +627,9 @@ export const appClient = {
     async invoke(name, payload) {
       if (name === "analyseClaim") return buildAnalysis(payload);
       if (name === "generateReport") return buildReport(payload);
+      if (name === "submitLeaveRequest") return submitLeaveRequest(payload);
+      if (name === "decideLeaveRequest") return decideLeaveRequest(payload);
+      if (name === "retryLeaveNotification") return retryLeaveNotification(payload);
       throw createError(`Unknown local function: ${name}`, 404);
     },
   },

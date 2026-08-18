@@ -1,6 +1,7 @@
 import test from "node:test";
 import assert from "node:assert/strict";
 import JSZip from "jszip";
+import { createCanvas } from "@napi-rs/canvas";
 import { jsPDF } from "jspdf";
 import { extractEvidenceFile, evidenceText } from "../evidence/extractEvidence.mjs";
 
@@ -31,6 +32,9 @@ test("server extraction reads PDF, DOCX, XLSX, and email contents and routes ima
   );
   assert.match(evidenceText(pdfEvidence), /Insurance Policy Number POL-44/i);
   assert.equal(pdfEvidence.kind, "pdf");
+  assert.equal(pdfEvidence.searchable_page_count, 1);
+  assert.equal(pdfEvidence.image_only_page_count, 0);
+  assert.equal(pdfEvidence.pages[0].extraction_status, "extracted");
 
   const wordEvidence = await extractEvidenceFile(
     file("combined.docx", "application/vnd.openxmlformats-officedocument.wordprocessingml.document", await docxBuffer()),
@@ -53,4 +57,31 @@ test("server extraction reads PDF, DOCX, XLSX, and email contents and routes ima
   const imageEvidence = await extractEvidenceFile(file("damage.jpg", "image/jpeg", Buffer.from([1, 2, 3])), { id: "image-1" });
   assert.equal(imageEvidence.extraction_status, "vision-required");
   assert.equal(imageEvidence.kind, "image");
+});
+
+test("image-only pages inside a mixed PDF are rendered and retained for provider vision", async () => {
+  const source = createCanvas(900, 1200);
+  const context = source.getContext("2d");
+  context.fillStyle = "white";
+  context.fillRect(0, 0, source.width, source.height);
+  context.fillStyle = "black";
+  context.font = "bold 48px sans-serif";
+  context.fillText("TOTAL CLAIM USD 10,859.57", 80, 180);
+  context.font = "34px sans-serif";
+  context.fillText("Container SEKU9137702", 80, 260);
+
+  const pdf = new jsPDF({ unit: "px", format: [900, 1200] });
+  pdf.addImage(source.toDataURL("image/jpeg", 0.82), "JPEG", 0, 0, 900, 1200);
+  const evidence = await extractEvidenceFile(
+    file("combined-claim.pdf", "application/pdf", Buffer.from(pdf.output("arraybuffer"))),
+    { id: "mixed-scan" },
+  );
+
+  assert.equal(evidence.pages.length, 1);
+  assert.equal(evidence.pages[0].extraction_status, "image-only");
+  assert.equal(evidence.image_only_page_count, 1);
+  assert.equal(evidence.vision_image_count, 1);
+  assert.equal(evidence.vision_images[0].page, 1);
+  assert.equal(evidence.vision_images[0].mime_type, "image/jpeg");
+  assert.ok(evidence.vision_images[0].buffer.length > 1_000);
 });

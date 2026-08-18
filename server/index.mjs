@@ -5,8 +5,10 @@ import path from "node:path";
 import fs from "node:fs";
 import { fileURLToPath } from "node:url";
 import { createConfiguredProvider, getAIStatus } from "./ai/provider.mjs";
-import { extractEvidenceFile } from "./evidence/extractEvidence.mjs";
+import { safeAiDebugLog } from "./ai/debugLog.mjs";
+import { extractEvidenceFile, evidenceText } from "./evidence/extractEvidence.mjs";
 import { loadApprovedStyleReferences } from "./ai/referenceLayer.mjs";
+import { createLeaveEmailService } from "./leave/leaveEmailService.mjs";
 
 const serverFile = fileURLToPath(import.meta.url);
 const root = path.resolve(path.dirname(serverFile), "..");
@@ -16,10 +18,37 @@ const maxFileBytes = Number(process.env.AI_MAX_FILE_BYTES || 20 * 1024 * 1024);
 const maxTotalBytes = Number(process.env.AI_MAX_TOTAL_BYTES || 50 * 1024 * 1024);
 const upload = multer({ storage: multer.memoryStorage(), limits: { files: maxFiles, fileSize: maxFileBytes } });
 const app = express();
+const leaveEmailService = createLeaveEmailService();
 
 app.disable("x-powered-by");
+app.use(express.json({ limit: "64kb" }));
 app.get("/api/health", (_request, response) => response.json({ ok: true }));
 app.get("/api/ai/status", (_request, response) => response.json(getAIStatus()));
+app.get("/api/leave/email/status", (_request, response) => response.json(leaveEmailService.getStatus()));
+
+app.post("/api/leave/notifications", async (request, response) => {
+  try {
+    const configuredBaseUrl = String(process.env.APP_BASE_URL || "").trim();
+    const requestOrigin = request.get("origin");
+    if (configuredBaseUrl && requestOrigin) {
+      try {
+        if (new URL(configuredBaseUrl).origin !== requestOrigin) {
+          return response.status(403).json({ error: "Leave email requests must originate from the configured ULA application.", code: "leave-email-origin-rejected" });
+        }
+      } catch {
+        // The service returns a precise invalid-configuration error below.
+      }
+    }
+    const delivery = await leaveEmailService.sendEvent(request.body);
+    return response.json({ delivery });
+  } catch (error) {
+    return response.status(Number(error.status) || 502).json({
+      error: error.message || "Outlook could not send the leave notification.",
+      code: error.code || "leave-email-delivery-failed",
+      delivery: error.delivery || null,
+    });
+  }
+});
 
 app.post("/api/ai/analyze", upload.array("files", maxFiles), async (request, response) => {
   try {
@@ -45,18 +74,48 @@ app.post("/api/ai/analyze", upload.array("files", maxFiles), async (request, res
     }
 
     const evidence = await Promise.all(files.map((file, index) => extractEvidenceFile(file, { ...manifest[index], index })));
-    const styleReferences = await loadApprovedStyleReferences(process.env.ULA_REPORT_REFERENCE_DIR);
+    safeAiDebugLog("[ULA AI debug] Extracted evidence", evidence.map((item) => ({
+      document_id: item.document_id,
+      filename: item.document_name,
+      mime_type: item.mime_type,
+      uploaded_type: item.category,
+      extraction_status: item.extraction_status,
+      extracted_content_length: evidenceText(item).length,
+      image_only_page_count: item.image_only_page_count || 0,
+      vision_pages_included: item.vision_image_count || 0,
+    })));
+    safeAiDebugLog("[ULA AI debug] Claude request", {
+      model: provider.model,
+      document_count: evidence.length,
+    });
+    const styleReferenceDirectory = process.env.ULA_REPORT_REFERENCE_DIR
+      || path.join(root, "server", "ai", "references");
+    const styleReferences = await loadApprovedStyleReferences(styleReferenceDirectory);
     const result = await provider.analyze({ claim, evidence, files, styleReferences });
+    safeAiDebugLog("[ULA AI debug] Detected document categories", evidence.map((item) => ({
+      filename: item.document_name,
+      detected_categories: result.analysis.document_types
+        .filter((type) => type.sources.some((source) => source.document_id === item.document_id))
+        .map((type) => type.document_type),
+    })));
     const extractionWarnings = evidence
       .filter((item) => item.warning || item.extraction_status === "unsupported" || item.extraction_status === "failed")
       .map((item) => `${item.document_name}: ${item.warning || "The file content could not be extracted or sent for vision analysis."}`);
     result.analysis.warnings = [...new Set([...result.analysis.warnings, ...extractionWarnings])];
     return response.json({
       ...result,
-      evidence_register: evidence.map(({ pages: _pages, embedded_images: _embeddedImages, ...item }) => item),
+      evidence_register: evidence.map(({ pages: _pages, embedded_images: _embeddedImages, vision_images: _visionImages, ...item }) => item),
+      evidence_snapshot: evidence.map((item) => ({
+        document_id: item.document_id,
+        document_name: item.document_name,
+        mime_type: item.mime_type,
+        extraction_status: item.extraction_status,
+        pages: item.pages,
+      })),
     });
   } catch (error) {
-    const isProviderError = Number(error?.status) >= 400;
+    const isNetworkError = /terminated|timed?\s*out|socket|network|fetch failed|connection (?:closed|reset)/i.test(error?.message || "");
+    const isProviderError = error?.isProviderError || Number(error?.status) >= 400 || isNetworkError;
     const statusCode = isProviderError ? 502 : 500;
     let providerMessage = error?.status === 401
       ? "AI provider credentials were rejected. Check the server configuration."
@@ -64,6 +123,8 @@ app.post("/api/ai/analyze", upload.array("files", maxFiles), async (request, res
         ? "The configured AI model or endpoint was not found. Check the provider model name in the server environment."
       : error?.status === 429
         ? "The AI provider rate or usage limit was reached. Try again later or review the provider account."
+        : isNetworkError
+          ? "The AI provider connection was interrupted. Try the analysis again."
         : "The AI provider could not complete this evidence analysis.";
     
     // Expose the raw provider error message for easy debugging
@@ -74,6 +135,8 @@ app.post("/api/ai/analyze", upload.array("files", maxFiles), async (request, res
     return response.status(statusCode).json({
       error: `AI analysis unavailable — ${providerMessage}`,
       code: "ai-analysis-failed",
+      provider_status: error?.providerStatus || error?.status || null,
+      provider_request_id: error?.providerRequestId || null,
     });
   }
 });

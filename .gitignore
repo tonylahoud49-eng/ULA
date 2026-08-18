@@ -31,7 +31,9 @@ dist-ssr
 
 .env
 .vite
+.tmp/
 .chrome-audit/
+.data/
 
 # Local Impeccable review/session artifacts; keep .impeccable/design.json tracked.
 .impeccable/review/

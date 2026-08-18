@@ -12,11 +12,26 @@ Non-negotiable evidence rules:
 - Mark a document type missing only when the required substantive information is genuinely absent from the entire evidence set.
 - Never fabricate. Unsupported values must be null, require confirmation, and have no invented citation.
 - Every non-null field, document type, classification, and finding must cite the document id/name, page when available, a short exact supporting excerpt, confidence, and evidence mode.
+- Every confidence value must be a number from 0 through 1. A source page must be null when unknown or a positive whole number when known.
+- Copy supporting_text verbatim as one short, contiguous excerpt from the cited document. Do not paraphrase it and do not include the [Extracted text] marker.
+- For text shown under [Extracted text], use evidence_mode extracted_text. Use document_vision or image_vision only when the cited fact comes from visual inspection and is absent from extracted text.
+- Use the exact DOCUMENT ID and DOCUMENT NAME shown in the evidence register. Classification may and should cite multiple uploaded documents when the complete set supports it.
 - Photographs may support damage findings. When document evidence is available, photographs must never be the sole basis for business-line classification.
 - Classify only as Yacht, Property, Marine Cargo (Reefer/GFS), Marine Cargo (Non-Reefer), Bulk Vessel, Air Shipment (NET), Fidelity Claims, or Other / Requires Review. Use Other / Requires Review when evidence is insufficient or ambiguous.
 - For completeness, check Policy, Claim Form, and Supporting Evidence across the complete evidence set. Then apply the classified line's additional evidence needs: Yacht—Registration, Repair Invoice or Quotation, Survey Report, Photographs; Property—Incident Report, Repair Invoice or Quotation, Photographs, Survey Report; Marine Cargo Reefer/GFS—Bill of Lading, Commercial Invoice, Packing List, Temperature Records, Survey Report; Marine Cargo Non-Reefer—Bill of Lading, Commercial Invoice, Packing List, Notice of Claim, Survey Report; Bulk Vessel—Bill of Lading, Commercial Invoice, Cargo Certificate, Survey Report; Air Shipment/NET—Air Waybill, Commercial Invoice, Packing List, Survey Report; Fidelity—Employee Records, Account Ledger, Investigation Statement.
 - A specific supporting item such as an invoice, survey, ledger, statement, or photograph can also substantiate the broader Supporting Evidence type. Cite both types when justified; do not demand a separate file merely named Supporting Evidence.
+- Return a document_types entry for every type substantiated anywhere in the complete evidence set. Explicitly evaluate Policy, Claim Form, and Supporting Evidence even when the same source is also a Notice of Claim, Survey Report, invoice, photograph, or another specific type.
+- Account for every uploaded DOCUMENT ID in document_types based on its substantive content. Do not leave an extracted document unassessed merely because its filename or uploaded label is generic.
 - Historical style references are not claim evidence. Never extract names, amounts, dates, facts, or conclusions from them.
+- Build a normalized claim record from the complete evidence set. Extract shipment identifiers, parties, routing, quantities, weights, policy wording, survey findings, and each distinct financial value when supported.
+- Work in this order: classify every evidence item by content; extract atomic facts with provenance; reconcile repeated identifiers and conflicting values across documents; retain dated events for chronology; retain survey observations separately from causal indicators; then assess cause, policy relevance, and adjustment inputs. Do not skip directly from a document summary to a conclusion.
+- Search the entire combined evidence set before returning a field as null. A value found on any page of any uploaded file must be returned with its source even when it appears in a different document type than expected.
+- Retain claim-specific dates, quantities, parties, references, shipment legs, container or air-waybill details, observed damage, assessor findings, and material policy clauses as structured fields or evidence findings. Do not replace available specifics with generic narrative.
+- Report survey observations as atomic evidence_findings. Distinguish observed condition, factual causal indicators, and any express source-stated cause; do not turn an indicator into a definitive cause.
+- Keep invoice value, commercial-invoice freight, commercial-invoice insurance, FOB value, separate freight-invoice total, insured value, gross presented claim, deductible, salvage, recovery, depreciation, fees, and adjusted amount as separate fields. Preserve the ISO currency stated in the evidence and never substitute zero for an unknown amount.
+- When a claim schedule or adjustment table is present, return every supported row in adjustment_line_items with its exact description, quantity, unit price or loss rate, adjusted value, currency, basis, and page citation. Do not collapse an itemized schedule into a generic total.
+- Flag conflicting values across documents in warnings and human_review_required. Do not silently choose one conflicting source.
+- Cause, coverage, liability, and conclusion fields must describe only what the cited evidence supports. If the evidence does not support a definitive determination, return null and require confirmation.
 - This output is a suggestion for human review. Coverage, cause, liability, adjustment, recommendations, and conclusions must remain explicitly reviewable.`;
 
 const toDataUrl = (file) => `data:${file.mimetype || "application/octet-stream"};base64,${file.buffer.toString("base64")}`;
@@ -94,15 +109,6 @@ function validateSource(source, evidence) {
 
   if (!needle || haystack.includes(needle)) return correctedSource;
 
-  const needleTokens = needle.split(" ").filter((w) => w.length > 3);
-  if (needleTokens.length > 0) {
-    const matchedTokens = needleTokens.filter((token) => haystack.includes(token));
-    if (matchedTokens.length / needleTokens.length >= 0.35) {
-      return correctedSource;
-    }
-  }
-
-  if (haystack.length > 10) return correctedSource;
   return null;
 }
 
@@ -165,19 +171,22 @@ function enforceGrounding(parsed, evidence) {
     sources: sanitizeSources(item.sources),
   }));
 
+  parsed.adjustment_line_items = (parsed.adjustment_line_items || []).flatMap((item) => {
+    const sources = sanitizeSources(item.sources);
+    return sources.length ? [{ ...item, sources }] : [];
+  });
+
   parsed.fields = (parsed.fields || []).map((field) => {
     const sources = sanitizeSources(field.sources);
     if (field.value !== null && !sources.length && evidence.length > 0) {
+      warnings.push(`${field.field} was withheld because the AI provider returned no verifiable source.`);
       return {
         ...field,
-        sources: [{
-          document_id: evidence[0].document_id,
-          document_name: evidence[0].document_name,
-          page: 1,
-          supporting_text: String(field.value),
-          confidence: field.confidence || 0.88,
-          evidence_mode: "extracted_text",
-        }],
+        value: null,
+        normalized_value: null,
+        confidence: 0,
+        requires_confirmation: true,
+        sources: [],
       };
     }
     return { ...field, sources };

@@ -1,0 +1,33 @@
+{
+  "approved": true,
+  "title": "Approved ULA master claim report standard",
+  "section_order": [
+    "Cover Page",
+    "Document Control Page",
+    "Report Summary",
+    "Report and adjustment note",
+    "Table 1 - Summary and salient details",
+    "INTEREST INSURED & RELEVANT CONDITIONS OF INSURANCE POLICY",
+    "SURVEYOR NOTES",
+    "CAUSE OF LOSS",
+    "RELEVANT POLICY WARRANTIES & CONDITIONS",
+    "ADEQUACY OF THE INSURED VALUE",
+    "APPOINTMENT OF ASSESSORS",
+    "CLAIM PRESENTED ON THE POLICY & ADJUSTMENT",
+    "Table 2 - Claim presented by the Assured & Adjustment",
+    "CONCLUSION",
+    "Enclosure to this report",
+    "Outstanding/ Not Available Documents",
+    "Appendices",
+    "About ULA"
+  ],
+  "style_notes": [
+    "Use the historical report only as a structural and professional-writing benchmark.",
+    "Use numbered, claim-specific factual paragraphs for the chronology and adjuster's note.",
+    "Present salient details and quantum in clear tables with ISO currency codes.",
+    "Preserve the approved two-column salient-details table, three-column damage schedule, and four-column claim-adjustment table; do not introduce substitute columns.",
+    "Separate source facts, policy wording, professional review points, and deterministic calculations.",
+    "When a value genuinely cannot be established after reviewing all evidence, state that it was not established from the reviewed evidence and identify the gap.",
+    "Do not reuse any historical claimant, policy, shipment, date, amount, finding, conclusion, or claim-specific wording."
+  ]
+}
