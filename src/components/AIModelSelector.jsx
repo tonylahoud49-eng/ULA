@@ -1,6 +1,6 @@
 import React, { useEffect, useState } from "react";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
-import { Checkbox } from "@/components/ui/checkbox";
+import { Switch } from "@/components/ui/switch";
 import { formatModelDisplayName } from "@/components/AIAnalysisProgressCard";
 
 export default function AIModelSelector({
@@ -73,7 +73,7 @@ export default function AIModelSelector({
   }
 
   return (
-    <div className={`flex flex-wrap items-center gap-3.5 ${className}`}>
+    <div className={`flex flex-wrap items-center gap-3 ${className}`}>
       <Select value={value || providers[0]?.provider} onValueChange={handleSelect} disabled={disabled}>
         <SelectTrigger className="h-9 min-w-[210px] max-w-[260px] bg-background text-xs font-medium border-border shadow-xs hover:border-primary/40 focus:ring-1 focus:ring-primary">
           <div className="flex items-center gap-2 truncate">
@@ -98,16 +98,17 @@ export default function AIModelSelector({
         </SelectContent>
       </Select>
 
-      <div className="flex items-center gap-2">
-        <Checkbox
+      <div className="flex items-center gap-2.5 rounded-md border border-border bg-background/50 px-3 h-9 shadow-xs hover:border-primary/40 transition-colors">
+        <label htmlFor="enable-fallback-toggle" className="docket-label text-[0.62rem] text-muted-foreground cursor-pointer select-none">
+          Fallback
+        </label>
+        <Switch
           id="enable-fallback-toggle"
           checked={enableFallback}
           onCheckedChange={handleFallbackChange}
           disabled={disabled}
+          className="h-4 w-7 data-[state=checked]:bg-primary data-[state=unchecked]:bg-muted-foreground/30 [&>span]:h-3 [&>span]:w-3 data-[state=checked]:[&>span]:translate-x-3"
         />
-        <label htmlFor="enable-fallback-toggle" className="text-xs font-medium text-muted-foreground cursor-pointer select-none">
-          Enable fallback
-        </label>
       </div>
     </div>
   );
