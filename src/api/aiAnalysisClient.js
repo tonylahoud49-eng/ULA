@@ -29,7 +29,7 @@ const numericFields = new Set([
 
 const usableValue = (field) => {
   const value = field.normalized_value ?? field.value;
-  if (value === null || value === "" || field.requires_confirmation) return undefined;
+  if (value === null || value === "") return undefined;
   if (!numericFields.has(field.field)) return value;
   const number = Number(String(value).replace(/[^0-9.-]/g, ""));
   return Number.isFinite(number) ? number : undefined;
@@ -112,7 +112,7 @@ export async function getActiveAIStatus() {
   return { configured: true, provider: "anthropic", model: "claude-sonnet-5", configured_providers: [] };
 }
 
-export async function analyzeClaimWithProvider({ claim, documents, provider, model }) {
+export async function analyzeClaimWithProvider({ claim, documents, provider, model, disable_fallback }) {
   const form = new FormData();
   const manifest = [];
 
@@ -144,6 +144,7 @@ export async function analyzeClaimWithProvider({ claim, documents, provider, mod
   form.append("manifest", JSON.stringify(manifest));
   if (provider) form.append("provider", provider);
   if (model) form.append("model", model);
+  if (disable_fallback) form.append("disable_fallback", "true");
 
   let response;
   try {

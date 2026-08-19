@@ -497,13 +497,13 @@ const auth = {
   },
 };
 
-const buildAnalysis = async ({ claim_id: claimId, provider, model }) => {
+const buildAnalysis = async ({ claim_id: claimId, provider, model, disable_fallback }) => {
   const claim = await entities.Claim.get(claimId);
   if (!claim) throw createError("Claim not found", 404);
   const documents = await entities.ClaimDocument.filter({ claim_id: claimId });
   if (!documents.length) throw createError("No documents uploaded for this claim");
 
-  const analysis = await analyzeClaimWithProvider({ claim, documents, provider, model });
+  const analysis = await analyzeClaimWithProvider({ claim, documents, provider, model, disable_fallback });
   await Promise.all(documents.map((document) => {
     const detections = analysis.document_types
       .map((type) => ({
@@ -529,7 +529,8 @@ const buildAnalysis = async ({ claim_id: claimId, provider, model }) => {
     });
   }));
 
-  await entities.Claim.update(claimId, {
+  const suggestions = analysis.suggested_claim_data || {};
+  const claimUpdates = {
     ai_confidence: analysis.confidence,
     ai_classification_source: `${analysis.provider}:${analysis.model}`,
     ai_suggested_business_line: analysis.business_line,
@@ -539,7 +540,19 @@ const buildAnalysis = async ({ claim_id: claimId, provider, model }) => {
     ai_suggested_report_template_name: analysis.template_name,
     missing_documents: analysis.missing_documents,
     ai_analysis: analysis,
-  });
+  };
+
+  // Merge suggestions into claim fields only if they are currently empty/null/blank
+  // and never overwrite user-entered data
+  for (const [key, val] of Object.entries(suggestions)) {
+    const currentVal = claim[key];
+    const isEmpty = currentVal === undefined || currentVal === null || currentVal === "" || (key === "business_line" && currentVal === "Unclassified");
+    if (isEmpty && val !== undefined && val !== null && val !== "") {
+      claimUpdates[key] = val;
+    }
+  }
+
+  await entities.Claim.update(claimId, claimUpdates);
   return { data: { analysis, claim_id: claimId, document_count: documents.length } };
 };
 

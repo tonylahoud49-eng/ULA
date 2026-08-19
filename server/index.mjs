@@ -55,9 +55,11 @@ app.post("/api/ai/analyze", upload.array("files", maxFiles), async (request, res
   try {
     const requestedProvider = request.body.provider || undefined;
     const requestedModel = request.body.model || undefined;
+    const disableFallback = request.body.disable_fallback === "true" || request.body.disable_fallback === true;
     const { status, provider } = createConfiguredProvider({
       providerName: requestedProvider,
       modelName: requestedModel,
+      disableFallback,
     });
     if (!provider) {
       return response.status(503).json({

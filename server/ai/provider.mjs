@@ -93,7 +93,7 @@ function instantiate(name, env, modelOverride) {
   return config.factory(options);
 }
 
-export function createConfiguredProvider({ providerName, modelName } = {}, env = process.env) {
+export function createConfiguredProvider({ providerName, modelName, disableFallback } = {}, env = process.env) {
   const status = getAIStatus(env);
   if (!status.configured) {
     return { status, provider: null };
@@ -106,10 +106,12 @@ export function createConfiguredProvider({ providerName, modelName } = {}, env =
   const targetModel = modelName || (targetProvider === status.provider ? status.model : null);
 
   const primary = instantiate(targetProvider, env, targetModel);
-  const fallbacks = (status.configured_providers || [])
-    .filter((p) => p.provider !== targetProvider)
-    .map((p) => instantiate(p.provider, env))
-    .filter(Boolean);
+  const fallbacks = disableFallback
+    ? []
+    : (status.configured_providers || [])
+        .filter((p) => p.provider !== targetProvider)
+        .map((p) => instantiate(p.provider, env))
+        .filter(Boolean);
 
   const allProviders = [primary, ...fallbacks].filter(Boolean);
 
@@ -126,7 +128,12 @@ export function createConfiguredProvider({ providerName, modelName } = {}, env =
         let lastError;
         for (const instance of allProviders) {
           try {
-            return await instance.analyze(params);
+            const res = await instance.analyze(params);
+            return {
+              ...res,
+              provider: instance.name,
+              model: instance.model,
+            };
           } catch (error) {
             error.provider = instance.name;
             error.model = instance.model;

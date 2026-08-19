@@ -167,6 +167,7 @@ export default function ClaimDetail() {
   const [analysis, setAnalysis] = useState(null);
   const [analysisError, setAnalysisError] = useState("");
   const [selectedProvider, setSelectedProvider] = useState("");
+  const [enableFallback, setEnableFallback] = useState(true);
   const [editing, setEditing] = useState(false);
   const [form, setForm] = useState({});
   const readiness = useMemo(() => reportReadiness(claim || {}, documents), [claim, documents]);
@@ -204,12 +205,24 @@ export default function ClaimDetail() {
       const res = await appClient.functions.invoke("analyseClaim", {
         claim_id: id,
         provider: selectedProvider,
+        disable_fallback: !enableFallback,
       });
       clearTimeout(timer1);
       clearTimeout(timer2);
       setAnalysisProgress({ active: true, progress: 100, stage: "Analysis complete! Updating claim docket...", step: 4, totalSteps: 4 });
       await new Promise((r) => setTimeout(r, 300));
       setAnalysis(res.data.analysis);
+
+      // Warning toast if fallback occurred
+      const requestedProvider = selectedProvider;
+      const actualProvider = res.data.analysis.provider;
+      if (requestedProvider && actualProvider && requestedProvider.toLowerCase() !== actualProvider.toLowerCase()) {
+        toast({
+          title: "Automatic Provider Fallback",
+          description: `The selected AI provider (${formatModelDisplayName(requestedProvider, null)}) was unavailable. The system completed the analysis using fallback provider ${formatModelDisplayName(actualProvider, res.data.analysis.model)}.`,
+        });
+      }
+
       await load();
     } catch (e) {
       clearTimeout(timer1);
@@ -249,6 +262,8 @@ export default function ClaimDetail() {
           <AIModelSelector
             value={selectedProvider}
             onChange={setSelectedProvider}
+            enableFallback={enableFallback}
+            onEnableFallbackChange={setEnableFallback}
             disabled={analyzing}
           />
           <Button onClick={runAnalysis} disabled={analyzing || !documents.length} className="ula-gradient text-white hover:opacity-90">

@@ -23,7 +23,7 @@ import { Textarea } from "@/components/ui/textarea";
 import { toast } from "@/components/ui/use-toast";
 import DocumentUploader from "@/components/DocumentUploader";
 import { REPORT_WORKFLOW_ROLES, reportReadiness } from "@/lib/reportTemplates";
-import AIAnalysisProgressCard from "@/components/AIAnalysisProgressCard";
+import AIAnalysisProgressCard, { formatModelDisplayName } from "@/components/AIAnalysisProgressCard";
 import AIModelSelector from "@/components/AIModelSelector";
 
 const BUSINESS_LINES = ["Yacht", "Property", "Marine Cargo (Reefer/GFS)", "Marine Cargo (Non-Reefer)", "Bulk Vessel", "Air Shipment (NET)", "Land Shipment", "Fidelity Claims", "Requires Review", "Unclassified"];
@@ -113,6 +113,7 @@ export default function AIReporting() {
   const [analysis, setAnalysis] = useState(null);
   const [analysisError, setAnalysisError] = useState("");
   const [selectedProvider, setSelectedProvider] = useState("");
+  const [enableFallback, setEnableFallback] = useState(true);
   const [edited, setEdited] = useState({});
   const [generating, setGenerating] = useState(false);
   const [loadingDummy, setLoadingDummy] = useState(false);
@@ -210,12 +211,24 @@ export default function AIReporting() {
       const response = await appClient.functions.invoke("analyseClaim", {
         claim_id: selectedClaimId,
         provider: selectedProvider,
+        disable_fallback: !enableFallback,
       });
       clearTimeout(timer1);
       clearTimeout(timer2);
       setAnalysisProgress({ active: true, progress: 100, stage: "Analysis complete! Finalizing suggestions...", step: 4, totalSteps: 4 });
       await new Promise((r) => setTimeout(r, 300));
       setAnalysis(response.data.analysis);
+
+      // Warning toast if fallback occurred
+      const requestedProvider = selectedProvider;
+      const actualProvider = response.data.analysis.provider;
+      if (requestedProvider && actualProvider && requestedProvider.toLowerCase() !== actualProvider.toLowerCase()) {
+        toast({
+          title: "Automatic Provider Fallback",
+          description: `The selected AI provider (${formatModelDisplayName(requestedProvider, null)}) was unavailable. The system completed the analysis using fallback provider ${formatModelDisplayName(actualProvider, response.data.analysis.model)}.`,
+        });
+      }
+
       await selectClaim(selectedClaimId);
       setAnalysis(response.data.analysis);
       const suggestions = response.data.analysis.suggested_claim_data || {};
@@ -330,6 +343,8 @@ export default function AIReporting() {
                 <AIModelSelector
                   value={selectedProvider}
                   onChange={setSelectedProvider}
+                  enableFallback={enableFallback}
+                  onEnableFallbackChange={setEnableFallback}
                   disabled={analyzing}
                 />
                 <Button onClick={runAnalysis} className="ula-gradient text-white hover:opacity-90">Run AI Analysis</Button>
