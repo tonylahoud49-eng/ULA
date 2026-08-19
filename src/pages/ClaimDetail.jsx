@@ -1,7 +1,5 @@
 import React, { useEffect, useMemo, useState } from "react";
 import { useParams, Link } from "react-router-dom";
-import { jsPDF } from "jspdf";
-import html2canvas from "html2canvas";
 import remarkGfm from "remark-gfm";
 import ulaLogo from "@/assets/ula-logo.png";
 import ulaSkyscrapers from "@/assets/ula-skyscrapers.png";
@@ -25,12 +23,13 @@ import {
   AlertDialogHeader,
   AlertDialogTitle,
 } from "@/components/ui/alert-dialog";
-import { ArrowLeft, Download, FileText, Sparkles, AlertTriangle, Save, CheckCircle, ClipboardCheck, ShieldCheck, Trash2 } from "lucide-react";
+import { ArrowLeft, Download, FileText, Sparkles, AlertTriangle, Save, CheckCircle, ClipboardCheck, ShieldCheck, Trash2, Cpu } from "lucide-react";
 import DocumentUploader from "@/components/DocumentUploader";
 import ReactMarkdown from "react-markdown";
 import { toast } from "@/components/ui/use-toast";
 import { REPORT_LIFECYCLE, reportReadiness } from "@/lib/reportTemplates";
-import { populateMasterReportDocx } from "@/lib/masterReportDocx";
+import AIAnalysisProgressCard, { formatModelDisplayName } from "@/components/AIAnalysisProgressCard";
+import AIModelSelector from "@/components/AIModelSelector";
 
 const BUSINESS_LINES = ["Yacht", "Property", "Marine Cargo (Reefer/GFS)", "Marine Cargo (Non-Reefer)", "Bulk Vessel", "Air Shipment (NET)", "Land Shipment", "Fidelity Claims", "Requires Review", "Unclassified"];
 const STATUSES = ["New", "Under Investigation", "Pending Documents", "Report Draft", "Report Final", "Closed"];
@@ -144,6 +143,19 @@ const collectAppendixImages = async (documents, normalizedRecord) => {
   return images;
 };
 
+const markdownComponents = {
+  p: ({node, ...props}) => <p dir="auto" {...props} />,
+  h1: ({node, ...props}) => <h1 dir="auto" {...props} />,
+  h2: ({node, ...props}) => <h2 dir="auto" {...props} />,
+  h3: ({node, ...props}) => <h3 dir="auto" {...props} />,
+  h4: ({node, ...props}) => <h4 dir="auto" {...props} />,
+  h5: ({node, ...props}) => <h5 dir="auto" {...props} />,
+  h6: ({node, ...props}) => <h6 dir="auto" {...props} />,
+  li: ({node, ...props}) => <li dir="auto" {...props} />,
+  td: ({node, ...props}) => <td dir="auto" {...props} />,
+  th: ({node, ...props}) => <th dir="auto" {...props} />
+};
+
 export default function ClaimDetail() {
   const { id } = useParams();
   const [claim, setClaim] = useState(null);
@@ -154,17 +166,22 @@ export default function ClaimDetail() {
   const [analysisProgress, setAnalysisProgress] = useState({ active: false, progress: 0, stage: "", step: 1, totalSteps: 4 });
   const [analysis, setAnalysis] = useState(null);
   const [analysisError, setAnalysisError] = useState("");
+  const [selectedProvider, setSelectedProvider] = useState("");
   const [editing, setEditing] = useState(false);
   const [form, setForm] = useState({});
   const readiness = useMemo(() => reportReadiness(claim || {}, documents), [claim, documents]);
 
   const load = async () => {
     try {
-      const c = await appClient.entities.Claim.get(id);
+      const [c, docs, reps] = await Promise.all([
+        appClient.entities.Claim.get(id),
+        appClient.entities.ClaimDocument.filter({ claim_id: id }),
+        appClient.entities.ReportVersion.filter({ claim_id: id }),
+      ]);
       setClaim(c);
       setForm(c);
-      setDocuments(await appClient.entities.ClaimDocument.filter({ claim_id: id }));
-      setReports(await appClient.entities.ReportVersion.filter({ claim_id: id }));
+      setDocuments(docs);
+      setReports(reps);
     } finally {
       setLoading(false);
     }
@@ -184,7 +201,10 @@ export default function ClaimDetail() {
     }, 1200);
 
     try {
-      const res = await appClient.functions.invoke("analyseClaim", { claim_id: id });
+      const res = await appClient.functions.invoke("analyseClaim", {
+        claim_id: id,
+        provider: selectedProvider,
+      });
       clearTimeout(timer1);
       clearTimeout(timer2);
       setAnalysisProgress({ active: true, progress: 100, stage: "Analysis complete! Updating claim docket...", step: 4, totalSteps: 4 });
@@ -225,53 +245,60 @@ export default function ClaimDetail() {
             <p className="docket-subtitle">{claim.business_line} · {claim.insured || "Insured not yet established"} · {readiness.template.name}</p>
           </div>
         </div>
-        <Button onClick={runAnalysis} disabled={analyzing || !documents.length} className="ula-gradient text-white hover:opacity-90">
-          <Sparkles className="w-4 h-4 mr-2" /> {analyzing ? "Analyzing…" : "Run AI Analysis"}
-        </Button>
+        <div className="flex flex-wrap items-center gap-3">
+          <AIModelSelector
+            value={selectedProvider}
+            onChange={setSelectedProvider}
+            disabled={analyzing}
+          />
+          <Button onClick={runAnalysis} disabled={analyzing || !documents.length} className="ula-gradient text-white hover:opacity-90">
+            {analyzing ? (
+              <>
+                <span className="mr-2 h-2 w-2 rounded-full bg-white animate-pulse" /> Analyzing docket…
+              </>
+            ) : (
+              "Run AI Analysis"
+            )}
+          </Button>
+        </div>
       </div>
 
       {analysisProgress.active && (
-        <Card className="docket-surface border-primary/40 bg-primary/5 p-4 shadow-none transition-all">
-          <div className="space-y-3">
-            <div className="flex items-center justify-between text-xs font-semibold">
-              <div className="flex items-center gap-2 text-primary">
-                <Sparkles className="w-4 h-4 animate-spin text-primary" />
-                <span className="font-heading text-sm font-semibold uppercase tracking-wider">AI Claim Analysis in Progress</span>
-              </div>
-              <span className="font-mono text-xs font-bold text-primary">{analysisProgress.progress}%</span>
-            </div>
-            <div className="w-full bg-primary/15 h-2 rounded-full overflow-hidden">
-              <div
-                className="bg-primary h-full transition-all duration-500 ease-out rounded-full"
-                style={{ width: `${analysisProgress.progress}%` }}
-              />
-            </div>
-            <div className="flex items-center justify-between text-[0.72rem] text-muted-foreground">
-              <span>{analysisProgress.stage}</span>
-              <span className="font-mono text-[0.68rem]">Step {analysisProgress.step} of {analysisProgress.totalSteps}</span>
-            </div>
-          </div>
-        </Card>
+        <AIAnalysisProgressCard progress={analysisProgress} />
       )}
 
       <ReleaseChain claim={claim} documents={documents} reports={reports} readiness={readiness} />
 
       {analysis && (
-        <Card className="docket-surface border-primary/30 bg-primary/5 p-4 shadow-none">
-          <div className="flex items-start gap-3">
-            <Sparkles className="w-5 h-5 text-primary mt-0.5" />
-            <div className="flex-1">
-              <p className="text-sm font-semibold">AI analysis complete — classification confidence: {analysis.confidence}%</p>
-              <p className="text-xs text-muted-foreground mt-1">{analysis.summary}</p>
-              {analysis.missing_documents && analysis.missing_documents.length > 0 && (
-                <div className="mt-2 flex items-start gap-2 text-xs text-amber-700">
-                  <AlertTriangle className="w-4 h-4 mt-0.5" />
-                  <span>Missing: {analysis.missing_documents.join(", ")}</span>
-                </div>
-              )}
+        <section className="docket-surface overflow-hidden rounded-lg border border-border shadow-xs" aria-label="AI analysis summary">
+          <div className="flex flex-wrap items-center justify-between gap-3 border-b bg-muted/25 px-5 py-3">
+            <div className="flex items-center gap-2.5">
+              <span className="flex h-5 w-5 items-center justify-center rounded-full bg-primary/10 text-primary">
+                <CheckCircle className="h-3.5 w-3.5" />
+              </span>
+              <h4 className="font-heading text-xs font-semibold uppercase tracking-wider text-foreground">
+                AI Classification Recorded · {analysis.confidence}% Confidence
+              </h4>
             </div>
+            {(analysis.provider || analysis.model) && (
+              <div className="flex items-center gap-1.5 rounded border border-border/80 bg-background px-2.5 py-0.5 text-xs text-muted-foreground">
+                <span className="docket-label">Engine</span>
+                <span className="font-mono text-[0.72rem] font-semibold text-foreground">
+                  {formatModelDisplayName(analysis.provider, analysis.model)}
+                </span>
+              </div>
+            )}
           </div>
-        </Card>
+          <div className="p-4 space-y-2">
+            <p className="text-xs leading-relaxed text-foreground">{analysis.summary}</p>
+            {analysis.missing_documents && analysis.missing_documents.length > 0 && (
+              <div className="mt-2 flex items-start gap-2 rounded border border-amber-300 bg-amber-50/70 p-2 text-xs text-amber-800">
+                <AlertTriangle className="h-4 w-4 shrink-0 mt-0.5" />
+                <span><strong>Action required:</strong> {analysis.missing_documents.join(", ")}</span>
+              </div>
+            )}
+          </div>
+        </section>
       )}
 
       {analysisError && !analysis && (
@@ -413,9 +440,9 @@ function Field({ label, children }) {
 }
 
 function ControlledReportPreview({ report, data }) {
-  const sections = parseMarkdownSections(report.content);
-  const entries = Object.entries(sections).filter(([key]) => !["cover_page", "document_control", "version_history", "claim_salient_details"].includes(key));
-  const initials = String(data.insured_name || "ULA").split(/\s+/).filter(Boolean).slice(0, 2).map((part) => part[0]).join("") || "ULA";
+  const sections = useMemo(() => parseMarkdownSections(report?.content), [report?.content]);
+  const entries = useMemo(() => Object.entries(sections).filter(([key]) => !["cover_page", "document_control", "version_history", "claim_salient_details"].includes(key)), [sections]);
+  const initials = useMemo(() => String(data.insured_name || "ULA").split(/\s+/).filter(Boolean).slice(0, 2).map((part) => part[0]).join("") || "ULA", [data.insured_name]);
   const value = (item) => item || "Not established from reviewed evidence";
 
   return (
@@ -486,7 +513,7 @@ function ControlledReportPreview({ report, data }) {
             {entries.map(([key, body], index) => (
               <section className="report-content-section" id={`section-${key}`} key={key}>
                 <div className="report-section-heading"><span>{String(index + 3).padStart(2, "0")}</span><h2>{key.replaceAll("_", " ")}</h2></div>
-                <ReactMarkdown remarkPlugins={[remarkGfm]}>{body || "No evidence-supported content was established for this section."}</ReactMarkdown>
+                <ReactMarkdown remarkPlugins={[remarkGfm]} components={markdownComponents}>{body || "No evidence-supported content was established for this section."}</ReactMarkdown>
               </section>
             ))}
           </div>
@@ -669,8 +696,10 @@ function ReportSection({ claimId, claim, documents, reports, onChanged }) {
 
   const exportDocx = async (report) => {
     try {
-      setExportProgress({ active: true, format: "DOCX", progress: 15, stage: "Loading the approved ULA Word master..." });
-      const response = await fetch(masterReportTemplate);
+      const [{ populateMasterReportDocx }, response] = await Promise.all([
+        import("@/lib/masterReportDocx"),
+        fetch(masterReportTemplate),
+      ]);
       if (!response.ok) throw new Error("The production report template could not be loaded.");
       setExportProgress({ active: true, format: "DOCX", progress: 35, stage: "Preparing active-claim appendix evidence..." });
       const appendixImages = await collectAppendixImages(documents, report.normalized_claim_record);
@@ -699,6 +728,10 @@ function ReportSection({ claimId, claim, documents, reports, onChanged }) {
     await new Promise((resolve) => setTimeout(resolve, 400));
 
     try {
+      const [{ jsPDF }, { default: html2canvas }] = await Promise.all([
+        import("jspdf"),
+        import("html2canvas"),
+      ]);
       const data = getReportData(report);
       const pdf = new jsPDF({ unit: "pt", format: "a4" });
       const width = pdf.internal.pageSize.getWidth();
@@ -707,71 +740,185 @@ function ReportSection({ claimId, claim, documents, reports, onChanged }) {
       // Page 1: Cover Page (Framed with corporate header & skyscrapers)
       setExportProgress({ active: true, format: "PDF", progress: 20, stage: "Rendering framed cover page..." });
       if (!pdfCoverRef.current) throw new Error("Export cover element not found in DOM");
-      const coverCanvas = await html2canvas(pdfCoverRef.current, { scale: 2, useCORS: true });
-      const coverImg = coverCanvas.toDataURL("image/png");
-      pdf.addImage(coverImg, "PNG", 0, 0, width, height);
+      const coverCanvas = await html2canvas(pdfCoverRef.current, { scale: 2, useCORS: true, backgroundColor: "#ffffff" });
+      const coverImg = coverCanvas.toDataURL("image/jpeg", 0.90);
+      pdf.addImage(coverImg, "JPEG", 0, 0, width, height);
 
       // Page 2: Control, Version History & Salient Details
       setExportProgress({ active: true, format: "PDF", progress: 40, stage: "Rendering document control & salient details..." });
       if (!pdfControlRef.current) throw new Error("Export control element not found in DOM");
-      const controlCanvas = await html2canvas(pdfControlRef.current, { scale: 2, useCORS: true });
-      const controlImg = controlCanvas.toDataURL("image/png");
+      const controlCanvas = await html2canvas(pdfControlRef.current, { scale: 2, useCORS: true, backgroundColor: "#ffffff" });
+      const controlImg = controlCanvas.toDataURL("image/jpeg", 0.90);
       pdf.addPage();
-      pdf.addImage(controlImg, "PNG", 0, 0, width, height);
+      pdf.addImage(controlImg, "JPEG", 0, 0, width, height);
 
-      // Pages 3 to N-2: Flowing Body Content
-      setExportProgress({ active: true, format: "PDF", progress: 65, stage: "Processing flowing report body sections..." });
+      // Pages 3 to N-2: Discrete A4 Paginated Body Content (Zero Text Slicing)
+      setExportProgress({ active: true, format: "PDF", progress: 60, stage: "Formatting discrete A4 report pages..." });
       if (!pdfBodyRef.current) throw new Error("Export body element not found in DOM");
-      const bodyCanvas = await html2canvas(pdfBodyRef.current, { scale: 2, useCORS: true });
-      
-      const pageHeightCanvas = Math.floor(bodyCanvas.width * (1123 / 794));
-      let srcY = 0;
-      const bodyPagesCount = Math.ceil(bodyCanvas.height / pageHeightCanvas);
 
-      for (let i = 0; i < bodyPagesCount; i++) {
-        const sliceCanvas = document.createElement("canvas");
-        sliceCanvas.width = bodyCanvas.width;
-        sliceCanvas.height = pageHeightCanvas;
-        const ctx = sliceCanvas.getContext("2d");
+      const buildPaginatedPages = (bodyElem) => {
+        const a4Width = 794;
+        const a4Height = 1123;
+        const maxContentHeight = 980; // Leaves 48px top padding + 95px bottom clearance for footer
 
-        ctx.fillStyle = "#ffffff";
-        ctx.fillRect(0, 0, sliceCanvas.width, pageHeightCanvas);
+        const sections = Array.from(bodyElem.querySelectorAll(".report-content-section"));
 
-        ctx.drawImage(
-          bodyCanvas,
-          0,
-          srcY,
-          bodyCanvas.width,
-          pageHeightCanvas,
-          0,
-          0,
-          bodyCanvas.width,
-          pageHeightCanvas
-        );
+        const container = document.createElement("div");
+        container.style.position = "absolute";
+        container.style.left = "-9999px";
+        container.style.top = "0";
+        container.style.width = `${a4Width}px`;
+        document.body.appendChild(container);
 
-        const sliceImg = sliceCanvas.toDataURL("image/png");
-        pdf.addPage();
-        pdf.addImage(sliceImg, "PNG", 0, 0, width, height);
+        const createPage = () => {
+          const page = document.createElement("div");
+          page.className = "report-sheet";
+          page.style.width = `${a4Width}px`;
+          page.style.height = `${a4Height}px`;
+          page.style.padding = "48px 56px 64px 56px";
+          page.style.boxSizing = "border-box";
+          page.style.background = "#ffffff";
+          page.style.overflow = "hidden";
+          page.style.fontFamily = "'Source Sans 3', Arial, sans-serif";
 
-        srcY += pageHeightCanvas;
+          const contentWrap = document.createElement("div");
+          contentWrap.className = "report-main-content";
+          contentWrap.style.padding = "0";
+          contentWrap.style.width = "100%";
+          page.appendChild(contentWrap);
+
+          container.appendChild(page);
+          return { page, contentWrap };
+        };
+
+        let activePage = createPage();
+
+        for (const sec of sections) {
+          const fullClone = sec.cloneNode(true);
+          activePage.contentWrap.appendChild(fullClone);
+
+          if (activePage.contentWrap.offsetHeight <= maxContentHeight) {
+            continue;
+          }
+
+          activePage.contentWrap.removeChild(fullClone);
+
+          const heading = sec.querySelector(".report-section-heading")?.cloneNode(true);
+          const contentChildren = Array.from(sec.children).filter(
+            (child) => !child.classList.contains("report-section-heading")
+          );
+
+          const units = [];
+          if (heading) units.push({ node: heading, isHeading: true });
+
+          for (const child of contentChildren) {
+            if (child.tagName === "UL" || child.tagName === "OL") {
+              const lis = Array.from(child.children);
+              for (const li of lis) {
+                const listWrap = document.createElement(child.tagName);
+                listWrap.style.margin = "3px 0";
+                listWrap.style.paddingLeft = "24px";
+                listWrap.appendChild(li.cloneNode(true));
+                units.push({ node: listWrap });
+              }
+            } else if (child.tagName === "TABLE" || child.querySelector("table")) {
+              const table = child.tagName === "TABLE" ? child : child.querySelector("table");
+              const rows = Array.from(table.querySelectorAll("tbody tr"));
+              if (rows.length > 5) {
+                const thead = table.querySelector("thead")?.cloneNode(true);
+                for (const tr of rows) {
+                  const tableWrap = document.createElement("table");
+                  tableWrap.className = table.className || "report-table";
+                  tableWrap.style.width = "100%";
+                  tableWrap.style.margin = "4px 0";
+                  if (thead) tableWrap.appendChild(thead.cloneNode(true));
+                  const tbody = document.createElement("tbody");
+                  tbody.appendChild(tr.cloneNode(true));
+                  tableWrap.appendChild(tbody);
+                  units.push({ node: tableWrap });
+                }
+                continue;
+              }
+              units.push({ node: child.cloneNode(true) });
+            } else {
+              units.push({ node: child.cloneNode(true) });
+            }
+          }
+
+          let sectionWrap = document.createElement("section");
+          sectionWrap.className = "report-content-section";
+          sectionWrap.style.padding = "18px 0";
+          sectionWrap.style.borderBottom = "1px solid #d8e1dc";
+          activePage.contentWrap.appendChild(sectionWrap);
+
+          for (let i = 0; i < units.length; i++) {
+            const unit = units[i];
+            sectionWrap.appendChild(unit.node);
+
+            if (activePage.contentWrap.offsetHeight > maxContentHeight) {
+              sectionWrap.removeChild(unit.node);
+
+              if (!sectionWrap.children.length) {
+                activePage.contentWrap.removeChild(sectionWrap);
+              }
+
+              activePage = createPage();
+
+              sectionWrap = document.createElement("section");
+              sectionWrap.className = "report-content-section";
+              sectionWrap.style.padding = "18px 0";
+              sectionWrap.style.borderBottom = "1px solid #d8e1dc";
+              activePage.contentWrap.appendChild(sectionWrap);
+
+              sectionWrap.appendChild(unit.node);
+            }
+          }
+        }
+
+        const pages = Array.from(container.children);
+        return {
+          pages,
+          cleanup: () => {
+            container.remove();
+          },
+        };
+      };
+
+      const { pages: bodyPages, cleanup: cleanupBodyPages } = buildPaginatedPages(pdfBodyRef.current);
+
+      try {
+        for (let i = 0; i < bodyPages.length; i++) {
+          setExportProgress({
+            active: true,
+            format: "PDF",
+            progress: 60 + Math.round(((i + 1) / bodyPages.length) * 20),
+            stage: `Rendering body page ${i + 1} of ${bodyPages.length}...`,
+          });
+          const pageCanvas = await html2canvas(bodyPages[i], { scale: 2, useCORS: true, backgroundColor: "#ffffff" });
+          const pageImg = pageCanvas.toDataURL("image/jpeg", 0.90);
+          pdf.addPage();
+          pdf.addImage(pageImg, "JPEG", 0, 0, width, height);
+        }
+      } finally {
+        cleanupBodyPages();
       }
 
       // Page N-1: About ULA Page
       setExportProgress({ active: true, format: "PDF", progress: 85, stage: "Rendering About ULA corporate summary..." });
       if (pdfAboutRef.current) {
-        const aboutCanvas = await html2canvas(pdfAboutRef.current, { scale: 2, useCORS: true });
-        const aboutImg = aboutCanvas.toDataURL("image/png");
+        const aboutCanvas = await html2canvas(pdfAboutRef.current, { scale: 2, useCORS: true, backgroundColor: "#ffffff" });
+        const aboutImg = aboutCanvas.toDataURL("image/jpeg", 0.90);
         pdf.addPage();
-        pdf.addImage(aboutImg, "PNG", 0, 0, width, height);
+        pdf.addImage(aboutImg, "JPEG", 0, 0, width, height);
       }
 
       // Final Page: Closing Page (Framed with Lady Justice statue & offices)
       setExportProgress({ active: true, format: "PDF", progress: 95, stage: "Rendering closing contacts & Lady Justice seal..." });
       if (!pdfClosingRef.current) throw new Error("Export closing element not found in DOM");
-      const closingCanvas = await html2canvas(pdfClosingRef.current, { scale: 2, useCORS: true });
-      const closingImg = closingCanvas.toDataURL("image/png");
+      const closingCanvas = await html2canvas(pdfClosingRef.current, { scale: 2, useCORS: true, backgroundColor: "#ffffff" });
+      const closingImg = closingCanvas.toDataURL("image/jpeg", 0.90);
       pdf.addPage();
-      pdf.addImage(closingImg, "PNG", 0, 0, width, height);
+      pdf.addImage(closingImg, "JPEG", 0, 0, width, height);
 
       // Add footers on all pages except the cover (page 1) and closing (last page)
       const totalPages = pdf.getNumberOfPages();
@@ -910,47 +1057,32 @@ function ReportSection({ claimId, claim, documents, reports, onChanged }) {
         </div>
       ) : (
         <div className="space-y-4">
-          {reports.slice().reverse().map((r) => (
-            <article key={r.id} className="overflow-hidden rounded-lg border bg-card">
-              <div className="flex flex-col justify-between gap-3 border-b bg-muted/35 p-4 sm:flex-row sm:items-center">
-                <div>
-                  <div className="flex flex-wrap items-center gap-2">
-                    <span className="font-heading text-lg font-semibold">Version {r.version_number}</span>
-                    <span className={`status-mark ${r.status === "Final" ? "border-emerald-300 bg-emerald-50 text-emerald-800" : "border-violet-300 bg-violet-50 text-violet-800"}`}>{r.status}</span>
+          {reports.slice().reverse().map((r) => {
+            const reportData = getReportData(r);
+            return (
+            <article key={r.id} className="docket-surface overflow-hidden rounded-lg">
+              <div className="flex flex-wrap items-center justify-between gap-3 border-b px-5 py-4">
+                <div className="flex items-center gap-3">
+                  <div className="flex h-9 w-9 shrink-0 items-center justify-center rounded-md bg-primary/10 text-primary"><FileText className="h-5 w-5" /></div>
+                  <div>
+                    <div className="flex flex-wrap items-center gap-2">
+                      <h4 className="font-heading text-lg font-semibold">Version {r.version_number}</h4>
+                      <span className="status-mark border-primary/30 bg-primary/5 text-primary">{r.issue_state || r.status || "Draft"}</span>
+                      {r.human_approval_required && <span className="status-mark border-amber-300 bg-amber-50 text-amber-800"><ShieldCheck className="h-3 w-3" /> Human review required</span>}
+                    </div>
+                    <p className="text-xs text-muted-foreground">{r.template_name} · {r.business_line || "Marine"} · {r.readiness?.overall_progress ?? 0}% completeness</p>
                   </div>
-                  <p className="mt-1 text-xs text-muted-foreground">{r.template_name || "ULA Claim Report"} · {r.evidence_count ?? "—"} evidence items · {r.readiness?.overall_progress ?? "—"}% ready</p>
                 </div>
-                <div className="flex flex-wrap gap-2 sm:justify-end">
-                  <Button size="sm" variant="outline" onClick={() => setActiveReport(activeReport === r.id ? null : r.id)}>
-                    {activeReport === r.id ? "Hide" : "View"}
-                  </Button>
-                  <Button size="sm" variant="outline" onClick={() => exportMarkdown(r)} disabled={!r.content}>
-                    <Download className="w-3.5 h-3.5 mr-1" /> MD
-                  </Button>
-                  <Button size="sm" variant="outline" onClick={() => exportTxt(r)} disabled={!r.content}>
-                    TXT
-                  </Button>
-                  <Button size="sm" variant="outline" onClick={() => exportDocx(r)} disabled={!r.content}>
-                    DOCX
-                  </Button>
-                  <Button size="sm" variant="outline" onClick={() => exportPdf(r)} disabled={!r.content}>
-                    PDF
-                  </Button>
-                  <Button
-                    type="button"
-                    size="sm"
-                    variant="outline"
-                    className="h-8 w-8 border-destructive/40 p-0 text-destructive hover:border-destructive hover:bg-destructive/10 hover:text-destructive"
-                    onClick={() => setReportToDelete(r)}
-                    aria-label={`Delete report version ${r.version_number}`}
-                    title={`Delete report version ${r.version_number}`}
-                  >
-                    <Trash2 className="h-3.5 w-3.5" />
-                  </Button>
-                  {r.status !== "Final" && <Button size="sm" onClick={() => approve(r)} className="ula-gradient text-white"><CheckCircle className="w-3.5 h-3.5 mr-1" /> Approve Final</Button>}
+                <div className="flex flex-wrap items-center gap-2">
+                  <Button variant="outline" size="sm" onClick={() => setActiveReport(activeReport === r.id ? null : r.id)}>{activeReport === r.id ? "Hide preview" : "View preview"}</Button>
+                  <Button variant="outline" size="sm" onClick={() => exportMarkdown(r)}><Download className="h-4 w-4 mr-1" /> MD</Button>
+                  <Button variant="outline" size="sm" onClick={() => exportTxt(r)}><Download className="h-4 w-4 mr-1" /> TXT</Button>
+                  <Button variant="outline" size="sm" onClick={() => exportDocx(r)}><Download className="h-4 w-4 mr-1" /> DOCX</Button>
+                  <Button size="sm" onClick={() => exportPdf(r)} className="ula-gradient text-white hover:opacity-90"><Download className="h-4 w-4 mr-1" /> PDF</Button>
+                  <Button variant="ghost" size="sm" onClick={() => setReportToDelete(r)} className="text-destructive hover:bg-destructive/10 hover:text-destructive"><Trash2 className="h-4 w-4" /></Button>
                 </div>
               </div>
-              <div className="grid border-b sm:grid-cols-4">
+              <div className="grid border-b bg-muted/20 sm:grid-cols-4">
                 {(r.assignments || []).map((assignment) => (
                   <div key={assignment.role} className="border-b p-3 last:border-b-0 sm:border-b-0 sm:border-r sm:last:border-r-0">
                     <p className="docket-label">{assignment.label}</p>
@@ -960,9 +1092,9 @@ function ReportSection({ claimId, claim, documents, reports, onChanged }) {
                 {!r.assignments?.length && <div className="p-3 text-xs text-muted-foreground">Legacy version without recorded responsibility assignments.</div>}
               </div>
               <p className="px-4 py-3 text-xs text-muted-foreground">Generated by {r.generated_by} · {new Date(r.created_date).toLocaleDateString()}</p>
-              {activeReport === r.id && <ControlledReportPreview report={r} data={getReportData(r)} />}
+              {activeReport === r.id && <ControlledReportPreview report={r} data={reportData} />}
             </article>
-          ))}
+          );})}
         </div>
       )}
 
@@ -1148,7 +1280,7 @@ function ReportSection({ claimId, claim, documents, reports, onChanged }) {
           </div>
 
           {/* Page 3: Flowing Body Content */}
-          <div ref={pdfBodyRef} style={{ width: "794px", padding: "48px 56px", boxSizing: "border-box", background: "white" }}>
+          <div ref={pdfBodyRef} style={{ width: "794px", padding: "0 56px", boxSizing: "border-box", background: "white" }}>
             <div className="report-sheet" style={{ width: "100%", boxShadow: "none" }}>
               <div className="report-main-content" style={{ padding: 0 }}>
                 {Object.entries(parseMarkdownSections(exportReport.content))
@@ -1167,7 +1299,7 @@ function ReportSection({ claimId, claim, documents, reports, onChanged }) {
                         <span>{String(index + 4).padStart(2, "0")}</span>
                         <h2>{key.replaceAll("_", " ")}</h2>
                       </div>
-                      <ReactMarkdown remarkPlugins={[remarkGfm]}>{body || "Assessment documented in claim file."}</ReactMarkdown>
+                      <ReactMarkdown remarkPlugins={[remarkGfm]} components={markdownComponents}>{body || "Assessment documented in claim file."}</ReactMarkdown>
                     </section>
                   ))}
               </div>

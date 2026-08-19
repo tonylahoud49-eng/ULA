@@ -64,27 +64,27 @@ export function getAIStatus(env = process.env) {
     .filter((s) => s.configured);
 
   if (!primaryStatus.configured && allConfigured.length > 0) {
-    // Promote the first configured provider to primary
     primaryName = allConfigured[0].provider;
     primaryStatus = allConfigured[0];
   }
 
-  const fallbacks = CLOUD_FALLBACK_ORDER
-    .filter((name) => name !== primaryName)
-    .map((name) => statusForProvider(name, env))
-    .filter((s) => s.configured);
+  const fallbacks = allConfigured
+    .filter((s) => s.provider !== primaryName)
+    .map(({ provider, model }) => ({ provider, model }));
 
   return {
     ...primaryStatus,
-    fallbacks: fallbacks.map(({ provider, model }) => ({ provider, model })),
+    configured_providers: allConfigured.map(({ provider, model }) => ({ provider, model })),
+    fallbacks,
   };
 }
 
-function instantiate(name, env) {
+function instantiate(name, env, modelOverride) {
   const config = PROVIDER_CONFIGS[name];
   if (!config) return null;
-  const model = env[config.modelVar] || config.defaultModel;
+  const model = modelOverride || env[config.modelVar] || config.defaultModel;
   const apiKey = env[config.keyVar] || (config.fallbackKeyVars || []).map((keyVar) => env[keyVar]).find(Boolean);
+  if (!apiKey) return null;
   const options = { apiKey, model };
   if (name === "openrouter") {
     options.fallbackModels = env.OPENROUTER_FALLBACK_MODELS;
@@ -93,18 +93,29 @@ function instantiate(name, env) {
   return config.factory(options);
 }
 
-export function createConfiguredProvider(env = process.env) {
+export function createConfiguredProvider({ providerName, modelName } = {}, env = process.env) {
   const status = getAIStatus(env);
   if (!status.configured) {
     return { status, provider: null };
   }
 
-  const primary = instantiate(status.provider, env);
-  const fallbackInstances = (status.provider === "anthropic" ? [] : status.fallbacks || [])
-    .map(({ provider: name }) => instantiate(name, env))
+  const targetProvider = (providerName && PROVIDER_CONFIGS[providerName.toLowerCase()])
+    ? providerName.toLowerCase()
+    : status.provider;
+
+  const targetModel = modelName || (targetProvider === status.provider ? status.model : null);
+
+  const primary = instantiate(targetProvider, env, targetModel);
+  const fallbacks = (status.configured_providers || [])
+    .filter((p) => p.provider !== targetProvider)
+    .map((p) => instantiate(p.provider, env))
     .filter(Boolean);
 
-  const allProviders = [primary, ...fallbackInstances].filter(Boolean);
+  const allProviders = [primary, ...fallbacks].filter(Boolean);
+
+  if (!allProviders.length) {
+    return { status, provider: null };
+  }
 
   return {
     status,
@@ -117,14 +128,15 @@ export function createConfiguredProvider(env = process.env) {
           try {
             return await instance.analyze(params);
           } catch (error) {
+            error.provider = instance.name;
+            error.model = instance.model;
             lastError = error;
-            // Fallback to the next provider for ANY error if one is available
             if (allProviders.indexOf(instance) === allProviders.length - 1) {
               throw error;
             }
             console.warn(
               `AI provider ${instance.name} (${instance.model}) failed: ${error.message || error}. ` +
-              "Trying next fallback…",
+              "Trying next configured fallback…",
             );
           }
         }

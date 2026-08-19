@@ -51,8 +51,14 @@ app.post("/api/leave/notifications", async (request, response) => {
 });
 
 app.post("/api/ai/analyze", upload.array("files", maxFiles), async (request, response) => {
+  let activeProviderInfo = null;
   try {
-    const { status, provider } = createConfiguredProvider();
+    const requestedProvider = request.body.provider || undefined;
+    const requestedModel = request.body.model || undefined;
+    const { status, provider } = createConfiguredProvider({
+      providerName: requestedProvider,
+      modelName: requestedModel,
+    });
     if (!provider) {
       return response.status(503).json({
         error: `AI analysis unavailable — ${status.reason}`,
@@ -60,6 +66,7 @@ app.post("/api/ai/analyze", upload.array("files", maxFiles), async (request, res
         status,
       });
     }
+    activeProviderInfo = { provider: provider.name, model: provider.model };
 
     const claim = JSON.parse(request.body.claim || "{}");
     const manifest = JSON.parse(request.body.manifest || "[]");
@@ -84,7 +91,8 @@ app.post("/api/ai/analyze", upload.array("files", maxFiles), async (request, res
       image_only_page_count: item.image_only_page_count || 0,
       vision_pages_included: item.vision_image_count || 0,
     })));
-    safeAiDebugLog("[ULA AI debug] Claude request", {
+    safeAiDebugLog("[ULA AI debug] AI request", {
+      provider: provider.name,
       model: provider.model,
       document_count: evidence.length,
     });
@@ -114,27 +122,30 @@ app.post("/api/ai/analyze", upload.array("files", maxFiles), async (request, res
       })),
     });
   } catch (error) {
-    const isNetworkError = /terminated|timed?\s*out|socket|network|fetch failed|connection (?:closed|reset)/i.test(error?.message || "");
+    const errorProvider = error?.provider || activeProviderInfo?.provider || "Configured AI Provider";
+    const errorModel = error?.model || activeProviderInfo?.model || "model";
+    const isNetworkError = /terminated|timed?\s*out|socket|network|fetch failed|connection (?:closed|reset|error)/i.test(error?.message || "");
     const isProviderError = error?.isProviderError || Number(error?.status) >= 400 || isNetworkError;
     const statusCode = isProviderError ? 502 : 500;
     let providerMessage = error?.status === 401
-      ? "AI provider credentials were rejected. Check the server configuration."
+      ? "credentials were rejected. Check API key."
       : error?.status === 404
-        ? "The configured AI model or endpoint was not found. Check the provider model name in the server environment."
+        ? "model endpoint was not found. Check the model name."
       : error?.status === 429
-        ? "The AI provider rate or usage limit was reached. Try again later or review the provider account."
+        ? "rate limit or quota was reached."
         : isNetworkError
-          ? "The AI provider connection was interrupted. Try the analysis again."
-        : "The AI provider could not complete this evidence analysis.";
+          ? "network connection could not be established to the provider API."
+        : "could not complete this evidence analysis.";
     
-    // Expose the raw provider error message for easy debugging
-    if (error.message) {
-      providerMessage = `${providerMessage} (Details: ${error.message})`;
-    }
+    const details = error?.message ? ` (Details: ${error.message})` : "";
+    const fullError = `AI analysis unavailable with ${errorProvider} [${errorModel}] — ${providerMessage}${details}`;
     
     return response.status(statusCode).json({
-      error: `AI analysis unavailable — ${providerMessage}`,
+      error: fullError,
       code: "ai-analysis-failed",
+      provider: errorProvider,
+      model: errorModel,
+      details: error?.message || null,
       provider_status: error?.providerStatus || error?.status || null,
       provider_request_id: error?.providerRequestId || null,
     });

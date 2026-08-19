@@ -5,7 +5,8 @@ import { Card } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
-import { AlertTriangle, ArrowRight, FolderOpen, Plus, Search } from "lucide-react";
+import { AlertTriangle, ArrowRight, FolderOpen, Plus, Search, Sparkles } from "lucide-react";
+import { useNavigate } from "react-router-dom";
 
 const BUSINESS_LINES = [
   "Yacht",
@@ -44,6 +45,82 @@ export default function Claims() {
   const [search, setSearch] = useState("");
   const [status, setStatus] = useState("all");
   const [businessLine, setBusinessLine] = useState("all");
+  const [generatingDummy, setGeneratingDummy] = useState(false);
+  const navigate = useNavigate();
+
+  const generateDummyClaim = async () => {
+    setGeneratingDummy(true);
+    try {
+      // 1. Create a claim
+      const claim = await appClient.entities.Claim.create({
+        title: "Dummy Claim - Refrigerated Apples",
+        business_line: "Marine Cargo (Reefer/GFS)",
+        status: "New",
+        priority: "High",
+        insured: "Al Futtaim Logistics",
+        insurer: "Orient Insurance",
+        broker: "Marsh",
+        claim_amount: 45000.00,
+        deductible: 500.00,
+        cause_of_loss: "Temperature abuse during transit resulting in cargo spoilage.",
+        policy_number: "M-CARGO-2023-4411",
+        date_of_loss: "2023-11-14",
+        vessel_name: "MSC ISABELLA",
+        container_number: "MSCU1234567",
+      });
+
+      // 2. Dummy Invoice
+      const invoiceContent = "COMMERCIAL INVOICE\nInvoice #: INV-9921\nDate: 2023-11-01\nTotal Amount: 45000.00 USD\nItems: 1000 boxes of Apples\nUnit Price: 45.00 USD\nTotal Commercial Value: USD 45,000.00";
+      const invoiceFile = new File([invoiceContent], "commercial_invoice.txt", { type: "text/plain" });
+      const invoiceUpload = await appClient.integrations.Core.UploadFile({ file: invoiceFile });
+      await appClient.entities.ClaimDocument.create({ claim_id: claim.id, file_name: "commercial_invoice.txt", file_mime_type: "text/plain", category: "Commercial Invoice", ...invoiceUpload });
+
+      // 3. Dummy Survey Report
+      const surveyContent = "SURVEY REPORT\nDate of Attendance: 2023-11-15\nSurveyor: Petro Zaarour\nLocation: Beirut Port\nStatement of facts:\n1. The container MSCU1234567 was opened on 2023-11-15.\n2. The temperature logger recorded +15C instead of the required +2C to +4C.\n3. 1,000 boxes of apples were found to have sustained quality deterioration.\n4. Total damage USD 45,000.00.";
+      const surveyFile = new File([surveyContent], "survey_report.txt", { type: "text/plain" });
+      const surveyUpload = await appClient.integrations.Core.UploadFile({ file: surveyFile });
+      await appClient.entities.ClaimDocument.create({ claim_id: claim.id, file_name: "survey_report.txt", file_mime_type: "text/plain", category: "Survey Report", ...surveyUpload });
+
+      // 4. Dummy Bill of Lading
+      const bolContent = "BILL OF LADING\nBill of Lading No: MSCU99887766\nShipper: USA Apple Exports\nConsignee: Al Futtaim Logistics\nCarrier: MSC\nVessel: MSC ISABELLA\nPort of Origin: New York\nDESTINO/DESTIN: Beirut\nGross Weight: 25,000 KGS\nTotal Packages: 1000 cartons\nShipped on Board MSC ISABELLA 01-NOV-2023";
+      const bolFile = new File([bolContent], "bill_of_lading.txt", { type: "text/plain" });
+      const bolUpload = await appClient.integrations.Core.UploadFile({ file: bolFile });
+      await appClient.entities.ClaimDocument.create({ claim_id: claim.id, file_name: "bill_of_lading.txt", file_mime_type: "text/plain", category: "Bill of Lading", ...bolUpload });
+
+      // 5. Dummy Photographs
+      const DUMMY_IMAGE = "data:image/jpeg;base64,/9j/4AAQSkZJRgABAQEASABIAAD/2wBDAP//////////////////////////////////////////////////////////////////////////////////////wgALCAABAAEBAREA/8QAFBABAAAAAAAAAAAAAAAAAAAAAP/aAAgBAQABPxA=";
+      const b64toBlob = (b64Data, contentType='', sliceSize=512) => {
+        const byteCharacters = atob(b64Data);
+        const byteArrays = [];
+        for (let offset = 0; offset < byteCharacters.length; offset += sliceSize) {
+          const slice = byteCharacters.slice(offset, offset + sliceSize);
+          const byteNumbers = new Array(slice.length);
+          for (let i = 0; i < slice.length; i++) byteNumbers[i] = slice.charCodeAt(i);
+          byteArrays.push(new Uint8Array(byteNumbers));
+        }
+        return new Blob(byteArrays, {type: contentType});
+      }
+      
+      for (let i = 1; i <= 3; i++) {
+        const photoFile = new File([b64toBlob(DUMMY_IMAGE.split(',')[1], 'image/jpeg')], `damage_photo_${i}.jpg`, { type: "image/jpeg" });
+        const photoUpload = await appClient.integrations.Core.UploadFile({ file: photoFile });
+        await appClient.entities.ClaimDocument.create({
+          claim_id: claim.id,
+          file_name: `damage_photo_${i}.jpg`,
+          file_mime_type: "image/jpeg",
+          category: "Photo Evidence",
+          ...photoUpload
+        });
+      }
+
+      navigate(`/claims/${claim.id}`);
+    } catch (e) {
+      console.error(e);
+      alert("Failed to generate dummy claim");
+    } finally {
+      setGeneratingDummy(false);
+    }
+  };
 
   useEffect(() => {
     let active = true;
@@ -83,11 +160,16 @@ export default function Claims() {
           <h2 className="docket-title">Claims register</h2>
           <p className="docket-subtitle">Search every matter, identify its current gate, and open the controlled claim workspace.</p>
         </div>
-        <Link to="/ai-reporting">
-          <Button>
-            <Plus className="w-4 h-4 mr-2" /> New AI Claim
+        <div className="flex gap-2">
+          <Button variant="outline" onClick={generateDummyClaim} disabled={generatingDummy}>
+            <Sparkles className="w-4 h-4 mr-2 text-primary" /> {generatingDummy ? "Generating..." : "Generate Dummy Claim"}
           </Button>
-        </Link>
+          <Link to="/ai-reporting">
+            <Button>
+              <Plus className="w-4 h-4 mr-2" /> New AI Claim
+            </Button>
+          </Link>
+        </div>
       </div>
 
       <Card className="docket-surface p-4 shadow-none">

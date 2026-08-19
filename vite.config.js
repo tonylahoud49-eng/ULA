@@ -31,7 +31,9 @@ export default defineConfig({
         manualChunks: {
           framework: ["react", "react-dom", "react-router-dom", "@tanstack/react-query"],
           charts: ["recharts"],
-          markdown: ["react-markdown"],
+          markdown: ["react-markdown", "remark-gfm"],
+          "pdf-export": ["jspdf", "html2canvas"],
+          "docx-export": ["jszip"],
         },
       },
     },

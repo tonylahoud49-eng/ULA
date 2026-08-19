@@ -50,7 +50,17 @@ const emptyAuth = () => ({
   resetRequests: {},
 });
 
-const clone = (value) => value == null ? value : JSON.parse(JSON.stringify(value));
+const clone = (value) => {
+  if (value == null) return value;
+  if (typeof globalThis.structuredClone === "function") {
+    try {
+      return globalThis.structuredClone(value);
+    } catch {
+      // Fallback if value has non-cloneable objects
+    }
+  }
+  return JSON.parse(JSON.stringify(value));
+};
 
 const createId = () => {
   if (globalThis.crypto?.randomUUID) return globalThis.crypto.randomUUID();
@@ -89,6 +99,50 @@ const writeJson = (key, value) => {
   }
 };
 
+// In-Memory Cached Database & Auth Store for O(1) reads without synchronous JSON deserialization
+let memoryDatabase = null;
+let memoryAuth = null;
+const entityMaps = new Map();
+
+const rebuildEntityIndex = (entityName) => {
+  const map = new Map();
+  const list = memoryDatabase?.[entityName] || [];
+  for (let i = 0; i < list.length; i++) {
+    if (list[i]?.id) map.set(list[i].id, list[i]);
+  }
+  entityMaps.set(entityName, map);
+};
+
+const getMemoryDatabase = () => {
+  if (!memoryDatabase) {
+    memoryDatabase = readJson(DATABASE_KEY, emptyDatabase);
+    for (const key of Object.keys(entityDefaults)) {
+      if (!Array.isArray(memoryDatabase[key])) memoryDatabase[key] = [];
+      rebuildEntityIndex(key);
+    }
+  }
+  return memoryDatabase;
+};
+
+const saveMemoryDatabase = () => {
+  if (memoryDatabase) {
+    writeJson(DATABASE_KEY, memoryDatabase);
+  }
+};
+
+const getMemoryAuth = () => {
+  if (!memoryAuth) {
+    memoryAuth = readJson(AUTH_KEY, emptyAuth);
+  }
+  return memoryAuth;
+};
+
+const saveMemoryAuth = () => {
+  if (memoryAuth) {
+    writeJson(AUTH_KEY, memoryAuth);
+  }
+};
+
 const isDataUrl = (value) => typeof value === "string" && /^data:[^,]*,/i.test(value);
 
 const embeddedDocumentEntry = (document) => Object.entries(document || {}).find(([, value]) => isDataUrl(value));
@@ -106,7 +160,7 @@ const assertDocumentMetadataOnly = (values) => {
 let databasePreparation;
 
 const migrateLegacyDocumentContent = async () => {
-  const database = readJson(DATABASE_KEY, emptyDatabase);
+  const database = getMemoryDatabase();
   let changed = false;
   const locallyAnalyzedClaimIds = new Set();
 
@@ -171,7 +225,9 @@ const migrateLegacyDocumentContent = async () => {
 
   if (changed) {
     database.ClaimDocument = migratedDocuments;
-    writeJson(DATABASE_KEY, database);
+    rebuildEntityIndex("Claim");
+    rebuildEntityIndex("ClaimDocument");
+    saveMemoryDatabase();
   }
 };
 
@@ -196,7 +252,7 @@ const hashPassword = async (password) => {
 };
 
 const currentUser = () => {
-  const auth = readJson(AUTH_KEY, emptyAuth);
+  const auth = getMemoryAuth();
   const account = auth.accounts.find((item) => item.id === auth.sessionUserId);
   if (!account) throw createError("Authentication required", 401);
   if (account.status === "pending") {
@@ -209,34 +265,42 @@ const currentUser = () => {
 const createEntityApi = (entityName) => ({
   async list(sort, limit) {
     await prepareDatabase();
-    const database = readJson(DATABASE_KEY, emptyDatabase);
-    let records = [...(database[entityName] || [])];
+    const database = getMemoryDatabase();
+    const records = database[entityName] || [];
 
+    if (!sort && !Number.isFinite(limit)) {
+      return clone(records);
+    }
+
+    let result = [...records];
     if (sort) {
       const descending = sort.startsWith("-");
       const field = descending ? sort.slice(1) : sort;
-      records.sort((left, right) => {
+      result.sort((left, right) => {
         const a = left[field] ?? "";
         const b = right[field] ?? "";
         return (a > b ? 1 : a < b ? -1 : 0) * (descending ? -1 : 1);
       });
     }
 
-    if (Number.isFinite(limit)) records = records.slice(0, limit);
-    return clone(records);
+    if (Number.isFinite(limit)) result = result.slice(0, limit);
+    return clone(result);
   },
 
   async get(id) {
     await prepareDatabase();
-    const database = readJson(DATABASE_KEY, emptyDatabase);
-    return clone((database[entityName] || []).find((record) => record.id === id) || null);
+    getMemoryDatabase();
+    const record = entityMaps.get(entityName)?.get(id);
+    return record ? clone(record) : null;
   },
 
   async filter(criteria = {}) {
     await prepareDatabase();
-    const database = readJson(DATABASE_KEY, emptyDatabase);
+    const database = getMemoryDatabase();
+    const entries = Object.entries(criteria);
+    if (!entries.length) return clone(database[entityName] || []);
     return clone((database[entityName] || []).filter((record) =>
-      Object.entries(criteria).every(([key, value]) => record[key] === value),
+      entries.every(([key, value]) => record[key] === value),
     ));
   },
 
@@ -244,7 +308,7 @@ const createEntityApi = (entityName) => ({
     await prepareDatabase();
     if (entityName === "ClaimDocument") assertDocumentMetadataOnly(values);
     if (entityName === "Leave") throw createError("Leave requests must be created through the validated leave workflow.", 400, "leave-workflow-required");
-    const database = readJson(DATABASE_KEY, emptyDatabase);
+    const database = getMemoryDatabase();
     const timestamp = new Date().toISOString();
     const record = {
       ...clone(entityDefaults[entityName]),
@@ -254,7 +318,8 @@ const createEntityApi = (entityName) => ({
       updated_date: timestamp,
     };
     database[entityName] = [...(database[entityName] || []), record];
-    writeJson(DATABASE_KEY, database);
+    entityMaps.get(entityName)?.set(record.id, record);
+    saveMemoryDatabase();
     return clone(record);
   },
 
@@ -264,27 +329,30 @@ const createEntityApi = (entityName) => ({
     if (entityName === "Leave" && values.status && values.status !== "Pending") {
       throw createError("Leave decisions must be made through the validated leave workflow.", 400, "leave-workflow-required");
     }
-    const database = readJson(DATABASE_KEY, emptyDatabase);
+    const database = getMemoryDatabase();
     const records = database[entityName] || [];
     const index = records.findIndex((record) => record.id === id);
     if (index < 0) throw createError(`${entityName} record not found`, 404);
-    records[index] = {
+    const updated = {
       ...records[index],
       ...clone(values),
       id: records[index].id,
       updated_date: new Date().toISOString(),
     };
+    records[index] = updated;
     database[entityName] = records;
-    writeJson(DATABASE_KEY, database);
-    return clone(records[index]);
+    entityMaps.get(entityName)?.set(id, updated);
+    saveMemoryDatabase();
+    return clone(updated);
   },
 
   async delete(id) {
     await prepareDatabase();
-    const database = readJson(DATABASE_KEY, emptyDatabase);
-    const deletedRecord = (database[entityName] || []).find((record) => record.id === id);
+    const database = getMemoryDatabase();
+    const deletedRecord = entityMaps.get(entityName)?.get(id) || (database[entityName] || []).find((record) => record.id === id);
     database[entityName] = (database[entityName] || []).filter((record) => record.id !== id);
-    writeJson(DATABASE_KEY, database);
+    entityMaps.get(entityName)?.delete(id);
+    saveMemoryDatabase();
     if (entityName === "ClaimDocument" && deletedRecord) {
       await documentStorage.delete(deletedRecord.storage_key || deletedRecord.file_url);
     }
@@ -302,17 +370,17 @@ const auth = {
   async loginViaEmailPassword(email, password) {
     const normalizedEmail = normalizeEmail(email);
     const passwordHash = await hashPassword(password);
-    const state = readJson(AUTH_KEY, emptyAuth);
+    const state = getMemoryAuth();
     const account = state.accounts.find((item) => item.email === normalizedEmail && item.passwordHash === passwordHash);
     if (!account) throw createError("Invalid email or password", 401);
     state.sessionUserId = account.id;
-    writeJson(AUTH_KEY, state);
+    saveMemoryAuth();
     return { access_token: `local:${account.id}` };
   },
 
   async register({ email, password }) {
     const normalizedEmail = normalizeEmail(email);
-    const state = readJson(AUTH_KEY, emptyAuth);
+    const state = getMemoryAuth();
     if (state.accounts.some((item) => item.email === normalizedEmail)) {
       throw createError("An account with this email already exists", 409);
     }
@@ -324,12 +392,12 @@ const auth = {
       passwordHash: await hashPassword(password),
       verificationCode,
     };
-    writeJson(AUTH_KEY, state);
+    saveMemoryAuth();
     return { verification_code: verificationCode };
   },
 
   async verifyOtp({ email, otpCode }) {
-    const state = readJson(AUTH_KEY, emptyAuth);
+    const state = getMemoryAuth();
     const pending = state.pendingVerification;
     if (!pending || pending.email !== normalizeEmail(email) || pending.verificationCode !== String(otpCode)) {
       throw createError("Invalid verification code", 400);
@@ -340,29 +408,29 @@ const auth = {
     state.accounts.push(account);
     state.sessionUserId = account.id;
     state.pendingVerification = null;
-    writeJson(AUTH_KEY, state);
+    saveMemoryAuth();
     return { access_token: `local:${account.id}` };
   },
 
   async resendOtp(email) {
-    const state = readJson(AUTH_KEY, emptyAuth);
+    const state = getMemoryAuth();
     if (!state.pendingVerification || state.pendingVerification.email !== normalizeEmail(email)) {
       throw createError("No pending registration was found", 404);
     }
     state.pendingVerification.verificationCode = String(Math.floor(100000 + Math.random() * 900000));
-    writeJson(AUTH_KEY, state);
+    saveMemoryAuth();
     return { verification_code: state.pendingVerification.verificationCode };
   },
 
   setToken(token) {
     if (!String(token || "").startsWith("local:")) return;
-    const state = readJson(AUTH_KEY, emptyAuth);
+    const state = getMemoryAuth();
     state.sessionUserId = String(token).slice(6);
-    writeJson(AUTH_KEY, state);
+    saveMemoryAuth();
   },
 
   async loginWithProvider(provider, returnTo = "/", email, name) {
-    const state = readJson(AUTH_KEY, emptyAuth);
+    const state = getMemoryAuth();
     const targetEmail = normalizeEmail(email || "local.user@ula.test");
     let account = state.accounts.find((item) => item.email === targetEmail);
     if (!account) {
@@ -377,14 +445,14 @@ const auth = {
       state.accounts.push(account);
     }
     state.sessionUserId = account.id;
-    writeJson(AUTH_KEY, state);
+    saveMemoryAuth();
     globalThis.location.href = returnTo || "/";
   },
 
   async logout(redirectTo) {
-    const state = readJson(AUTH_KEY, emptyAuth);
+    const state = getMemoryAuth();
     state.sessionUserId = null;
-    writeJson(AUTH_KEY, state);
+    saveMemoryAuth();
     if (redirectTo) globalThis.location.href = redirectTo;
   },
 
@@ -394,33 +462,48 @@ const auth = {
   },
 
   async resetPasswordRequest(email) {
-    const state = readJson(AUTH_KEY, emptyAuth);
+    const state = getMemoryAuth();
     const account = state.accounts.find((item) => item.email === normalizeEmail(email));
     if (!account) return {};
     const resetToken = createId();
     state.resetRequests[resetToken] = account.id;
-    writeJson(AUTH_KEY, state);
+    saveMemoryAuth();
     return { reset_token: resetToken };
   },
 
   async resetPassword({ resetToken, newPassword }) {
-    const state = readJson(AUTH_KEY, emptyAuth);
+    const state = getMemoryAuth();
     const accountId = state.resetRequests[resetToken];
     const account = state.accounts.find((item) => item.id === accountId);
     if (!account) throw createError("This password reset link is invalid or expired", 400);
     account.passwordHash = await hashPassword(newPassword);
     delete state.resetRequests[resetToken];
-    writeJson(AUTH_KEY, state);
+    saveMemoryAuth();
+  },
+
+  async listAccounts() {
+    const state = getMemoryAuth();
+    return (state.accounts || []).map(({ passwordHash: _hash, ...user }) => clone(user));
+  },
+
+  async updateAccount(userId, updates) {
+    const state = getMemoryAuth();
+    const index = (state.accounts || []).findIndex((acc) => acc.id === userId);
+    if (index < 0) throw createError("Account not found", 404);
+    state.accounts[index] = { ...state.accounts[index], ...updates };
+    saveMemoryAuth();
+    const { passwordHash: _hash, ...user } = state.accounts[index];
+    return clone(user);
   },
 };
 
-const buildAnalysis = async ({ claim_id: claimId }) => {
+const buildAnalysis = async ({ claim_id: claimId, provider, model }) => {
   const claim = await entities.Claim.get(claimId);
   if (!claim) throw createError("Claim not found", 404);
   const documents = await entities.ClaimDocument.filter({ claim_id: claimId });
   if (!documents.length) throw createError("No documents uploaded for this claim");
 
-  const analysis = await analyzeClaimWithProvider({ claim, documents });
+  const analysis = await analyzeClaimWithProvider({ claim, documents, provider, model });
   await Promise.all(documents.map((document) => {
     const detections = analysis.document_types
       .map((type) => ({
@@ -539,9 +622,11 @@ const buildReport = async ({ claim_id: claimId, edited_data: editedData }) => {
 };
 
 const persistLeaveEmailResult = (requestId, target, delivery) => {
-  const latest = readJson(DATABASE_KEY, emptyDatabase);
+  const latest = getMemoryDatabase();
   const recorded = recordLeaveEmailDelivery(latest, requestId, target, delivery);
-  writeJson(DATABASE_KEY, recorded.database);
+  memoryDatabase = recorded.database;
+  rebuildEntityIndex("Leave");
+  saveMemoryDatabase();
   return recorded.leave;
 };
 
@@ -568,22 +653,31 @@ const notifyLeave = async (leave, employee, target) => {
 
 const submitLeaveRequest = async (payload) => {
   await prepareDatabase();
-  const database = readJson(DATABASE_KEY, emptyDatabase);
+  const database = getMemoryDatabase();
   const created = createPendingLeave(database, payload, { id: payload.request_id || createId() });
-  if (created.created) writeJson(DATABASE_KEY, created.database);
+  if (created.created) {
+    memoryDatabase = created.database;
+    rebuildEntityIndex("Leave");
+    saveMemoryDatabase();
+  }
   const notified = await notifyLeave(created.leave, created.employee, "admin_notification");
   return { data: { request: notified.leave, delivery: notified.delivery, email_error: notified.email_error, created: created.created } };
 };
 
 const decideLeaveRequest = async ({ request_id: requestId, decision }) => {
   await prepareDatabase();
-  const database = readJson(DATABASE_KEY, emptyDatabase);
+  const database = getMemoryDatabase();
   const actor = currentUser();
   if (actor.role !== "admin") throw createError("Only an administrator can approve or reject leave requests.", 403, "leave-admin-required");
   const transitioned = transitionLeave(database, requestId, decision, {
     actor: { id: actor.id, name: actor.full_name, email: actor.email },
   });
-  if (transitioned.changed) writeJson(DATABASE_KEY, transitioned.database);
+  if (transitioned.changed) {
+    memoryDatabase = transitioned.database;
+    rebuildEntityIndex("Leave");
+    rebuildEntityIndex("Employee");
+    saveMemoryDatabase();
+  }
   const notified = await notifyLeave(transitioned.leave, transitioned.employee, "employee_notification");
   return { data: { request: notified.leave, employee: transitioned.employee, delivery: notified.delivery, email_error: notified.email_error, changed: transitioned.changed } };
 };
@@ -592,7 +686,7 @@ const retryLeaveNotification = async ({ request_id: requestId, target }) => {
   await prepareDatabase();
   const actor = currentUser();
   if (actor.role !== "admin") throw createError("Only an administrator can retry leave notification emails.", 403, "leave-admin-required");
-  const database = readJson(DATABASE_KEY, emptyDatabase);
+  const database = getMemoryDatabase();
   const leave = (database.Leave || []).find((item) => item.id === requestId);
   if (!leave) throw createError("Leave request not found", 404, "leave-request-not-found");
   const employee = (database.Employee || []).find((item) => item.id === leave.employee_id);

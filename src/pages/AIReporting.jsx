@@ -11,6 +11,7 @@ import {
   ShieldCheck,
   Sparkles,
   Wand2,
+  Cpu,
 } from "lucide-react";
 import { appClient } from "@/api/appClient";
 import { Button } from "@/components/ui/button";
@@ -22,9 +23,84 @@ import { Textarea } from "@/components/ui/textarea";
 import { toast } from "@/components/ui/use-toast";
 import DocumentUploader from "@/components/DocumentUploader";
 import { REPORT_WORKFLOW_ROLES, reportReadiness } from "@/lib/reportTemplates";
+import AIAnalysisProgressCard from "@/components/AIAnalysisProgressCard";
+import AIModelSelector from "@/components/AIModelSelector";
 
 const BUSINESS_LINES = ["Yacht", "Property", "Marine Cargo (Reefer/GFS)", "Marine Cargo (Non-Reefer)", "Bulk Vessel", "Air Shipment (NET)", "Land Shipment", "Fidelity Claims", "Requires Review", "Unclassified"];
 const STEPS = ["Select Claim", "Upload Evidence", "AI Analysis", "Review & Edit", "Generate Report"];
+
+const DUMMY_IMAGE = "data:image/jpeg;base64,/9j/4AAQSkZJRgABAQEASABIAAD/2wBDAP//////////////////////////////////////////////////////////////////////////////////////wgALCAABAAEBAREA/8QAFBABAAAAAAAAAAAAAAAAAAAAAP/aAAgBAQABPxA=";
+
+const b64toBlob = (b64Data, contentType = "", sliceSize = 512) => {
+  const byteCharacters = atob(b64Data);
+  const byteArrays = [];
+  for (let offset = 0; offset < byteCharacters.length; offset += sliceSize) {
+    const slice = byteCharacters.slice(offset, offset + sliceSize);
+    const byteNumbers = new Array(slice.length);
+    for (let i = 0; i < slice.length; i++) byteNumbers[i] = slice.charCodeAt(i);
+    byteArrays.push(new Uint8Array(byteNumbers));
+  }
+  return new Blob(byteArrays, { type: contentType });
+};
+
+const attachDummyEvidencePack = async (targetClaimId) => {
+  const dummyDocs = [
+    {
+      name: "01_Marine_Cargo_Policy.txt",
+      mime: "text/plain",
+      category: "Policy",
+      content: `OPEN CARGO & REEFER MARINE TRANSIT POLICY\nPolicy Number: M-CARGO-2023-4411\nInsurer: Orient Insurance PJSC, Dubai, UAE\nBroker: Marsh Middle East Ltd\nAssured / Insured: Al Futtaim Logistics LLC\nCommodity: Refrigerated Gala Apples in Standard 18kg Cartons\nLimit of Liability: USD 250,000.00 any one conveyance\nCoverage: Institute Cargo Clauses (A) / Institute Frozen Food Clauses (A)\nCarrying Temperature: +2°C to +4°C continuously\nDeductible / Excess: USD 500.00 each and every loss\nNotice Condition: Immediate notice required upon discharge.`
+    },
+    {
+      name: "02_Commercial_Invoice_INV-9921.txt",
+      mime: "text/plain",
+      category: "Commercial Invoice",
+      content: `COMMERCIAL INVOICE\nInvoice No: INV-9921 | Date: 01 November 2023\nShipper: USA Premium Apple Growers Inc., Yakima, WA, USA\nBuyer / Consignee: Al Futtaim Logistics LLC, Beirut / Dubai\nTerms: CIF Beirut Port (Incoterms 2020)\n----------------------------------------------------------------------\nItem | Description | Quantity | Unit Price (USD) | Total Amount (USD)\n1    | Fresh Gala Apples (18kg boxes) | 1,000 boxes | 45.00 | 45,000.00\n----------------------------------------------------------------------\nTotal Commercial FOB Value: USD 41,500.00\nFreight: USD 3,000.00 | Insurance: USD 500.00\nTotal Invoice CIF Value: USD 45,000.00`
+    },
+    {
+      name: "03_Bill_of_Lading_MSCU99887766.txt",
+      mime: "text/plain",
+      category: "Bill of Lading",
+      content: `OCEAN BILL OF LADING\nB/L No: MSCU99887766\nCarrier: Mediterranean Shipping Company (MSC)\nVessel: MSC ISABELLA v.234W\nPort of Loading: Port of New York, USA\nPort of Discharge: Beirut Port, Lebanon\nShipper: USA Premium Apple Growers Inc.\nConsignee: Al Futtaim Logistics LLC\nContainer No: MSCU1234567 | Seal No: MSC984210\nCargo: 1x40ft High Cube Reefer Container containing 1,000 Cartons of Fresh Apples\nSet Temperature: +3.0°C\nShipped on Board: 01 November 2023`
+    },
+    {
+      name: "04_Survey_Inspection_Report.txt",
+      mime: "text/plain",
+      category: "Survey Report",
+      content: `UNITED LOSS ADJUSTERS & SURVEYORS (ULA)\nOFFICIAL SURVEY & LOSS ADJUSTMENT REPORT\nDate of Attendance: 15 November 2023\nSurveyor: Petro Zaarour, Lead Marine Surveyor\nLocation: Beirut Port Cold Storage Facility\nSubject: Joint survey of container MSCU1234567 ex MSC ISABELLA\n\nINVESTIGATION & CAUSE OF LOSS:\n1. On de-vanning, temperature data logger TempTale-4 recorded an interruption of power for 48 hours during ocean transit, with internal pulp temperatures escalating to +16.8°C.\n2. Visual inspection revealed widespread fungal decay, soft rot, and internal browning.\n3. All 1,000 cartons were deemed commercially unmerchantable and a constructive total loss.\n\nADJUSTMENT & CONCLUDED QUANTUM:\n- Sound Value / Presented Claim: USD 45,000.00\n- Salvage Realized / Recovery: Nil (condemned by Health Authority)\n- Less Policy Deductible: (USD 500.00)\n- Concluded Payable Indemnity: USD 44,500.00`
+    },
+    {
+      name: "05_Packing_List.txt",
+      mime: "text/plain",
+      category: "Packing List",
+      content: `PACKING LIST\nReference: PL-9921 | Container: MSCU1234567\nPackage Count: 1,000 master cartons on 20 pallets\nNet Weight: 18,000.00 kg | Gross Weight: 19,400.00 kg\nPackaging: Corrugated ventilated export cartons with protective liners`
+    }
+  ];
+
+  for (const doc of dummyDocs) {
+    const file = new File([doc.content], doc.name, { type: doc.mime });
+    const upload = await appClient.integrations.Core.UploadFile({ file });
+    await appClient.entities.ClaimDocument.create({
+      claim_id: targetClaimId,
+      file_name: doc.name,
+      file_mime_type: doc.mime,
+      category: doc.category,
+      ...upload
+    });
+  }
+
+  for (let i = 1; i <= 3; i++) {
+    const photoFile = new File([b64toBlob(DUMMY_IMAGE.split(",")[1], "image/jpeg")], `damage_photo_${i}.jpg`, { type: "image/jpeg" });
+    const photoUpload = await appClient.integrations.Core.UploadFile({ file: photoFile });
+    await appClient.entities.ClaimDocument.create({
+      claim_id: targetClaimId,
+      file_name: `damage_photo_${i}.jpg`,
+      file_mime_type: "image/jpeg",
+      category: "Photographs",
+      ...photoUpload
+    });
+  }
+};
 
 export default function AIReporting() {
   const [step, setStep] = useState(0);
@@ -36,8 +112,10 @@ export default function AIReporting() {
   const [analysisProgress, setAnalysisProgress] = useState({ active: false, progress: 0, stage: "", step: 1, totalSteps: 4 });
   const [analysis, setAnalysis] = useState(null);
   const [analysisError, setAnalysisError] = useState("");
+  const [selectedProvider, setSelectedProvider] = useState("");
   const [edited, setEdited] = useState({});
   const [generating, setGenerating] = useState(false);
+  const [loadingDummy, setLoadingDummy] = useState(false);
   const navigate = useNavigate();
   const readiness = useMemo(() => reportReadiness(edited || {}, documents), [edited, documents]);
 
@@ -65,6 +143,54 @@ export default function AIReporting() {
     setClaims((current) => [created, ...current]);
   };
 
+  const createDummyTestClaim = async () => {
+    setLoadingDummy(true);
+    try {
+      const year = new Date().getFullYear();
+      const number = `ULA-${year}-${String(claims.length + 1).padStart(4, "0")}`;
+      const created = await appClient.entities.Claim.create({
+        claim_number: number,
+        title: "Test Claim - Refrigerated Gala Apples",
+        business_line: "Marine Cargo (Reefer/GFS)",
+        status: "New",
+        priority: "High",
+        insured: "Al Futtaim Logistics LLC",
+        insurer: "Orient Insurance PJSC",
+        broker: "Marsh Middle East Ltd",
+        claim_amount: 45000.00,
+        deductible: 500.00,
+        cause_of_loss: "Temperature abuse during transit resulting in cargo spoilage.",
+        policy_number: "M-CARGO-2023-4411",
+        date_of_loss: "2023-11-14",
+        vessel_name: "MSC ISABELLA",
+        container_number: "MSCU1234567",
+      });
+      await attachDummyEvidencePack(created.id);
+      await selectClaim(created.id);
+      setClaims((current) => [created, ...current]);
+      setStep(1);
+      toast({ title: "Test claim created", description: "Created claim with complete policy, invoice, survey, and photo evidence." });
+    } catch (err) {
+      toast({ variant: "destructive", title: "Could not create test claim", description: err.message });
+    } finally {
+      setLoadingDummy(false);
+    }
+  };
+
+  const loadSampleEvidence = async () => {
+    if (!selectedClaimId) return;
+    setLoadingDummy(true);
+    try {
+      await attachDummyEvidencePack(selectedClaimId);
+      await reloadDocs();
+      toast({ title: "Evidence pack loaded", description: "Sample policy, invoice, bill of lading, and damage photos attached." });
+    } catch (err) {
+      toast({ variant: "destructive", title: "Could not load evidence", description: err.message });
+    } finally {
+      setLoadingDummy(false);
+    }
+  };
+
   const reloadDocs = async () => {
     setDocuments(await appClient.entities.ClaimDocument.filter({ claim_id: selectedClaimId }));
   };
@@ -81,7 +207,10 @@ export default function AIReporting() {
     }, 1200);
 
     try {
-      const response = await appClient.functions.invoke("analyseClaim", { claim_id: selectedClaimId });
+      const response = await appClient.functions.invoke("analyseClaim", {
+        claim_id: selectedClaimId,
+        provider: selectedProvider,
+      });
       clearTimeout(timer1);
       clearTimeout(timer2);
       setAnalysisProgress({ active: true, progress: 100, stage: "Analysis complete! Finalizing suggestions...", step: 4, totalSteps: 4 });
@@ -144,7 +273,12 @@ export default function AIReporting() {
         <Card className="docket-surface overflow-hidden shadow-none">
           <div className="flex flex-col justify-between gap-3 border-b bg-muted/35 p-5 sm:flex-row sm:items-center">
             <div><h3 className="font-heading text-xl font-semibold">Select a claim</h3><p className="mt-1 text-xs text-muted-foreground">The business line determines the unified report template.</p></div>
-            <Button onClick={createClaim}><Wand2 /> Create New AI Claim</Button>
+            <div className="flex gap-2">
+              <Button variant="outline" onClick={createDummyTestClaim} disabled={loadingDummy}>
+                <Sparkles className="w-4 h-4 mr-2 text-primary" /> {loadingDummy ? "Generating..." : "Create Test Claim with Evidence"}
+              </Button>
+              <Button onClick={createClaim}><Wand2 className="w-4 h-4 mr-2" /> Create New AI Claim</Button>
+            </div>
           </div>
           <div className="max-h-[430px] divide-y overflow-y-auto scrollbar-thin">
             {claims.length ? claims.map((item) => (
@@ -170,40 +304,40 @@ export default function AIReporting() {
             </div>
           </Card>
           <DocumentUploader claimId={selectedClaimId} documents={documents} onChanged={reloadDocs} />
-          <div className="flex justify-between">
-            <Button variant="outline" onClick={() => setStep(0)}><ArrowLeft /> Change claim</Button>
-            <Button onClick={() => setStep(2)} disabled={!documents.length}>Continue to AI Analysis <ArrowRight /></Button>
+          <div className="flex flex-wrap items-center justify-between gap-2">
+            <div className="flex gap-2">
+              <Button variant="outline" onClick={() => setStep(0)}><ArrowLeft className="w-4 h-4 mr-2" /> Change claim</Button>
+              <Button variant="secondary" onClick={loadSampleEvidence} disabled={loadingDummy}>
+                <Sparkles className="w-4 h-4 mr-2 text-primary" /> {loadingDummy ? "Attaching..." : "Attach Sample Evidence Pack"}
+              </Button>
+            </div>
+            <Button onClick={() => setStep(2)} disabled={!documents.length}>Continue to AI Analysis <ArrowRight className="w-4 h-4 ml-2" /></Button>
           </div>
         </div>
       )}
 
       {step === 2 && claim && (
-        <Card className="docket-surface p-8 text-center shadow-none">
+        <div>
           {analyzing ? (
-            <div className="mx-auto max-w-lg space-y-4 py-4 text-left">
-              <div className="flex items-center justify-between">
-                <div className="flex items-center gap-2 text-primary">
-                  <Sparkles className="h-5 w-5 animate-spin text-primary" />
-                  <h3 className="font-heading text-lg font-semibold uppercase tracking-wider">AI Evidence Analysis in Progress</h3>
-                </div>
-                <span className="font-mono text-sm font-bold text-primary">{analysisProgress.progress}%</span>
-              </div>
-              <div className="h-2.5 w-full overflow-hidden rounded-full bg-primary/15">
-                <div
-                  className="h-full bg-primary transition-all duration-500 ease-out rounded-full"
-                  style={{ width: `${analysisProgress.progress}%` }}
-                />
-              </div>
-              <div className="flex items-center justify-between text-xs text-muted-foreground">
-                <span>{analysisProgress.stage}</span>
-                <span className="font-mono text-[0.7rem]">Step {analysisProgress.step} of {analysisProgress.totalSteps}</span>
-              </div>
-            </div>
+            <AIAnalysisProgressCard progress={analysisProgress} className="mx-auto max-w-2xl" />
           ) : (
-            <><FileText className="mx-auto mb-4 h-11 w-11 text-primary" /><h3 className="font-heading text-xl font-semibold">Ready to review {documents.length} source document(s)</h3><p className="mx-auto mt-2 max-w-md text-sm text-muted-foreground">All registered evidence is submitted to the configured AI provider for content-based classification and extraction. Unsupported facts remain marked for confirmation.</p>{analysisError && <div className="mx-auto mt-4 max-w-xl rounded-md border border-destructive/30 bg-destructive/5 p-3 text-left text-sm text-destructive" role="alert"><strong>AI analysis unavailable.</strong> {analysisError.replace(/^AI analysis unavailable\s*[—-]\s*/i, "")}</div>}<Button onClick={runAnalysis} className="mt-5"><Sparkles /> Run AI Analysis</Button></>
+            <Card className="docket-surface p-8 text-center shadow-none">
+              <FileText className="mx-auto mb-4 h-11 w-11 text-primary" />
+              <h3 className="font-heading text-xl font-semibold">Ready to review {documents.length} source document(s)</h3>
+              <p className="mx-auto mt-2 max-w-md text-sm text-muted-foreground">All registered evidence is submitted to the configured AI provider for content-based classification and extraction. Unsupported facts remain marked for confirmation.</p>
+              {analysisError && <div className="mx-auto mt-4 max-w-xl rounded-md border border-destructive/30 bg-destructive/5 p-3 text-left text-sm text-destructive" role="alert"><strong>AI analysis unavailable.</strong> {analysisError.replace(/^AI analysis unavailable\s*[—-]\s*/i, "")}</div>}
+              <div className="mt-6 flex flex-col items-center justify-center gap-3 sm:flex-row">
+                <AIModelSelector
+                  value={selectedProvider}
+                  onChange={setSelectedProvider}
+                  disabled={analyzing}
+                />
+                <Button onClick={runAnalysis} className="ula-gradient text-white hover:opacity-90">Run AI Analysis</Button>
+              </div>
+              <div className="mt-6 flex justify-center"><Button variant="ghost" onClick={() => setStep(1)}><ArrowLeft className="w-4 h-4 mr-2" /> Back to upload</Button></div>
+            </Card>
           )}
-          <div className="mt-6 flex justify-center"><Button variant="ghost" onClick={() => setStep(1)}><ArrowLeft /> Back to upload</Button></div>
-        </Card>
+        </div>
       )}
 
       {step === 3 && claim && <ReviewStep analysis={analysis} edited={edited} setEdited={setEdited} readiness={readiness} onSave={saveEdits} onBack={() => setStep(2)} onNext={() => setStep(4)} />}

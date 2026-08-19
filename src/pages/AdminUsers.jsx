@@ -12,13 +12,12 @@ export default function AdminUsers() {
 
   const loadData = async () => {
     try {
-      const me = await appClient.auth.me();
+      const [me, accounts] = await Promise.all([
+        appClient.auth.me(),
+        appClient.auth.listAccounts(),
+      ]);
       setCurrentUser(me);
-      
-      // Read directly from auth store
-      const AUTH_KEY = "ula_claims_hub_auth_v1";
-      const auth = JSON.parse(localStorage.getItem(AUTH_KEY) || '{"accounts":[]}');
-      setUsers(auth.accounts || []);
+      setUsers(accounts || []);
     } catch (e) {
       console.error(e);
     } finally {
@@ -30,38 +29,30 @@ export default function AdminUsers() {
     loadData();
   }, []);
 
-  const updateUserStatus = (userId, status) => {
-    const AUTH_KEY = "ula_claims_hub_auth_v1";
-    const auth = JSON.parse(localStorage.getItem(AUTH_KEY) || '{"accounts":[]}');
-    auth.accounts = (auth.accounts || []).map(acc => {
-      if (acc.id === userId) {
-        return { ...acc, status };
-      }
-      return acc;
-    });
-    localStorage.setItem(AUTH_KEY, JSON.stringify(auth));
-    toast({
-      title: "User updated",
-      description: `User status changed to ${status}.`,
-    });
-    loadData();
+  const updateUserStatus = async (userId, status) => {
+    try {
+      await appClient.auth.updateAccount(userId, { status });
+      toast({
+        title: "User updated",
+        description: `User status changed to ${status}.`,
+      });
+      loadData();
+    } catch (err) {
+      toast({ variant: "destructive", title: "Update failed", description: err.message });
+    }
   };
 
-  const updateUserRole = (userId, role) => {
-    const AUTH_KEY = "ula_claims_hub_auth_v1";
-    const auth = JSON.parse(localStorage.getItem(AUTH_KEY) || '{"accounts":[]}');
-    auth.accounts = (auth.accounts || []).map(acc => {
-      if (acc.id === userId) {
-        return { ...acc, role };
-      }
-      return acc;
-    });
-    localStorage.setItem(AUTH_KEY, JSON.stringify(auth));
-    toast({
-      title: "User updated",
-      description: `User role changed to ${role}.`,
-    });
-    loadData();
+  const updateUserRole = async (userId, role) => {
+    try {
+      await appClient.auth.updateAccount(userId, { role });
+      toast({
+        title: "User updated",
+        description: `User role changed to ${role}.`,
+      });
+      loadData();
+    } catch (err) {
+      toast({ variant: "destructive", title: "Update failed", description: err.message });
+    }
   };
 
   if (loading) {

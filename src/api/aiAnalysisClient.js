@@ -102,7 +102,17 @@ function mapAnalysis(result) {
   };
 }
 
-export async function analyzeClaimWithProvider({ claim, documents }) {
+export async function getActiveAIStatus() {
+  try {
+    const res = await fetch("/api/ai/status");
+    if (res.ok) return await res.json();
+  } catch {
+    // fallback
+  }
+  return { configured: true, provider: "anthropic", model: "claude-sonnet-5", configured_providers: [] };
+}
+
+export async function analyzeClaimWithProvider({ claim, documents, provider, model }) {
   const form = new FormData();
   const manifest = [];
 
@@ -132,6 +142,9 @@ export async function analyzeClaimWithProvider({ claim, documents }) {
 
   form.append("claim", JSON.stringify(claim));
   form.append("manifest", JSON.stringify(manifest));
+  if (provider) form.append("provider", provider);
+  if (model) form.append("model", model);
+
   let response;
   try {
     response = await fetch("/api/ai/analyze", { method: "POST", body: form });
@@ -153,11 +166,15 @@ export async function analyzeClaimWithProvider({ claim, documents }) {
     const nonHtmlDetails = responseText && !/^\s*</.test(responseText)
       ? ` (Details: ${responseText.slice(0, 300)})`
       : "";
-    throw createRequestError(
+    const err = createRequestError(
       body.error || `AI analysis unavailable — the analysis request failed with HTTP ${response.status}.${nonHtmlDetails}`,
       response.status,
       body.code || "ai-analysis-failed",
     );
+    err.provider = body.provider;
+    err.model = body.model;
+    err.details = body.details;
+    throw err;
   }
   return mapAnalysis(body);
 }
