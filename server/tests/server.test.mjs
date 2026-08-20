@@ -119,25 +119,50 @@ test("regression: closed debug output does not turn a valid mocked Claude analys
   });
   try {
     const address = listener.address();
-    const form = new FormData();
-    const manifest = multiDocumentEvidenceFixture.map((item, index) => {
-      const text = item.pages[0].text;
-      form.append("files", new Blob([text], { type: item.mime_type }), item.document_name);
-      return {
+    const manifest = multiDocumentEvidenceFixture.map((item, index) => ({
         index,
         id: item.document_id,
         file_name: item.document_name,
         file_mime_type: item.mime_type,
         file_type: "Other",
         category: "Other",
-      };
+    }));
+    const buildForm = (preflightToken) => {
+      const form = new FormData();
+      multiDocumentEvidenceFixture.forEach((item) => {
+        form.append("files", new Blob([item.pages[0].text], { type: item.mime_type }), item.document_name);
+      });
+      form.append("claim", JSON.stringify({ id: "mock-pipeline-claim" }));
+      form.append("manifest", JSON.stringify(manifest));
+      form.append("provider", "anthropic");
+      form.append("model", "claude-sonnet-4-6");
+      if (preflightToken) form.append("preflight_token", preflightToken);
+      return form;
+    };
+
+    const preflightResponse = await realFetch(`http://127.0.0.1:${address.port}/api/ai/preflight`, {
+      method: "POST",
+      body: buildForm(),
     });
-    form.append("claim", JSON.stringify({ id: "mock-pipeline-claim" }));
-    form.append("manifest", JSON.stringify(manifest));
+    const preflightBody = await preflightResponse.json();
+    assert.equal(preflightResponse.status, 200);
+    assert.equal(preflightBody.connectivity.checked, false);
+    assert.equal(preflightBody.connectivity.http_status, null);
+    assert.equal(preflightBody.stats.document_count, 3);
+    assert.equal(mockedAnthropicCalls, 0);
+
+    const simultaneousPreflightResponse = await realFetch(`http://127.0.0.1:${address.port}/api/ai/preflight`, {
+      method: "POST",
+      body: buildForm(),
+    });
+    const simultaneousPreflight = await simultaneousPreflightResponse.json();
+    assert.equal(simultaneousPreflightResponse.status, 200);
+    assert.equal(simultaneousPreflight.preflight_token, preflightBody.preflight_token);
+    assert.equal(mockedAnthropicCalls, 0);
 
     const response = await realFetch(`http://127.0.0.1:${address.port}/api/ai/analyze`, {
       method: "POST",
-      body: form,
+      body: buildForm(preflightBody.preflight_token),
     });
     const body = await response.json();
     const providerBody = JSON.parse(anthropicRequest.body);
@@ -145,8 +170,13 @@ test("regression: closed debug output does not turn a valid mocked Claude analys
     assert.equal(response.status, 200);
     assert.equal(mockedAnthropicCalls, 1);
     assert.equal(anthropicRequest.headers["x-api-key"], "mock-server-only-key");
-    assert.equal(providerBody.model, "claude-sonnet-5");
+    assert.equal(providerBody.model, "claude-sonnet-4-6");
+    assert.equal(providerBody.max_tokens, 64_000);
+    assert.equal(providerBody.stream, true);
+    assert.equal(providerBody.tools, undefined);
     assert.equal(providerBody.output_config.format.type, "json_schema");
+    assert.equal(providerBody.output_config.format.schema.additionalProperties, false);
+    assert.match(providerBody.system, /Return only the structured payload/);
     assert.equal(body.evidence_register.length, 3);
     assert.equal(body.analysis.classification.confidence, 0.94);
     assert.equal(body.analysis.document_types.some((item) => item.document_type === "Policy"), true);
@@ -158,6 +188,31 @@ test("regression: closed debug output does not turn a valid mocked Claude analys
       assert.match(providerBody.messages[0].content[0].text, new RegExp(item.document_id));
       assert.match(providerBody.messages[0].content[0].text, new RegExp(item.pages[0].text.split("\n")[0]));
     }
+
+    const consumedTokenResponse = await realFetch(`http://127.0.0.1:${address.port}/api/ai/analyze`, {
+      method: "POST",
+      body: buildForm(simultaneousPreflight.preflight_token),
+    });
+    const consumedTokenBody = await consumedTokenResponse.json();
+    assert.equal(consumedTokenResponse.status, 412);
+    assert.equal(consumedTokenBody.code, "anthropic-preflight-required");
+    assert.equal(mockedAnthropicCalls, 1);
+
+    const duplicatePreflightResponse = await realFetch(`http://127.0.0.1:${address.port}/api/ai/preflight`, {
+      method: "POST",
+      body: buildForm(),
+    });
+    const duplicatePreflight = await duplicatePreflightResponse.json();
+    assert.equal(duplicatePreflightResponse.status, 200);
+    assert.equal(duplicatePreflight.connectivity.checked, false);
+    const duplicateResponse = await realFetch(`http://127.0.0.1:${address.port}/api/ai/analyze`, {
+      method: "POST",
+      body: buildForm(duplicatePreflight.preflight_token),
+    });
+    const duplicateBody = await duplicateResponse.json();
+    assert.equal(duplicateResponse.status, 200);
+    assert.equal(duplicateBody.duplicate_request_reused, true);
+    assert.equal(mockedAnthropicCalls, 1);
   } finally {
     console.info = realConsoleInfo;
     globalThis.fetch = realFetch;

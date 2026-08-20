@@ -47,6 +47,7 @@ const normalizeEntityComparable = (value) => String(value || "")
   .split(",")[0]
   .replace(/\bsoci(?:e|é)te anonyme\b.*$/i, "")
   .replace(/\b(?:s\.?a\.?l?|ltd\.?|limited|inc\.?|llc)\s*$/i, "")
+  .replace(/\bsupplier\s*$/i, "")
   .replaceAll(".", "")
   .replace(/[^a-z0-9]+/gi, " ")
   .trim()
@@ -58,11 +59,11 @@ const dateFields = new Set([
   "delivery_date", "discharge_date", "damage_report_date", "notice_date", "destruction_date", "survey_date",
 ]);
 const identifierFields = new Set([
-  "policy_number", "air_waybill", "bill_of_lading", "invoice_number", "freight_invoice_number",
-  "packing_list_number", "purchase_order", "container_number", "affected_container",
+  "claim_reference", "policy_number", "air_waybill", "bill_of_lading", "invoice_number", "freight_invoice_number",
+  "packing_list_number", "purchase_order", "voyage_number", "feeder_voyage", "container_number", "affected_container",
 ]);
 const comparableForField = (field, value) => {
-  if (["insured", "insurer", "broker", "shipper", "consignee", "carrier"].includes(field)) return normalizeEntityComparable(value);
+  if (["applicant", "insured", "insurer", "reassured", "reinsurer", "broker", "shipper", "consignee", "carrier"].includes(field)) return normalizeEntityComparable(value);
   if (dateFields.has(field)) return dateComparable(value);
   if (identifierFields.has(field)) return String(value || "").toLowerCase().replace(/[^a-z0-9]/g, "");
   return normalizeComparable(value);
@@ -151,6 +152,7 @@ function deterministicEvidenceCandidates(evidence = []) {
   const commercialInvoiceRows = [];
   const damageScheduleRows = [];
   const adjustmentLineItems = [];
+  const shipmentDeclarationRows = [];
   const add = (field, value, item, page, excerpt, confidence = 0.98) => {
     if (!isPresent(value)) return;
     candidates.push({
@@ -180,25 +182,39 @@ function deterministicEvidenceCandidates(evidence = []) {
       };
 
       capture("policy_number", /Policy\s*(?:No\.?|Number|Reference)\s*[:#]?\s*([A-Z0-9][A-Z0-9/.-]+)/i);
+      capture("policy_number", /(?:Cope\s+Re|Reinsurance)\s+Reference\s*:\s*([A-Z0-9][A-Z0-9/.-]+)/i);
       capture("policy_number", /(?:^|\n)Policy\s*:\s*([A-Z0-9][A-Z0-9 /.-]+?)(?=\s+Effect\.|\n)/i, (value) => value.replace(/\s+/g, " ").trim());
       capture("policy_number", /(?:^|\n)Policy\s+([A-Z0-9][A-Z0-9/.-]+(?:\s+[A-Z0-9]+)?)(?=\n|\s+Issuing Date)/i, (value) => value.replace(/\s+/g, " ").trim());
-      capture("insured", /(?:Assured\s*\/\s*Insured|Assured|Insured|Policy Holder)\s*:\s*(.+?)(?=\n|\s+(?:Period of Insurance|Cargo Insurance|FLOOR|Address|Tel\.?\s*:))/i, normalizeEntityName);
-      capture("insured", /(?:^|\n)Insured\s+(.+?)(?=\n|\s+Address\s)/i, normalizeEntityName);
+      capture("insured", /\b(?:Assured\s*\/\s*Insured|Assured|Insured|Policy Holder)\s*:\s*(.+?)(?=\n|\s+(?:Period of Insurance|Cargo Insurance|FLOOR|Address|Tel\.?\s*:))/i, normalizeEntityName);
+      capture("insured", /Assured\s+Name\s*:\s*(.+?)(?=\n|\s+(?:Reassured|Period)\s*:)/i, normalizeEntityName);
+      capture("insured", /(?:^|\n)Insured\s+((?!(?:commences|attaches|continues|is|shall|means)\b).+?)(?=\n|\s+Address\s)/i, normalizeEntityName);
       capture("insured", /Policy Holder\s+(M\/s\..+?)(?=\s+Cargo Insurance)/i, normalizeEntityName);
       capture("insurer", /Insurer\s*:\s*(.+?)(?=\n|\s+(?:Broker|Assured|Policy))/i);
+      capture("reassured", /Reassured\s*:\s*(.+?)(?=\n|\s+(?:Period|Type)\s*:)/i, normalizeEntityName);
+      capture("reinsurer", /Reinsurer\s*:\s*(.+?)(?=\n|\s+(?:Reassured|Assured|Period|Policy)\s*:)/i, normalizeEntityName);
       capture("insurer", /\bWe,\s+([A-Z][A-Za-z &.-]+Insurance(?:\s+[A-Z.]+)?)/i);
       capture("insurer", /\b(VICTOIRE)\s+(?:sal\s+)?Compagnie d['â€™]assurances/i);
       capture("broker", /Broker\s*:\s*(.+?)(?=\n|\s+(?:Assured|Period|Policy))/i);
       capture("policy_period", /Period of Insurance\s*:\s*(.+?)(?=\n|\s+(?:Conveyance|Coverage|Deductible))/i);
+      capture("policy_period", /(?:^|\n)Period\s*:\s*(.+?)(?=\n|\s+Cancellation Provision\s*:)/i);
+      capture("conveyance_mode", /Conveyances?\s*:\s*([^\n]+)/i);
       capture("policy_inception_date", /Inception Date\s+([0-9]{1,2}\/[A-Z]{3}\/[0-9]{4})/i);
       capture("policy_inception_date", /([0-9]{1,2}\/[A-Z]{3}\/[0-9]{4})\s+Inception Date/i);
       capture("policy_issue_date", /Issued in\s+.+?\s+on\s+([0-9]{1,2}\/[0-9]{2}\/[0-9]{4})/i);
       capture("policy_terms", /(SUBJECT TO INSTITUTE FROZEN\/CHILLED FOOD CLAUSES[\s\S]+?)(?=\s+-\s*E\s*-\s*Attachment)/i);
       capture("policy_terms", /Coverage Terms\s*:\s*(.+?)(?=\n|\s+(?:Deductible|Conditions))/i);
       capture("policy_terms", /(D\s*-\s*SPECIAL PROVISIONS\s*:[\s\S]+?)(?=E\s*-\s*Attachment)/i);
+      capture("policy_terms", /(Institute Cargo Clauses\s*[“\"]?A[”\"]?\s+CL\.?\s*382\s+dated\s+01\.01\.2009)/i);
+      capture("policy_terms", /(Including Shortage noticed on unstuffing intact container seal)/i);
+      capture("policy_terms", /(Including shortage\s*&\s*Loss of weight)/i);
       capture("warranties_conditions", /(A\s*-\s*SPECIAL CONDITIONS\s*:[\s\S]+?)(?=B\s*-\s*SPECIAL CLAUSES)/i);
       capture("warranties_conditions", /(D\s*-\s*SPECIAL PROVISIONS\s*:[\s\S]+?)(?=E\s*-\s*Attachment)/i);
       capture("warranties_conditions", /(?:^|\n)Conditions\s*:\s*([^\n]+)/i);
+      capture("warranties_conditions", /(Excluding Mysterious and\/or Unexplained Disappearance)/i);
+      capture("warranties_conditions", /(Excluding Mysterious Disappearance and Stocktaking losses[^\n]+)/i);
+      capture("warranties_conditions", /(Warranted Shipped under a clean Original Bill of Lading[^\n]+)/i);
+      capture("valuation_basis", /Basis of Valuation\s*:\s*([^\n]+)/i);
+      capture("valuation_uplift_percent", /Basis of Valuation\s*:\s*[^\n%]*\+\s*([0-9]+(?:\.[0-9]+)?)\s*%/i);
       capture("policy_limit", /(?:Any one (?:Air )?Shipment up to|Sum Insured(?:\/USDF)?(?:\s*[:=-])?)\s*(?:USD|USDF|EUR|GBP|AED)?\s*([0-9][0-9,.]*)/i);
       capture("policy_limit", /Clause\s*\(A\).*?([0-9][0-9,]*)\s+1\s*-\s*Warehouse To Warehouse/i);
       capture("policy_limit", /Clause\s*\(A\)[^\n]*?([0-9][0-9,.]{3,})/i);
@@ -214,16 +230,20 @@ function deterministicEvidenceCandidates(evidence = []) {
         if (certificatePolicy?.[1]) add("policy_number", certificatePolicy[1].replace(/\s+/g, " ").trim(), item, page, sourceExcerpt(certificatePolicy), 0.995);
       }
       capture("deductible", /(?:Deductible|Excess)(?:\s*\/\s*Excess)?\s*:\s*(?:USD|USDF|EUR|GBP|AED)?\s*([0-9][0-9,.]*)/i);
+      capture("deductible", /Deductibles?[\s\S]{0,180}?Containeri[sz]ed\s*:\s*(?:USD|USDF|EUR|GBP|AED)\s*([0-9][0-9,.]*)/i);
       capture("deductible", /Description\s+Sum Insured\s+Deductibles[\s\S]{0,160}?\b[0-9][0-9,.]*\s+(0(?:\.0+)?)\b/i);
       capture("date_of_loss", /(?:Date of Loss(?:\s*\/\s*Flight Arrival)?|Loss Date)\s*:\s*([^\n]+)/i);
       capture("date_of_intimation", /(?:Date of Intimation|Notification Date)\s*:\s*([^\n]+)/i);
       capture("air_waybill", /(?:AWB Number|Air Waybill)\s*:\s*([A-Z0-9-]+)/i);
       capture("bill_of_lading", /Bill of Lading(?:\s*(?:No\.?|Number|#))?\s*[:#]\s*([A-Z0-9/-]+)/i, (value) => /^(?:voyage|above)$/i.test(value) ? null : value);
+      capture("bill_of_lading", /(?:B\/L|Bill of Lading)\s*No\.?\s*[:#]?\s*([A-Z0-9/-]+)/i, (value) => /^(?:vessel|voyage|above)$/i.test(value) ? null : value);
       capture("invoice_number", /(?:Invoice No\.?|Invoice #|Order or Invoice No\.)\s*[:#]?\s*([A-Z0-9/-]+)/i, (value) => /^customer$/i.test(value) ? null : value);
       capture("invoice_number", /Invoice\s*#\s*:\s*([A-Z0-9/-]+)/i);
+      capture("invoice_number", /Invoice Number\s*[:#]?\s*([A-Z0-9/-]+)/i);
       capture("freight_invoice_number", /Invoice Nbr\s*[:#]?\s*([A-Z0-9/-]+)/i);
       capture("invoice_date", /Date\s+([0-9]{1,2}-[A-Z]{3}-[0-9]{2})\s+(?:Phone:[^\n]*\s+)?Invoice #/i);
       capture("invoice_date", /Date\s+Invoice #\s+Customer ID\s+([0-9]{1,2}-[A-Z]{3}-[0-9]{2})/i);
+      capture("invoice_date", /Invoice Date\s*([0-9]{1,2}[-/]\d{1,2}[-/]\d{2,4})/i);
       if (/Sales Invoice/i.test(text)) capture("invoice_date", /Date\s*:\s*([0-9]{1,2}\/\d{1,2}\/\d{4})/i);
       capture("packing_list_number", /Packing List\s*(?:No\.?|Nº\.)\s*[:#]?\s*([A-Z0-9/-]+)/i);
       capture("shipper", /Shipper\s*:\s*(.+?)(?=\n|\s+(?:Consignee|Carrier|Airport))/i);
@@ -235,6 +255,8 @@ function deterministicEvidenceCandidates(evidence = []) {
       capture("consignee", /(?:Consignee|Claimant\s*\/\s*Consignee)\s*:\s*(.+?)(?=\n|\s+(?:Carrier|Air Waybill|Airport|Policy))/i);
       capture("consignee", /IMPORTADOR\/IMPORT\s*:\s*(.+?)(?=\s+JAMAICA ROAD)/i);
       capture("consignee", /Customer Name\s*:\s*(.+?)(?=\s+Invoice\s*#|\n)/i);
+      if (/\bInvoice\b/i.test(text)) capture("consignee", /^([^\n]{3,100})\n[^\n]*\nInvoice\b/im, normalizeEntityName);
+      capture("consignee", /Release To\s*:\s*(?:\d+\s+)?([A-Z][A-Z0-9 ]+?)(?=\n(?:[A-Z ]+\n)?Equipment count)/i, normalizeEntityName);
       capture("carrier", /Carrier\s*:\s*(.+?)(?=\n|\s+(?:Air Waybill|Handling|Flight|Date))/i);
       if (/SIGNED FOR THE CARRIER\s+CMA CGM S\.A\.|CARRIER:\s*.+?CMA CGM/i.test(text)) add("carrier", "CMA CGM S.A.", item, page, "Signed for the carrier CMA CGM S.A.");
       capture("conveyance_mode", /Conveyance mode\s+(.+?)\s+1\s*-\s*Country of Origin/i);
@@ -246,14 +268,21 @@ function deterministicEvidenceCandidates(evidence = []) {
       capture("country", /Destination Country\s+([A-Z][A-Za-z ]+?)\s+\d+\s*-/i);
       capture("port_of_loading", /CARREGADO\/SHIPMENT\s*:\s*([A-Z][A-Z ]+?)(?=\s+DESTINO\/DESTIN)/i, (value) => value.replace(/\s+BRAZIL$/i, ""));
       capture("port_of_discharge", /DESTINO\/DESTIN\s*:\s*([A-Z][A-Z ]+?)(?=\s+WE CERTIFY|\s+SANTOS)/i);
+      capture("port_of_loading", /Port of Loading\s+(.+?)(?=\s+Port of Discharge|\n)/i);
+      capture("port_of_discharge", /Port of Discharge\s+(.+?)(?=\s+Vessel Name|\n)/i);
       capture("commodity", /Commodity\s*:\s*(.+?)(?=\n|\s+(?:Gross Weight|Declared Value|Flight Date))/i);
       capture("commodity", /Commodities\s+[0-9,.]+\s+(.+?)(?=\s+[A-Z]{4}\d{7})/i);
       capture("commodity", /Goods Type\s+(.+?)(?=\s+City\s|\n)/i);
+      capture("commodity", /(?:^|\n)(Fat Filled Powder[^\n]+(?:\nYellow Colour grade)?)(?=\nQuantity Packing)/i, (value) => value.replace(/\s+/g, " ").trim());
+      capture("commodity", /Cargo Description[\s\S]{0,80}?\d+(?:\.\d+)?\s+METRIC TONS\s+(.+?)(?=\nPACKING|\nP ACKING)/i, (value) => value.replace(/\s+/g, " ").trim());
       capture("incoterm", /Invoice\s*:\s*(CIF|FOB|CFR|EXW|DAP|DDP)\s*:/i);
       capture("incoterm", /Incoterm\s*:\s*(CIF|FOB|CFR|EXW|DAP|DDP)/i);
       capture("incoterm", /TERMS OF SALE\s*:\s*(CIF|FOB|CFR|EXW|DAP|DDP)/i);
+      capture("incoterm", /Delivery Condition\s+(CIF|FOB|CFR|EXW|DAP|DDP)\b/i);
       capture("departure_date", /Departure\s*:\s*([0-9]{1,2}\/[0-9]{2}\/[0-9]{4})/i);
       capture("arrival_date", /Arrival Date\s*:\s*([0-9]{1,2}\/[0-9]{2}\/[0-9]{4})/i);
+      const trackedArrivals = [...text.matchAll(/Vessel arrival\s*\([^)]*\)\s*\n?\s*([0-9]{1,2}\s+[A-Z][a-z]+\s+[0-9]{4})/gi)];
+      if (trackedArrivals.length) add("arrival_date", trackedArrivals.at(-1)[1], item, page, sourceExcerpt(trackedArrivals.at(-1)), 0.995);
       capture("quantity", /(?:Total Packages\s*:\s*|Total\s+)([0-9,]+)(?:\s+cartons|\s*:\s*)/i);
       capture("quantity", /\d+\s+CONTAINERS[^\n]{0,80}?([0-9,]+)\s+CARTONS/i);
       capture("net_weight", /(?:Total net weight|NET WEIGHT(?: FROZEN CHICKEN FEET)?)\s*[:\s]\s*([0-9.,]+)\s*KGS/i);
@@ -263,12 +292,30 @@ function deterministicEvidenceCandidates(evidence = []) {
       capture("shipment_date", /Shipping Date\s+([0-9]{1,2}\/\d{1,2}\/\d{4})/i);
       capture("bill_of_lading", /\bBILL\s+([A-Z]{3,}[A-Z0-9-]*\d[A-Z0-9-]*)/i);
       capture("quantity", /Total Quantity\s*:\s*([0-9,]+)\s+(?:Box(?:es)?|Packages?)/i);
+      capture("quantity", /PACKING\s*:\s*IN\s+([0-9,]+\s+BAGS?)[^\n]*/i);
+      capture("quantity", /P ACKING\s*:\s*IN\s+([0-9,]+\s+BAGS?)[^\n]*/i);
+      capture("net_weight", /(?:^|\n)([0-9]+(?:\.[0-9]+)?\s+MT)\s+[0-9]+(?:\.[0-9]+)?\s*kg bags/i);
       capture("vessel_name", /(?:Means Of Conveyance\s*:\s*|Vessel Name\s+)([A-Z][A-Z0-9 ]+?)(?=\s+Age\s*:|\s+Carrier Name|\n)/i);
+      capture("vessel_name", /Vessel Name\s+([A-Z][A-Z0-9 ]+?)(?=\s+B\/L No\.|\n)/i);
+      capture("voyage_number", /(?:Vessel Name\s+)?[A-Z][A-Z0-9 ]+\s+Voy(?:age|\.)?\s*No\.?\s*([A-Z0-9/-]+)/i, (value) => /^(?:etd|eta|voyage|number)$/i.test(value) ? null : value);
+      capture("transshipment_port", /(?:Transshipment|Transhipment)\s+(?:Port\s*)?[:\-]?\s*([^\n]+)/i);
+      capture("feeder_vessel", /(?:Feeder Vessel|transferred onboard feeder vessel)\s*[:\-]?\s*(?:MV\s*)?[“\"]?([^”\"\n]+?)(?=\s+Voyage|\n|$)/i);
+      capture("feeder_voyage", /Feeder Vessel[^\n]*?Voyage\s*No\.?\s*([A-Z0-9/-]+)/i);
+      if (/Transport Plan/i.test(text)) {
+        capture("vessel_name", /Delta Container T\s*erminal[\s\S]{0,80}?MVS\s+([A-Z][A-Z0-9 ]+?)\s+[A-Z0-9/-]+\s+20\d{2}-/i);
+        capture("voyage_number", /Delta Container T\s*erminal[\s\S]{0,100}?MVS\s+[A-Z][A-Z0-9 ]+?\s+([A-Z0-9/-]+)\s+20\d{2}-/i);
+        capture("transshipment_port", /Delta Container T\s*erminal\s+(.+?)\s+MVS\s+[A-Z]/i, (value) => value.replace(/\bT\s+anger\b/i, "Tanger").replace(/\s+/g, " ").trim());
+        capture("feeder_vessel", /T\s*anger Med 2\s+Freetown T\s*erminal\s+MVS\s+([A-Z][A-Z0-9 ]+?)\s+[A-Z0-9/-]+\s+20\d{2}-/i);
+        capture("feeder_voyage", /T\s*anger Med 2\s+Freetown T\s*erminal\s+MVS\s+[A-Z][A-Z0-9 ]+?\s+([A-Z0-9/-]+)\s+20\d{2}-/i);
+      }
       capture("temperature_requirement", /(?:requested carrying temperature of|TEMPERATURE CONTROLLED\s*\()\s*([+-]?\d+(?:\.\d+)?\s*(?:degrees? Celsius|C)(?:\s+to\s+[+-]?\d+(?:\.\d+)?C)?)/i);
       capture("survey_date", /Date of Attendance\s*:\s*([^\n]+)/i);
       capture("survey_date", /Survey date and location\s*:\s*(.+?)\s+at\s+/i);
       capture("delivery_date", /(?:cargo|consignment|shipment|container)[^\n.]{0,100}?deliver(?:ed|y)[^\n.]{0,40}?\bon\s+([0-9]{1,2}(?:st|nd|rd|th)?\s+[A-Z][a-z]+\s+[0-9]{4}|[0-9]{1,2}[\/-][0-9]{1,2}[\/-][0-9]{2,4})/i);
+      capture("delivery_date", /Gate out for delivery\s*\n?\s*([0-9]{1,2}\s+[A-Z][a-z]+\s+[0-9]{4})/i);
       capture("discharge_date", /(?:cargo|consignment|shipment|container)[^\n.]{0,100}?discharg(?:ed|e)[^\n.]{0,40}?\bon\s+([0-9]{1,2}(?:st|nd|rd|th)?\s+[A-Z][a-z]+\s+[0-9]{4}|[0-9]{1,2}[\/-][0-9]{1,2}[\/-][0-9]{2,4})/i);
+      const trackedDischarges = [...text.matchAll(/Discharge\s*\([^)]*\)\s*\n?\s*([0-9]{1,2}\s+[A-Z][a-z]+\s+[0-9]{4})/gi)];
+      if (trackedDischarges.length) add("discharge_date", trackedDischarges.at(-1)[1], item, page, sourceExcerpt(trackedDischarges.at(-1)), 0.995);
       capture("damage_report_date", /(?:damage|incident) report[^\n.]{0,80}?(?:dated|on)\s+([0-9]{1,2}(?:st|nd|rd|th)?\s+[A-Z][a-z]+\s+[0-9]{4}|[0-9]{1,2}[\/-][0-9]{1,2}[\/-][0-9]{2,4})/i);
       capture("notice_date", /(?:notice of (?:claim|loss)|claim notice)[^\n.]{0,80}?(?:dated|on)\s+([0-9]{1,2}(?:st|nd|rd|th)?\s+[A-Z][a-z]+\s+[0-9]{4}|[0-9]{1,2}[\/-][0-9]{1,2}[\/-][0-9]{2,4})/i);
       capture("destruction_date", /(?:destruction certificate|destroyed)[^\n.]{0,80}?(?:dated|on)\s+([0-9]{1,2}(?:st|nd|rd|th)?\s+[A-Z][a-z]+\s+[0-9]{4}|[0-9]{1,2}[\/-][0-9]{1,2}[\/-][0-9]{2,4})/i);
@@ -278,11 +325,13 @@ function deterministicEvidenceCandidates(evidence = []) {
       capture("surveyor", /Mr\s+(.+?)\s+\S+\s+For ULA\s+As Cargo Insurers Surveyor/i);
       capture("affected_container", /Container:\s*1x40[’']HC\s+([A-Z]{3}[UJZ]\d{7})/i);
       capture("affected_quantity", /Out of the total shipment of\s+([0-9,]+)\s+cartons/i);
+      capture("seal_condition", /Was the seal intact at delivery\?\s*[–-]\s*([^\n.]+)/i);
       capture("salvage_quantity", /([0-9,]+)\s+cartons were found to have sustained quality deterioration/i);
       capture("total_loss_quantity", /([0-9,]+)\s+cartons were found to be extensively deteriorated/i);
       capture("claim_amount", /Claimed Amount\s*:\s*(?:USD|USDF|EUR|GBP|AED)?\s*([0-9][0-9,.]*)/i);
       capture("adjusted_amount", /(?:Net Concluded Payable Quantum|Net Adjusted Amount|Recommended Payment|Settlement Amount)\s*:\s*(?:USD|USDF|EUR|GBP|AED)?\s*([0-9][0-9,.]*)/i);
       capture("invoice_total", /Total Commercial Value\s*:\s*(?:USD|USDF|EUR|GBP|AED)?\s*([0-9][0-9,.]*)/i);
+      capture("invoice_total", /Amount due\s+(?:USD|USDF|EUR|GBP|AED)\s*([0-9][0-9,.]*)/i);
       capture("invoice_total", /([0-9][0-9,.]+)\s*\$\s*Total Currency/i);
       if (/Sales Invoice/i.test(text)) capture("invoice_total", /(?:Net Total|Sub-Total)\s+([0-9][0-9,.]*)/i);
       capture("freight_amount", /(?:^|\n)[ \t]*Freight[ \t]*\$?[ \t]*([0-9][0-9,.]*)/i);
@@ -305,9 +354,16 @@ function deterministicEvidenceCandidates(evidence = []) {
       if (currency) add("currency", currency === "USDF" ? "USD" : currency, item, page, currency);
       const containers = unique(text.match(/\b[A-Z]{3}[UJZ]\d{7}\b/g) || []);
       if (containers.length) add("container_numbers", containers.join(", "), item, page, containers.join(", "));
+      const cargoWeights = [...String(page.text || "").matchAll(/\b[A-Z]{3}[UJZ]\d{7}\b[^\n]*?([0-9]+(?:\.[0-9]+)?)\s*KGS\s+([0-9]+(?:\.[0-9]+)?)\s*KGS/gi)]
+        .map((match) => parseNumber(match[2]))
+        .filter((value) => value !== null);
+      if (cargoWeights.length > 1) {
+        add("gross_weight", `${cargoWeights.reduce((total, value) => total + value, 0).toLocaleString("en-US")} kg`, item, page, cargoWeights.join(" + "), 0.99);
+      }
       const seals = unique([
         ...[...text.matchAll(/\bSEAL\s+(K[A-Z0-9/]+)/gi)].map((match) => match[1]),
         ...(text.match(/SEAL SIF\s+(.+?)\s+RUC:/i)?.[1].match(/\b[0-9]+\/SIF[0-9]+\b/gi) || []),
+        ...[...text.matchAll(/Shipper Seal\s+([A-Z0-9/-]+)/gi)].map((match) => match[1]),
       ]);
       if (seals.length) add("seal_numbers", seals.join(", "), item, page, seals.join(", "));
       const batchDates = [...text.matchAll(/\b([0-9]{2}\/[0-9]{2}\/[0-9]{4})\s+([0-9]{2}\/[0-9]{2}\/[0-9]{4})\s+\d{8}\s+[0-9]+/g)];
@@ -318,6 +374,23 @@ function deterministicEvidenceCandidates(evidence = []) {
       const vessel = text.match(/Shipped on Board\s+([A-Z][A-Z ]+?)\s+\d{1,2}-[A-Z]{3}-\d{4}/i)
         || text.match(/NAVIO\/VESSEL:\s*([A-Z][A-Z ]+?)(?=\s+CARREGADO|\s+SHIPMENT)/i);
       if (vessel?.[1]) add("vessel_name", vessel[1], item, page, sourceExcerpt(vessel));
+
+      if (/Shipment Declarations Report/i.test(text)) {
+        for (const line of text.split("\n")) {
+          if (/^\s*\d+\s+/.test(line) && /\$\s*[0-9][0-9,.]*/.test(line)) shipmentDeclarationRows.push({ line, item, page });
+        }
+      }
+
+      const preloadingContainer = text.match(/CargoSnap report[\s\S]{0,100}?Reference:\s*([A-Z]{3}[UJZ]\d{7})/i)?.[1];
+      if (preloadingContainer && /signs of corrosion, damage or repairs\?\s*No/i.test(text)) {
+        const finding = `Pre-loading transport report for container ${preloadingContainer} records no visible corrosion, damage or repairs and no reported oil, fat, moisture, pests, dust, dirt, allergens, or foreign odours.`;
+        findings.push({ finding, confidence: 0.99, sources: [itemSource(item, page, text.slice(0, 520))] });
+      }
+      const intactSeal = text.match(/Was the seal intact at delivery\?\s*[–-]\s*(Seal intact)/i);
+      if (intactSeal) {
+        const finding = "The responding party stated that the seal was intact at delivery; no port damage report was available.";
+        findings.push({ finding, confidence: 0.98, sources: [itemSource(item, page, sourceExcerpt(intactSeal))] });
+      }
 
       const adjustmentLines = [...text.matchAll(/(?:^|\n)\s*-?\s*([^:\n]{3,90})\s*:\s*\(?\s*(USD|USDF|EUR|GBP|AED)\s*([0-9][0-9,.]*)\)?/gim)];
       const positiveLines = [];
@@ -415,6 +488,21 @@ function deterministicEvidenceCandidates(evidence = []) {
       }
     }
   }
+
+  const billOfLadingReferences = unique(candidates
+    .filter((candidate) => candidate.field === "bill_of_lading")
+    .map((candidate) => String(candidate.normalized_value ?? candidate.value).replace(/[^A-Z0-9]/gi, "").toUpperCase()));
+  for (const row of shipmentDeclarationRows) {
+    const compactRow = row.line.replace(/[^A-Z0-9]/gi, "").toUpperCase();
+    const matchedReference = billOfLadingReferences.find((reference) => reference && compactRow.includes(reference));
+    if (!matchedReference) continue;
+    const amounts = [...row.line.matchAll(/\$\s*([0-9][0-9,.]*)/g)].map((match) => match[1]);
+    if (amounts.length >= 2) {
+      add("invoice_total", amounts.at(-2), row.item, row.page, row.line, 0.99);
+      add("insured_value", amounts.at(-1), row.item, row.page, row.line, 0.995);
+    }
+  }
+
   if (commercialInvoiceRows.length && damageScheduleRows.length) {
     const availableInvoiceRows = new Set(commercialInvoiceRows.map((_, index) => index));
     for (const damaged of damageScheduleRows) {
@@ -453,15 +541,15 @@ function deterministicEvidenceCandidates(evidence = []) {
 }
 
 const claimFieldNames = [
-  "insured", "insurer", "broker", "policy_number", "policy_period", "policy_inception_date", "policy_issue_date", "policy_terms", "policy_limit", "policy_premium", "insured_value",
+  "applicant", "insured", "insurer", "reassured", "reinsurer", "broker", "claim_reference", "policy_number", "policy_period", "policy_inception_date", "policy_issue_date", "policy_terms", "policy_limit", "policy_premium", "insured_value", "valuation_basis", "valuation_uplift_percent", "valuation_uplift_amount",
   "deductible", "date_of_loss", "date_of_intimation", "cause_of_loss", "country", "currency", "claim_amount",
   "gross_claim_amount", "invoice_total", "freight_amount", "insurance_amount", "fob_value", "freight_invoice_total", "fees_amount", "salvage_amount", "recovery_amount", "depreciation_amount",
-  "adjusted_amount", "surveyor", "vessel_name", "container_number", "container_numbers", "port_of_loading",
+  "adjusted_amount", "surveyor", "vessel_name", "voyage_number", "transshipment_port", "feeder_vessel", "feeder_voyage", "container_number", "container_numbers", "port_of_loading",
   "port_of_discharge", "commodity", "shipper", "consignee", "carrier", "air_waybill", "bill_of_lading",
   "invoice_number", "freight_invoice_number", "invoice_date", "packing_list_number", "packing_list_date", "purchase_order", "voyage_from", "voyage_to", "quantity", "net_weight", "gross_weight",
-  "conveyance_mode", "country_of_origin", "destination_country", "incoterm", "departure_date", "arrival_date", "shipment_date", "seal_numbers", "production_dates", "expiry_dates",
+  "conveyance_mode", "country_of_origin", "destination_country", "incoterm", "departure_date", "arrival_date", "shipment_date", "seal_numbers", "seal_condition", "production_dates", "expiry_dates",
   "freight_invoice_date", "delivery_date", "discharge_date", "damage_report_date", "notice_date", "destruction_date",
-  "affected_container", "affected_quantity", "salvage_quantity", "total_loss_quantity",
+  "affected_container", "affected_quantity", "shortage_breakdown", "survey_attendance_scope", "salvage_quantity", "total_loss_quantity",
   "temperature_requirement", "temperature_findings", "survey_date", "survey_location", "damage_findings",
   "interest_insured", "appointment_details", "warranties_conditions", "insurable_interest",
   "adequacy_of_insured_value", "claim_basis", "salvage_findings", "recovery_findings",
@@ -470,7 +558,7 @@ const claimFieldNames = [
 const monetaryClaimFields = new Set([
   "policy_limit", "policy_premium", "insured_value", "deductible", "claim_amount", "gross_claim_amount",
   "invoice_total", "freight_amount", "insurance_amount", "fob_value", "freight_invoice_total", "fees_amount",
-  "salvage_amount", "recovery_amount", "depreciation_amount", "adjusted_amount",
+  "salvage_amount", "recovery_amount", "depreciation_amount", "adjusted_amount", "valuation_uplift_amount",
 ]);
 
 function resolveBusinessLine(claim, analysis) {
@@ -592,6 +680,20 @@ function buildValidationChecks(facts, financials, chronology) {
     checks.push(validationCheck("invoice-components", "Commercial invoice arithmetic", "not_testable", "The available evidence does not contain every component needed to reconcile the commercial invoice total."));
   }
 
+  if (financials.invoice_value !== null && financials.insured_value !== null && financials.valuation_uplift_percent !== null) {
+    const expectedInsuredValue = financials.invoice_value * (1 + financials.valuation_uplift_percent / 100);
+    const difference = financials.insured_value - expectedInsuredValue;
+    checks.push(validationCheck(
+      "insured-valuation-basis",
+      "Insured-value basis",
+      Math.abs(difference) <= 0.01 ? "validated" : "requires_review",
+      Math.abs(difference) <= 0.01
+        ? `The invoice value plus the evidenced ${financials.valuation_uplift_percent}% valuation uplift equals ${financials.currency || "the stated currency"} ${expectedInsuredValue.toFixed(2)}, matching the documented insured value.`
+        : `The invoice value plus the evidenced ${financials.valuation_uplift_percent}% valuation uplift equals ${financials.currency || "the stated currency"} ${expectedInsuredValue.toFixed(2)}, differing from the documented insured value by ${Math.abs(difference).toFixed(2)}.`,
+      [...(facts.invoice_total?.sources || []), ...(facts.insured_value?.sources || []), ...(facts.valuation_uplift_percent?.sources || [])],
+    ));
+  }
+
   const affected = parseNumber(facts.affected_quantity.value);
   const salvageQuantity = parseNumber(facts.salvage_quantity.value);
   const totalLossQuantity = parseNumber(facts.total_loss_quantity.value);
@@ -655,25 +757,49 @@ function buildCauseAssessment(facts, findings) {
   const observed = findingRecords.filter((finding) => /damage|deteriorat|unfit|broken|wet|water|defrost|temperature|shortage|missing|odor|mould|rust|dent|crush/i.test(finding.finding));
   const indicators = findingRecords.filter((finding) => /temperature|logger|defrost|water ingress|impact|packing|seal|container|handling|delay|weather|leak/i.test(finding.finding));
   const explicitCause = isPresent(facts.cause_of_loss.value) ? facts.cause_of_loss : null;
+  const combinedFindings = findingRecords.map((finding) => finding.finding).join(" ");
+  const shortageClaim = /shortage|missing|non[- ]delivery/i.test(combinedFindings);
+  const intactSeal = /seal(?:s)? (?:was|were|remained|reported|confirmed)?\s*intact|seal intact/i.test(`${facts.seal_condition?.value || ""} ${combinedFindings}`);
+  const noTampering = /no (?:evidence|signs?) of (?:seal )?tampering|no forced entry|without (?:any )?(?:recorded )?seal discrepanc/i.test(combinedFindings);
+  const multipleContainers = String(facts.container_numbers?.value || "").split(/\s*,\s*/).filter(Boolean).length > 1
+    || /(?:all|across|distributed across) (?:the )?(?:three|multiple|several) containers/i.test(combinedFindings);
+  const limitedAttendance = /only (?:possible|attended|witnessed)|prior to (?:our|the surveyor'?s) attendance|consignee'?s (?:count|reported count)|not independently (?:counted|verified)/i.test(combinedFindings);
+  const missingCarrierEvidence = /no (?:carrier[- ]signed )?(?:certificate|shortage certificate)|carrier (?:abstained|did not attend)|certificate of shortage.*not (?:available|provided)/i.test(combinedFindings);
+  const originConditionEvidence = /pre[- ]loading|prior to loading|container condition|no visible corrosion, damage or repairs/i.test(combinedFindings);
+  const inferenceFindings = findingRecords.filter((finding) => /shortage|missing|seal|tamper|forced entry|pre[- ]loading|prior to loading|packing|count|carrier|container condition/i.test(finding.finding));
+  const inferenceSources = unique([
+    ...(facts.seal_condition?.sources || []),
+    ...(facts.container_numbers?.sources || []),
+    ...inferenceFindings.flatMap((finding) => finding.sources || []),
+  ]);
+  const reasonedShortageInference = shortageClaim && intactSeal && (multipleContainers || noTampering)
+    ? `The reported shortage is distributed across ${multipleContainers ? "multiple containers" : "the shipment"}, while the available evidence records intact seals${noTampering ? " and no identified tampering or forced entry" : ""}. This weakens, but does not by itself eliminate, a sea-transit shortage scenario and makes a pre-shipment quantity discrepancy, packing/containerisation error, or unexplained disappearance before or outside the evidenced sealed transit comparatively more plausible.${originConditionEvidence ? " The pre-loading records support container condition, but do not independently prove the quantity loaded." : ""}${limitedAttendance ? " The conclusion is limited because not every container count was witnessed by the attending surveyor." : ""}${missingCarrierEvidence ? " No carrier-recognised shortage certificate or equivalent independent carrier record was established." : ""}`
+    : null;
   return {
     status: explicitCause ? "evidence_stated" : observed.length ? "requires_professional_determination" : "insufficient_evidence",
     explicit_cause: explicitCause,
     observations: observed,
     indicators,
+    reasoned_inference: reasonedShortageInference,
+    inference_sources: inferenceSources,
     evidence_gap: explicitCause
       ? null
-      : "The evidence records condition and possible causal indicators but does not establish a definitive proximate cause.",
+      : reasonedShortageInference || "The evidence records condition and possible causal indicators but does not establish a definitive proximate cause.",
   };
 }
 
-function buildPolicyAnalysis(facts, chronology, validationChecks) {
+function buildPolicyAnalysis(facts, chronology, validationChecks, findings = []) {
   const wordingFacts = [facts.warranties_conditions, facts.policy_terms].filter((fact) => isPresent(fact?.value));
   const wording = wordingFacts.map((fact) => fact.value).join(" ");
+  const findingsText = findings.map((finding) => finding.finding || "").join(" ");
   const topics = [
     ["Transit attachment / duration", /warehouse\s+to\s+warehouse|transit|attachment|inception/i],
     ["Packing warranty", /professionally packed|packing|packed/i],
     ["Container condition", /container in good condition|container condition|reefer container/i],
     ["Temperature condition", /temperature|frozen|chilled|reefer/i],
+    ["Intact-seal shortage extension", /including shortage noticed on unstuffing intact container seal/i],
+    ["Mysterious / unexplained disappearance exclusion", /mysterious(?: and\/or)? unexplained disappearance|mysterious disappearance/i],
+    ["Shortage / loss of weight", /including shortage\s*&\s*loss of weight/i],
     ["Shortage evidence", /shortage|carrier certificate/i],
     ["Exclusions", /exclusion|excluded|mechanical|electrical|war|delay|inherent vice/i],
   ];
@@ -681,15 +807,24 @@ function buildPolicyAnalysis(facts, chronology, validationChecks) {
     if (!pattern.test(wording)) return [];
     const supportingFacts = topic === "Temperature condition"
       ? [facts.temperature_requirement, facts.temperature_findings]
-      : topic === "Packing warranty" ? [facts.damage_findings] : [];
-    const hasComplianceEvidence = supportingFacts.some((fact) => isPresent(fact?.value));
+      : topic === "Packing warranty" ? [facts.damage_findings, facts.survey_attendance_scope]
+        : topic === "Intact-seal shortage extension" ? [facts.seal_condition, facts.affected_quantity, facts.shortage_breakdown]
+          : topic === "Shortage / loss of weight" || topic === "Shortage evidence" ? [facts.affected_quantity, facts.shortage_breakdown]
+            : topic === "Mysterious / unexplained disappearance exclusion" ? [facts.seal_condition, facts.survey_attendance_scope]
+              : [];
+    const findingPattern = topic === "Intact-seal shortage extension" ? /shortage|seal intact|intact seal/i
+      : topic === "Mysterious / unexplained disappearance exclusion" ? /shortage|missing|tamper|forced entry|seal/i
+        : topic === "Shortage / loss of weight" || topic === "Shortage evidence" ? /shortage|missing|carrier certificate/i
+          : null;
+    const matchingFindings = findingPattern ? findings.filter((finding) => findingPattern.test(finding.finding || "")) : [];
+    const hasComplianceEvidence = supportingFacts.some((fact) => isPresent(fact?.value)) || Boolean(findingPattern?.test(findingsText));
     return [{
       topic,
       status: hasComplianceEvidence ? "evidence_available_for_review" : "compliance_requires_review",
       assessment: hasComplianceEvidence
         ? "The policy wording and related factual evidence are both present; compliance and legal effect remain for professional determination."
         : "The condition is present in the policy wording, but the normalized evidence does not independently establish compliance or breach.",
-      sources: [...wordingFacts.flatMap((fact) => fact.sources || []), ...supportingFacts.flatMap((fact) => fact?.sources || [])],
+      sources: [...wordingFacts.flatMap((fact) => fact.sources || []), ...supportingFacts.flatMap((fact) => fact?.sources || []), ...matchingFindings.flatMap((finding) => finding.sources || [])],
     }];
   });
   const timing = validationChecks.find((check) => check.id === "policy-timing");
@@ -750,6 +885,9 @@ function buildAdjustment(financials, validationChecks, lineItems = []) {
   if (financials.valuation_adjustment !== null && Math.abs(financials.valuation_adjustment) >= 0.01) {
     steps.push({ label: "Reconciliation to insured invoice unit values", operation: "deduction", amount: financials.valuation_adjustment });
   }
+  if (financials.valuation_uplift_amount !== null && Math.abs(financials.valuation_uplift_amount) >= 0.01) {
+    steps.push({ label: `Policy valuation uplift${financials.valuation_uplift_percent !== null ? ` (${financials.valuation_uplift_percent}%)` : ""}`, operation: "addition", amount: financials.valuation_uplift_amount });
+  }
   for (const [label, key] of [
     ["Deductible / excess", "deductible"],
     ["Salvage deduction", "salvage"],
@@ -762,7 +900,7 @@ function buildAdjustment(financials, validationChecks, lineItems = []) {
   return {
     steps,
     line_items: lineItems,
-    checks: validationChecks.filter((check) => ["invoice-components", "affected-quantity", "shipment-quantity"].includes(check.id)),
+    checks: validationChecks.filter((check) => ["invoice-components", "insured-valuation-basis", "affected-quantity", "shipment-quantity"].includes(check.id)),
     status: financials.calculation_status,
   };
 }
@@ -937,14 +1075,22 @@ export function buildNormalizedClaimRecord({ claim = {}, documents = [], analysi
   const depreciation = parseNumber(facts.depreciation_amount.value);
   const explicitAdjusted = parseNumber(facts.adjusted_amount.value);
   const adjustedClaimAmount = itemizedClaimTotal ?? explicitAdjusted ?? presentedClaim;
-  const calculationBase = itemizedClaimTotal ?? presentedClaim;
+  const underlyingAdjustedLoss = itemizedClaimTotal ?? presentedClaim;
+  const valuationUpliftPercent = parseNumber(facts.valuation_uplift_percent.value);
+  const explicitValuationUplift = parseNumber(facts.valuation_uplift_amount.value);
+  const valuationUpliftAmount = explicitValuationUplift ?? (underlyingAdjustedLoss !== null && valuationUpliftPercent !== null
+    ? Number((underlyingAdjustedLoss * valuationUpliftPercent / 100).toFixed(4))
+    : null);
+  const calculationBase = underlyingAdjustedLoss === null
+    ? null
+    : underlyingAdjustedLoss + (valuationUpliftAmount ?? 0);
   const valuationAdjustment = presentedClaim !== null && itemizedClaimTotal !== null ? Number((presentedClaim - itemizedClaimTotal).toFixed(2)) : null;
   const canCalculateWithoutExplicit = calculationBase !== null && [deductible, salvage, recovery, depreciation].every((value) => value !== null);
   const knownDeductions = [deductible, salvage, recovery, depreciation].filter((value) => value !== null);
   const knownCalculated = calculationBase === null
     ? null
     : calculationBase - knownDeductions.reduce((total, value) => total + Math.abs(value), 0);
-  const arithmeticValid = explicitAdjusted !== null && knownCalculated !== null ? Math.abs(explicitAdjusted - knownCalculated) < 0.01 : false;
+  const arithmeticValid = explicitAdjusted !== null && knownCalculated !== null ? Math.abs(explicitAdjusted - knownCalculated) <= 0.01 : false;
   const concludedIndemnity = explicitAdjusted ?? (canCalculateWithoutExplicit ? knownCalculated : null);
   const reconciledItemizedAdjustment = itemizedClaimTotal !== null && explicitAdjusted !== null && arithmeticValid;
   const financials = {
@@ -953,6 +1099,10 @@ export function buildNormalizedClaimRecord({ claim = {}, documents = [], analysi
     itemized_claim_total: itemizedClaimTotal,
     adjusted_claim_amount: adjustedClaimAmount,
     valuation_adjustment: valuationAdjustment,
+    valuation_basis: isPresent(facts.valuation_basis.value) ? facts.valuation_basis.value : null,
+    valuation_uplift_percent: valuationUpliftPercent,
+    valuation_uplift_amount: valuationUpliftAmount,
+    claim_after_valuation_uplift: calculationBase,
     invoice_value: parseNumber(facts.invoice_total.value),
     freight_amount: parseNumber(facts.freight_amount.value),
     insurance_amount: parseNumber(facts.insurance_amount.value),
@@ -961,6 +1111,7 @@ export function buildNormalizedClaimRecord({ claim = {}, documents = [], analysi
     policy_premium: parseNumber(facts.policy_premium.value),
     insured_value: parseNumber(facts.insured_value.value) ?? parseNumber(facts.policy_limit.value),
     deductible, salvage, recovery, depreciation,
+    provisional_indemnity: knownCalculated,
     concluded_indemnity: concludedIndemnity,
     calculation_status: arithmeticValid || (canCalculateWithoutExplicit && concludedIndemnity !== null)
       ? "validated"
@@ -1002,7 +1153,7 @@ export function buildNormalizedClaimRecord({ claim = {}, documents = [], analysi
   }
   const documentRegister = buildDocumentRegister(documents, evidence, resolvedAnalysis);
   const causeAssessment = buildCauseAssessment(facts, evidenceFindings);
-  const policyAnalysis = buildPolicyAnalysis(facts, chronology, validationChecks);
+  const policyAnalysis = buildPolicyAnalysis(facts, chronology, validationChecks, evidenceFindings);
   const adjustment = buildAdjustment(financials, validationChecks, adjustmentLineItems);
   const appendices = documentRegister.filter((document) => document.categories.includes("Photographs") || document.image_only_pages > 0);
   return {
@@ -1077,6 +1228,7 @@ export function createUnifiedReportDraft({ claim, documents, versions, generated
   const facts = normalizedRecord.facts;
   const financials = normalizedRecord.financials;
   const currency = financials.currency;
+  const applicantField = isPresent(facts.applicant?.value) ? "applicant" : "insurer";
 
   const supportingDocuments = normalizedRecord.document_register.length
     ? normalizedRecord.document_register.map((document, documentIndex) => {
@@ -1112,17 +1264,22 @@ export function createUnifiedReportDraft({ claim, documents, versions, generated
     ["Insurance amount in commercial invoice", financials.insurance_amount],
     ["FOB value in commercial invoice", financials.fob_value],
     ["Documented freight invoice (not automatically claimable)", financials.freight_invoice_value],
+    ["Policy valuation uplift", financials.valuation_uplift_amount],
+    ["Claim after policy valuation uplift", financials.claim_after_valuation_uplift],
     ["Applicable deductible / excess", financials.deductible],
     ["Salvage deduction", financials.salvage],
     ["Recovery credit", financials.recovery],
     ["Depreciation", financials.depreciation],
+    ["Provisional amount after supported adjustments", financials.provisional_indemnity],
     ["Concluded indemnity", financials.concluded_indemnity],
   ].map(([label, value]) => `| ${label} | ${amountText(value, currency)} |`).join("\n");
   const financialNarrative = financials.arithmetic_valid
     ? `The supported figures reconcile arithmetically to **${amountText(financials.concluded_indemnity, currency)}**. The calculation is deterministic; coverage and payment authority remain subject to professional review.`
     : financials.concluded_indemnity !== null
       ? `The evidence states a concluded amount of **${amountText(financials.concluded_indemnity, currency)}**, but the available adjustment components do not fully reproduce it. It is retained as source-stated, not arithmetic-validated. Unresolved evidence items: ${financials.requires_confirmation.join("; ")}.`
-      : `A concluded indemnity cannot yet be calculated without assumptions. Evidence not established across the reviewed file set: ${financials.requires_confirmation.join("; ") || REQUIRES_CONFIRMATION}. Invoice or insured values have not been substituted for a presented claim.`;
+      : financials.provisional_indemnity !== null
+        ? `The evidenced arithmetic produces a provisional amount of **${amountText(financials.provisional_indemnity, currency)}** after the supported valuation uplift and deductions. It is not presented as a concluded indemnity because the remaining adjustment and coverage matters require confirmation: ${financials.requires_confirmation.join("; ") || REQUIRES_CONFIRMATION}.`
+        : `A concluded indemnity cannot yet be calculated without assumptions. Evidence not established across the reviewed file set: ${financials.requires_confirmation.join("; ") || REQUIRES_CONFIRMATION}. Invoice or insured values have not been substituted for a presented claim.`;
   const policyLimit = parseNumber(facts.insured_value.value) ?? parseNumber(facts.policy_limit.value);
   const invoiceValue = financials.invoice_value;
   const adequacy = policyLimit !== null && invoiceValue !== null
@@ -1139,7 +1296,7 @@ export function createUnifiedReportDraft({ claim, documents, versions, generated
       : "- No distinct causal indicator was established in the normalized evidence.";
     const conclusion = assessment.explicit_cause
       ? `The source evidence expressly records: **${factText(normalizedRecord, "cause_of_loss", index)}**. This is retained as the evidence-stated cause and remains subject to professional proximate-cause and coverage review.`
-      : assessment.evidence_gap;
+      : `${assessment.evidence_gap}${citation({ sources: assessment.inference_sources || [] }, index)}`;
     return `### Observed condition\n\n${observations}\n\n### Causal indicators in the evidence\n\n${indicators}\n\n### Cause assessment\n\n${conclusion}`;
   })();
 
@@ -1185,13 +1342,13 @@ export function createUnifiedReportDraft({ claim, documents, versions, generated
         return `${masterParagraphs("report_summary_intro")}\n\n| Assured's / Shipper's Name | ${masterData.scalars.summary_assured} |\n| --- | --- |\n| Consignee's Name | ${masterData.scalars.summary_consignee} |\n| Insurance Policy | ${masterData.scalars.summary_policy.replaceAll("\n", "<br>")} |\n\nThe following was concluded:\n\n${masterParagraphs("report_summary_findings")}\n\n### In our opinion,\n\n${masterList("report_summary_opinion")}\n\n${masterParagraphs("document_sighting")}`;
       case "introduction":
       case "appointment":
-        return `ULA's appointment or instruction details: **${factText(normalizedRecord, "appointment_details", index)}**\n\nThe available file identifies the insurer / applicant as **${factText(normalizedRecord, "insurer", index)}**, the insured / assured as **${factText(normalizedRecord, "insured", index)}**, and the relevant transit interest as **${factText(normalizedRecord, "commodity", index)}**. No wider scope or authority is inferred beyond the uploaded evidence.`;
+        return `ULA's appointment or instruction details: **${factText(normalizedRecord, "appointment_details", index)}**\n\nThe available file identifies the applicant / instructing party as **${factText(normalizedRecord, applicantField, index)}**, the insurer as **${factText(normalizedRecord, "insurer", index)}**, the insured / assured as **${factText(normalizedRecord, "insured", index)}**, and the relevant transit interest as **${factText(normalizedRecord, "commodity", index)}**. No wider scope or authority is inferred beyond the uploaded evidence.`;
       case "investigation": case "surveyor_notes": case "survey_timeline": case "adjusters_note":
         return `${masterParagraphs("surveyor_notes")}${damageSchedule}`;
       case "interest_insured":
         return masterParagraphs("interest_insured");
       case "routing": case "transport":
-        return `| Routing detail | Evidence-supported value |\n| --- | --- |\n${tableRows(normalizedRecord, index, [["Country of origin", "country_of_origin"], ["Origin / loading", isPresent(facts.voyage_from.value) ? "voyage_from" : "port_of_loading"], ["Destination country", "destination_country"], ["Destination / discharge", isPresent(facts.voyage_to.value) ? "voyage_to" : "port_of_discharge"], ["Vessel", "vessel_name"], ["Carrier", "carrier"], ["Departure date", "departure_date"], ["Arrival date", "arrival_date"], ["Shipment / on-board date", "shipment_date"], ["Bill of lading", "bill_of_lading"], ["Container(s)", "container_numbers"], ["Seal(s)", "seal_numbers"]])}`;
+        return `| Routing detail | Evidence-supported value |\n| --- | --- |\n${tableRows(normalizedRecord, index, [["Country of origin", "country_of_origin"], ["Origin / loading", isPresent(facts.voyage_from.value) ? "voyage_from" : "port_of_loading"], ["Destination country", "destination_country"], ["Destination / discharge", isPresent(facts.voyage_to.value) ? "voyage_to" : "port_of_discharge"], ["Mother vessel", "vessel_name"], ["Mother-vessel voyage", "voyage_number"], ["Transshipment port", "transshipment_port"], ["Feeder vessel", "feeder_vessel"], ["Feeder voyage", "feeder_voyage"], ["Carrier", "carrier"], ["Departure date", "departure_date"], ["Arrival date", "arrival_date"], ["Shipment / on-board date", "shipment_date"], ["Bill of lading", "bill_of_lading"], ["Container(s)", "container_numbers"], ["Seal(s)", "seal_numbers"], ["Seal condition", "seal_condition"]])}`;
       case "temperature":
         return `| Cold-chain fact | Evidence-supported value |\n| --- | --- |\n${tableRows(normalizedRecord, index, [["Required carrying temperature", "temperature_requirement"], ["Affected container", "affected_container"], ["Affected shipment quantity", "affected_quantity"], ["Commercially unacceptable / salvage-suitable quantity", "salvage_quantity"], ["Total-loss quantity", "total_loss_quantity"], ["Recorded temperature findings", "temperature_findings"], ["Survey findings", "damage_findings"]])}\n\nTemperature records are treated as outstanding unless substantive logger readings or equivalent records are present. A policy temperature condition alone is not a temperature record.`;
       case "cause":

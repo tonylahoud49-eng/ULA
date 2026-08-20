@@ -8,7 +8,7 @@ const PROVIDER_CONFIGS = {
     keyVar: "ANTHROPIC_API_KEY",
     fallbackKeyVars: ["ANTHROTIC_API_KEY"],
     modelVar: "ANTHROPIC_MODEL",
-    defaultModel: "claude-sonnet-5",
+    defaultModel: "claude-sonnet-4-6",
     factory: createAnthropicProvider,
   },
   gemini: {
@@ -86,6 +86,9 @@ function instantiate(name, env, modelOverride) {
   const apiKey = env[config.keyVar] || (config.fallbackKeyVars || []).map((keyVar) => env[keyVar]).find(Boolean);
   if (!apiKey) return null;
   const options = { apiKey, model };
+  if (name === "anthropic") {
+    options.maxOutputTokens = env.ANTHROPIC_MAX_OUTPUT_TOKENS;
+  }
   if (name === "openrouter") {
     options.fallbackModels = env.OPENROUTER_FALLBACK_MODELS;
     options.maxCompletionTokens = env.OPENROUTER_MAX_COMPLETION_TOKENS;
@@ -93,7 +96,18 @@ function instantiate(name, env, modelOverride) {
   return config.factory(options);
 }
 
-export function createConfiguredProvider({ providerName, modelName, disableFallback } = {}, env = process.env) {
+export function createConfiguredProvider(options = {}, env = process.env) {
+  const looksLikeEnvironment = options && typeof options === "object"
+    && !Object.hasOwn(options, "providerName")
+    && !Object.hasOwn(options, "modelName")
+    && !Object.hasOwn(options, "disableFallback")
+    && ["AI_PROVIDER", ...Object.values(PROVIDER_CONFIGS).flatMap((config) => [config.keyVar, ...(config.fallbackKeyVars || [])])]
+      .some((key) => Object.hasOwn(options, key));
+  if (looksLikeEnvironment) {
+    env = options;
+    options = {};
+  }
+  const { providerName, modelName, disableFallback } = options;
   const status = getAIStatus(env);
   if (!status.configured) {
     return { status, provider: null };
@@ -131,8 +145,8 @@ export function createConfiguredProvider({ providerName, modelName, disableFallb
             const res = await instance.analyze(params);
             return {
               ...res,
-              provider: instance.name,
-              model: instance.model,
+              provider: res.provider || instance.name,
+              model: res.model || instance.model,
             };
           } catch (error) {
             error.provider = instance.name;

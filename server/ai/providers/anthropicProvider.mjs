@@ -1,4 +1,4 @@
-import { zodResponseFormat } from "openai/helpers/zod";
+import crypto from "node:crypto";
 import {
   BUSINESS_LINES,
   CLAIM_FIELDS,
@@ -6,48 +6,33 @@ import {
   EVIDENCE_MODES,
   claimAnalysisSchema,
 } from "../claimAnalysisSchema.mjs";
-import { safeAiDebugLog } from "../debugLog.mjs";
+import { safeAiDebugLog, safeAiDiagnosticLog } from "../debugLog.mjs";
 import { SYSTEM_INSTRUCTIONS, promptText } from "./openaiProvider.mjs";
+import {
+  prepareClaimContextForAnthropic,
+  prepareEvidenceForAnthropic,
+} from "../../evidence/prepareAnthropicEvidence.mjs";
 
 const ANTHROPIC_MESSAGES_URL = "https://api.anthropic.com/v1/messages";
-const DEFAULT_MODEL = "claude-sonnet-5";
-const DEFAULT_MAX_TOKENS = 16_384;
+const DEFAULT_MODEL = "claude-sonnet-4-6";
+const DEFAULT_MAX_OUTPUT_TOKENS = 64_000;
+const MAX_SONNET_4_6_OUTPUT_TOKENS = 128_000;
+const ANTHROPIC_JSON_CONTRACT = `The response is constrained by Anthropic JSON structured output. Return only the structured payload: no Markdown fences, preface, trailing commentary, or extra keys.
+All confidence values must be between 0 and 1. Use only these exact values:
+business_line=${JSON.stringify(BUSINESS_LINES)}
+document_type=${JSON.stringify(DOCUMENT_TYPES)}
+field=${JSON.stringify(CLAIM_FIELDS)}
+evidence_mode=${JSON.stringify(EVIDENCE_MODES)}
+Include every top-level key. In fields, return only evidence-supported non-null fields; the application adds unsupported fields locally as null. Never omit a material claim finding, conflict, causation issue, coverage issue, liability issue, quantum item, salvage issue, or recovery issue.
+Be concise without losing evidence: do not repeat the same fact across sections; keep summary to at most 4 short sentences; keep each rationale, basis, warning, review item, and finding to one short sentence; include the strongest non-duplicate sources needed to support each item and both sides of every conflict; keep each supporting_text excerpt exact and normally at most 240 characters, using more only when needed to preserve meaning. Return only detected substantive document_types and only required missing_documents.`;
+const ANTHROPIC_SYSTEM_INSTRUCTIONS = `${SYSTEM_INSTRUCTIONS}
 
-// Claude structured outputs intentionally support only a subset of JSON Schema.
-// Keep the complete Zod schema for validating Claude's response below, while
-// removing constraints that Anthropic's grammar compiler does not accept.
-const ANTHROPIC_UNSUPPORTED_SCHEMA_KEYWORDS = new Set([
-  "minimum",
-  "maximum",
-  "exclusiveMinimum",
-  "exclusiveMaximum",
-  "multipleOf",
-  "minLength",
-  "maxLength",
-  "minItems",
-  "maxItems",
-  "uniqueItems",
-  "contains",
-  "minContains",
-  "maxContains",
-  "minProperties",
-  "maxProperties",
-  "patternProperties",
-  "propertyNames",
-  "dependentRequired",
-  "dependentSchemas",
-  "unevaluatedProperties",
-  "unevaluatedItems",
-  "contentEncoding",
-  "contentMediaType",
-  "contentSchema",
-  "allOf",
-  "not",
-  "if",
-  "then",
-  "else",
-  "$schema",
-]);
+Cost and calculation boundary:
+- Use Claude for document understanding, classification, conflict identification, and causal reasoning.
+- Extract source-stated quantities, rates, totals, deductions, and valuation terms, but do not reconstruct or calculate claim totals.
+- The deterministic application layer performs arithmetic, reconciliation, validation, and final adjustment calculations.
+
+${ANTHROPIC_JSON_CONTRACT}`;
 
 const REQUIRED_DOCUMENTS = {
   Yacht: ["Policy", "Claim Form", "Supporting Evidence", "Registration", "Repair Invoice or Quotation", "Survey Report", "Photographs"],
@@ -67,41 +52,107 @@ const SUPPORTING_DOCUMENT_TYPES = new Set([
   "Investigation Statement", "Correspondence",
 ]);
 
-function structuredOutputSchema() {
-  const schema = structuredClone(zodResponseFormat(claimAnalysisSchema, "ula_claim_analysis").json_schema.schema);
-  const makeAnthropicCompatible = (value) => {
-    if (!value || typeof value !== "object") return;
-    if (!Array.isArray(value)) {
-      if (value.nullable === true) {
-        if (typeof value.type === "string") value.type = [value.type, "null"];
-        else if (Array.isArray(value.type) && !value.type.includes("null")) value.type.push("null");
-        delete value.nullable;
-      }
-      for (const keyword of ANTHROPIC_UNSUPPORTED_SCHEMA_KEYWORDS) delete value[keyword];
-    }
-    Object.values(value).forEach(makeAnthropicCompatible);
-  };
-  makeAnthropicCompatible(schema);
+const closedObject = (properties) => ({
+  type: "object",
+  properties,
+  required: Object.keys(properties),
+  additionalProperties: false,
+});
+const arrayOf = (items) => ({ type: "array", items });
+const nullable = (type) => ({ type: [type, "null"] });
+const sourceOutputSchema = () => closedObject({
+  document_id: { type: "string" },
+  document_name: { type: "string" },
+  page: nullable("integer"),
+  supporting_text: { type: "string" },
+  confidence: { type: "number" },
+  evidence_mode: { type: "string" },
+});
 
-  // openai's Zod helper emits an unreferenced duplicate of the complete root
-  // schema. Sending it makes Anthropic compile the same grammar twice and can
-  // exceed Claude's structured-output complexity limit.
-  const referencedDefinitions = new Set();
-  const findDefinitionReferences = (value) => {
-    if (!value || typeof value !== "object") return;
-    if (typeof value.$ref === "string" && value.$ref.startsWith("#/definitions/")) {
-      referencedDefinitions.add(value.$ref.slice("#/definitions/".length));
-    }
-    Object.entries(value).forEach(([key, child]) => {
-      if (key !== "definitions") findDefinitionReferences(child);
-    });
-  };
-  findDefinitionReferences(schema);
-  for (const name of referencedDefinitions) findDefinitionReferences(schema.definitions?.[name]);
-  for (const name of Object.keys(schema.definitions || {})) {
-    if (!referencedDefinitions.has(name)) delete schema.definitions[name];
+// This deliberately constrains structure and primitive types only. The full
+// enums, numeric bounds, and evidence rules remain enforced by the canonical
+// Zod schema after parsing. Omitting large enums keeps Anthropic's compiled
+// grammar below its complexity ceiling without weakening local validation.
+function structuredOutputSchema() {
+  const sources = () => arrayOf(sourceOutputSchema());
+  return closedObject({
+    classification: closedObject({
+      business_line: { type: "string" },
+      confidence: { type: "number" },
+      rationale: { type: "string" },
+      sources: sources(),
+    }),
+    document_types: arrayOf(closedObject({
+      document_type: { type: "string" },
+      confidence: { type: "number" },
+      sufficient_information: { type: "boolean" },
+      rationale: { type: "string" },
+      sources: sources(),
+    })),
+    fields: arrayOf(closedObject({
+      field: { type: "string" },
+      value: nullable("string"),
+      normalized_value: nullable("string"),
+      confidence: { type: "number" },
+      requires_confirmation: { type: "boolean" },
+      sources: sources(),
+    })),
+    adjustment_line_items: arrayOf(closedObject({
+      description: { type: "string" },
+      quantity: nullable("string"),
+      unit_price: nullable("string"),
+      adjusted_value: { type: "string" },
+      currency: nullable("string"),
+      basis: { type: "string" },
+      confidence: { type: "number" },
+      sources: sources(),
+    })),
+    missing_documents: arrayOf(closedObject({
+      document_type: { type: "string" },
+      reason: { type: "string" },
+      missing_information: arrayOf({ type: "string" }),
+    })),
+    evidence_findings: arrayOf(closedObject({
+      finding: { type: "string" },
+      confidence: { type: "number" },
+      sources: sources(),
+    })),
+    summary: { type: "string" },
+    warnings: arrayOf({ type: "string" }),
+    human_review_required: arrayOf({ type: "string" }),
+  });
+}
+
+function resolveMaxOutputTokens(value, model = DEFAULT_MODEL) {
+  if (value === undefined || value === null || String(value).trim() === "") {
+    return DEFAULT_MAX_OUTPUT_TOKENS;
   }
-  return schema;
+  const parsed = Number(value);
+  if (!Number.isInteger(parsed) || parsed < 1_024) {
+    throw new RangeError("ANTHROPIC_MAX_OUTPUT_TOKENS must be an integer of at least 1024.");
+  }
+  const maximum = model === "claude-sonnet-4-6"
+    ? MAX_SONNET_4_6_OUTPUT_TOKENS
+    : DEFAULT_MAX_OUTPUT_TOKENS;
+  if (parsed > maximum) {
+    throw new RangeError(`ANTHROPIC_MAX_OUTPUT_TOKENS cannot exceed ${maximum} for ${model}.`);
+  }
+  return parsed;
+}
+
+function completeUnsupportedClaimFields(parsed) {
+  const returnedFields = new Set(parsed.fields.map((field) => field.field));
+  const unsupportedFields = CLAIM_FIELDS
+    .filter((field) => !returnedFields.has(field))
+    .map((field) => ({
+      field,
+      value: null,
+      normalized_value: null,
+      confidence: 0,
+      requires_confirmation: true,
+      sources: [],
+    }));
+  return { ...parsed, fields: [...parsed.fields, ...unsupportedFields] };
 }
 
 const normalizeForMatch = (value) => String(value || "")
@@ -326,6 +377,78 @@ function providerError(status, body, requestId) {
   return error;
 }
 
+function transportErrorMetadata(error) {
+  const nestedErrors = Array.isArray(error?.cause?.errors) ? error.cause.errors : [];
+  const directCause = error?.cause;
+  const cause = directCause?.code ? directCause : nestedErrors[0] || directCause || (error?.code ? error : null);
+  return {
+    error_name: error?.name || null,
+    error_message: error?.message || null,
+    cause_name: cause?.name || null,
+    cause_message: cause?.message || null,
+    cause_code: cause?.code || null,
+    nested_cause_codes: [...new Set(nestedErrors.map((item) => item?.code).filter(Boolean))],
+  };
+}
+
+function networkError(error, { phase = "unknown", elapsedMs = null } = {}) {
+  const metadata = transportErrorMetadata(error);
+  const detail = metadata.cause_code || metadata.cause_message || metadata.error_message || "unknown network error";
+  const wrapped = new Error(`Anthropic network request failed: ${error?.message || "fetch failed"} (${detail}).`);
+  wrapped.cause = error;
+  wrapped.isProviderError = true;
+  wrapped.isNetworkError = true;
+  wrapped.transportPhase = phase;
+  wrapped.elapsedMs = elapsedMs;
+  wrapped.causeCode = metadata.cause_code;
+  return wrapped;
+}
+
+function logTransportFailure(error, context) {
+  const metadata = { ...context, ...transportErrorMetadata(error) };
+  safeAiDiagnosticLog("[ULA Anthropic transport failure]", metadata);
+  return networkError(error, { phase: context.phase, elapsedMs: context.elapsed_ms });
+}
+
+function parseAnthropicEventStream(responseText) {
+  let message = null;
+  for (const frame of String(responseText || "").split(/\r?\n\r?\n/)) {
+    const data = frame.split(/\r?\n/)
+      .filter((line) => line.startsWith("data:"))
+      .map((line) => line.slice(5).trimStart())
+      .join("\n");
+    if (!data || data === "[DONE]") continue;
+    let event;
+    try {
+      event = JSON.parse(data);
+    } catch (error) {
+      throw new Error(`Anthropic returned an unreadable streaming event: ${error.message}`);
+    }
+    if (event.type === "error") return event;
+    if (event.type === "message_start") {
+      message = { ...event.message, content: [...(event.message?.content || [])] };
+      continue;
+    }
+    if (!message) continue;
+    if (event.type === "content_block_start") {
+      message.content[event.index] = { ...event.content_block };
+    } else if (event.type === "content_block_delta" && event.delta?.type === "text_delta") {
+      const block = message.content[event.index] || { type: "text", text: "" };
+      message.content[event.index] = { ...block, text: `${block.text || ""}${event.delta.text || ""}` };
+    } else if (event.type === "message_delta") {
+      Object.assign(message, event.delta || {});
+      message.usage = { ...(message.usage || {}), ...(event.usage || {}) };
+    }
+  }
+  return message || {};
+}
+
+function parseAnthropicResponseBody(responseText, contentType = "") {
+  const isEventStream = contentType.toLowerCase().includes("text/event-stream")
+    || /^\s*(?:event|data):/m.test(responseText);
+  return isEventStream ? parseAnthropicEventStream(responseText) : JSON.parse(responseText || "{}");
+}
+
 const canonicalEnumValue = (value, allowed) => {
   if (typeof value !== "string") return value;
   return allowed.find((candidate) => candidate.toLocaleLowerCase() === value.toLocaleLowerCase()) || value;
@@ -365,9 +488,7 @@ function anthropicTextCandidates(body) {
   const blocks = body.content
     .filter((block) => block?.type === "text" && typeof block.text === "string" && block.text.trim())
     .map((block) => block.text);
-  if (blocks.length < 2) return blocks;
-  const combined = blocks.join("");
-  return [combined, ...blocks.filter((block) => block !== combined)];
+  return blocks.length ? [blocks.join("")] : [];
 }
 
 function successfulResponseError(body, status, requestId) {
@@ -408,89 +529,184 @@ function parseAnthropicStructuredResponse(body, status, requestId) {
   const candidates = anthropicTextCandidates(body);
   if (!candidates.length) throw successfulResponseError(body, status, requestId);
 
-  let lastError;
-  for (const outputText of candidates) {
-    try {
-      return claimAnalysisSchema.parse(normalizeAnthropicEnumCasing(JSON.parse(outputText)));
-    } catch (error) {
-      lastError = error;
-    }
+  const outputText = candidates[0];
+  let decoded;
+  try {
+    decoded = JSON.parse(outputText);
+  } catch (error) {
+    throw providerError(status, {
+      message: `Claude structured output JSON parse failed: ${error.message}`,
+      type: "invalid_structured_json",
+    }, requestId);
   }
-  throw providerError(status, {
-    message: `Claude returned invalid structured analysis: ${lastError?.message || "The response was not valid JSON."}`,
-    type: "invalid_structured_output",
-  }, requestId);
+  const validation = claimAnalysisSchema.safeParse(normalizeAnthropicEnumCasing(decoded));
+  if (!validation.success) {
+    const issues = validation.error.issues.slice(0, 12).map((issue) => {
+      const path = issue.path.length ? issue.path.join(".") : "root";
+      return `${path}: ${issue.message}`;
+    });
+    throw providerError(status, {
+      message: `Claude structured output schema validation failed: ${issues.join("; ")}`,
+      type: "invalid_structured_schema",
+    }, requestId);
+  }
+  return completeUnsupportedClaimFields(validation.data);
 }
 
 function contentBlocks(claim, evidence, files, styleReferences) {
   const content = [{
     type: "text",
-    text: `${promptText(claim, evidence, styleReferences)}\n\nReturn one fields entry for every supported claim field. Use null for every fact not supported by uploaded evidence. Keep source excerpts short and exact.`,
+    text: `${promptText(claim, evidence, styleReferences)}\n\nReturn only evidence-supported non-null fields; missing fields are completed locally. Preserve every material distinct finding and conflict, but do not duplicate narrative or citations.`,
   }];
+  const sentImageHashes = new Set();
+  const includeImage = (buffer) => {
+    const fingerprint = crypto.createHash("sha256").update(buffer).digest("hex");
+    if (sentImageHashes.has(fingerprint)) return false;
+    sentImageHashes.add(fingerprint);
+    return true;
+  };
   evidence.forEach((item, index) => {
     const file = files[index];
     if (!file) return;
-    if (item.kind === "pdf") {
-      content.push({
-        type: "document",
-        source: { type: "base64", media_type: "application/pdf", data: file.buffer.toString("base64") },
-        title: item.document_name,
-      });
-    } else if (item.kind === "image") {
+    if (item.kind === "image" && includeImage(file.buffer)) {
       content.push({
         type: "image",
         source: { type: "base64", media_type: item.mime_type, data: file.buffer.toString("base64") },
       });
     }
-    (item.embedded_images || []).forEach((embedded) => content.push({
-      type: "image",
-      source: { type: "base64", media_type: embedded.mime_type, data: embedded.buffer.toString("base64") },
-    }));
+    (item.vision_images || []).forEach((pageImage) => {
+      if (!includeImage(pageImage.buffer)) return;
+      content.push({ type: "text", text: `[Visual evidence: ${item.document_name}, page ${pageImage.page}]` });
+      content.push({
+        type: "image",
+        source: { type: "base64", media_type: pageImage.mime_type, data: pageImage.buffer.toString("base64") },
+      });
+    });
+    (item.embedded_images || []).forEach((embedded) => {
+      if (!includeImage(embedded.buffer)) return;
+      content.push({ type: "text", text: `[Embedded visual evidence: ${item.document_name}, ${embedded.name || "image"}]` });
+      content.push({
+        type: "image",
+        source: { type: "base64", media_type: embedded.mime_type, data: embedded.buffer.toString("base64") },
+      });
+    });
   });
   return content;
 }
 
-export function createAnthropicProvider({ apiKey, model, fetchImpl = globalThis.fetch, endpoint = ANTHROPIC_MESSAGES_URL } = {}) {
+function buildAnthropicRequestBody({ model, maxOutputTokens, claim, evidence, files, styleReferences = [] }) {
+  return {
+    model,
+    max_tokens: maxOutputTokens,
+    stream: true,
+    output_config: {
+      format: {
+        type: "json_schema",
+        schema: structuredOutputSchema(),
+      },
+    },
+    system: ANTHROPIC_SYSTEM_INSTRUCTIONS,
+    messages: [{ role: "user", content: contentBlocks(claim, evidence, files, styleReferences) }],
+  };
+}
+
+export function createAnthropicProvider({
+  apiKey,
+  model,
+  maxOutputTokens,
+  fetchImpl = globalThis.fetch,
+  endpoint = ANTHROPIC_MESSAGES_URL,
+} = {}) {
   const resolvedModel = model || DEFAULT_MODEL;
+  const resolvedMaxOutputTokens = resolveMaxOutputTokens(maxOutputTokens, resolvedModel);
   return {
     name: "anthropic",
     model: resolvedModel,
     async analyze({ claim, evidence, files, styleReferences = [] }) {
-      const requestBody = {
+      const prepared = prepareEvidenceForAnthropic(evidence);
+      const claimContext = prepareClaimContextForAnthropic(claim);
+      const requestBody = buildAnthropicRequestBody({
         model: resolvedModel,
-        max_tokens: DEFAULT_MAX_TOKENS,
-        system: SYSTEM_INSTRUCTIONS,
-        messages: [{ role: "user", content: contentBlocks(claim, evidence, files, styleReferences) }],
-        output_config: { format: { type: "json_schema", schema: structuredOutputSchema() } },
-      };
-      const response = await fetchImpl(endpoint, {
-        method: "POST",
-        headers: {
-          "content-type": "application/json",
-          "anthropic-version": "2023-06-01",
-          "x-api-key": apiKey,
-        },
-        body: JSON.stringify(requestBody),
+        maxOutputTokens: resolvedMaxOutputTokens,
+        claim: claimContext,
+        evidence: prepared.evidence,
+        files,
+        styleReferences,
       });
+      const requestBodyText = JSON.stringify(requestBody);
+      const requestBytes = Buffer.byteLength(requestBodyText);
+      const requestStartedAt = Date.now();
+      const transportContext = {
+        provider: "anthropic",
+        model: resolvedModel,
+        stream: true,
+        max_output_tokens: resolvedMaxOutputTokens,
+        request_bytes: requestBytes,
+      };
+      let response;
+      try {
+        response = await fetchImpl(endpoint, {
+          method: "POST",
+          headers: {
+            "content-type": "application/json",
+            "anthropic-version": "2023-06-01",
+            "x-api-key": apiKey,
+          },
+          body: requestBodyText,
+        });
+      } catch (error) {
+        throw logTransportFailure(error, {
+          ...transportContext,
+          phase: "awaiting_response_headers",
+          elapsed_ms: Date.now() - requestStartedAt,
+          http_status: null,
+          provider_request_id: null,
+        });
+      }
       const requestId = response.headers?.get?.("request-id") || response.headers?.get?.("x-request-id") || null;
-      const responseText = await response.text();
+      const responseHeadersElapsedMs = Date.now() - requestStartedAt;
+      safeAiDebugLog("[ULA AI debug] Claude response headers", {
+        http_status: response.status,
+        model: resolvedModel,
+        provider_request_id: requestId,
+        elapsed_ms: responseHeadersElapsedMs,
+      });
+      let responseText;
+      try {
+        responseText = await response.text();
+      } catch (error) {
+        throw logTransportFailure(error, {
+          ...transportContext,
+          phase: "reading_response_stream",
+          elapsed_ms: Date.now() - requestStartedAt,
+          response_headers_elapsed_ms: responseHeadersElapsedMs,
+          http_status: response.status,
+          provider_request_id: requestId,
+        });
+      }
       let body;
       try {
-        body = responseText ? JSON.parse(responseText) : {};
+        body = parseAnthropicResponseBody(
+          responseText,
+          response.headers?.get?.("content-type") || "",
+        );
       } catch (error) {
         throw providerError(response.status, {
           message: `Claude returned an unreadable response body: ${error.message}`,
           type: "invalid_response_body",
         }, requestId);
       }
-      safeAiDebugLog("[ULA AI debug] Claude raw response", body);
-      if (!response.ok) throw providerError(response.status, body, requestId);
-      const parsed = parseAnthropicStructuredResponse(body, response.status, requestId);
-      safeAiDebugLog("[ULA AI debug] Claude structured result", {
+      safeAiDebugLog("[ULA AI debug] Claude response metadata", {
+        http_status: response.status,
         model: body.model || resolvedModel,
         response_id: body.id || requestId,
-        result: parsed,
+        stop_reason: body.stop_reason || null,
+        output_tokens: body.usage?.output_tokens ?? null,
+        max_output_tokens: resolvedMaxOutputTokens,
+        elapsed_ms: Date.now() - requestStartedAt,
       });
+      if (!response.ok) throw providerError(response.status, body, requestId);
+      const parsed = parseAnthropicStructuredResponse(body, response.status, requestId);
       return {
         provider: "anthropic",
         model: body.model || resolvedModel,
@@ -504,14 +720,25 @@ export function createAnthropicProvider({ apiKey, model, fetchImpl = globalThis.
 }
 
 export const anthropicProviderInternals = {
+  completeUnsupportedClaimFields,
+  defaultMaxOutputTokens: DEFAULT_MAX_OUTPUT_TOKENS,
+  jsonContract: ANTHROPIC_JSON_CONTRACT,
+  maxSonnet46OutputTokens: MAX_SONNET_4_6_OUTPUT_TOKENS,
+  resolveMaxOutputTokens,
+  systemInstructions: ANTHROPIC_SYSTEM_INSTRUCTIONS,
   contentBlocks,
   enforceAnthropicGrounding,
   anthropicTextCandidates,
+  buildRequestBody: buildAnthropicRequestBody,
   evidenceWindows,
   normalizeAnthropicEnumCasing,
+  networkError,
+  parseAnthropicEventStream,
+  parseAnthropicResponseBody,
   parseAnthropicStructuredResponse,
   providerError,
   repairedExtractedTextSource,
+  transportErrorMetadata,
   successfulResponseError,
   structuredOutputSchema,
   verifiedSource,

@@ -48,7 +48,9 @@ function isRetryableRequestError(error) {
 function parseStructuredAnalysis(response) {
   const choice = response.choices?.[0];
   if (!choice?.message?.content) {
-    throw new Error("The AI provider returned no structured analysis.");
+    const finishReason = choice?.finish_reason ? `; finish reason: ${choice.finish_reason}` : "";
+    const refusal = choice?.message?.refusal ? `; refusal: ${choice.message.refusal}` : "";
+    throw new Error(`The AI provider returned no structured analysis${finishReason}${refusal}.`);
   }
   try {
     return claimAnalysisSchema.parse(parseStructuredJson(choice.message.content));
@@ -56,6 +58,11 @@ function parseStructuredAnalysis(response) {
     const finishReason = choice.finish_reason ? `; finish reason: ${choice.finish_reason}` : "";
     throw new Error(`The AI provider returned invalid structured output${finishReason}: ${error.message}`);
   }
+}
+
+function requiresJsonObjectCompatibility(model) {
+  const normalized = String(model || "").toLowerCase();
+  return normalized === "openrouter/free" || normalized.startsWith("google/gemma-4-");
 }
 
 function unwrapAnalysis(value) {
@@ -208,16 +215,12 @@ export function createOpenRouterProvider({
       });
 
       const responseFormat = zodResponseFormat(claimAnalysisSchema, "ula_claim_analysis");
+      const compatibilityInstructions = `${SYSTEM_INSTRUCTIONS}\n\nThe selected model does not enforce JSON Schema. Return only one valid JSON object matching this schema exactly; do not use Markdown fences:\n${JSON.stringify(responseFormat.json_schema.schema)}`;
       const requestBase = {
         temperature: 0,
         stream: false,
         max_completion_tokens: resolvedMaxCompletionTokens,
         plugins: [{ id: "response-healing" }],
-        messages: [
-          { role: "system", content: SYSTEM_INSTRUCTIONS },
-          { role: "user", content: userContent },
-        ],
-        response_format: responseFormat,
       };
       const attempts = [
         {
@@ -236,10 +239,16 @@ export function createOpenRouterProvider({
         let lastRequestError;
         for (const [index, candidateModel] of candidateModels.entries()) {
           try {
+            const useJsonObject = requiresJsonObjectCompatibility(candidateModel);
             response = await openai.chat.completions.create({
               ...requestBase,
               ...(index === 0 ? attempt : {}),
               model: candidateModel,
+              messages: [
+                { role: "system", content: useJsonObject ? compatibilityInstructions : SYSTEM_INSTRUCTIONS },
+                { role: "user", content: userContent },
+              ],
+              response_format: useJsonObject ? { type: "json_object" } : responseFormat,
             });
             responseModel = candidateModel;
             lastRequestError = null;

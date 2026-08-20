@@ -23,7 +23,7 @@ import {
   AlertDialogHeader,
   AlertDialogTitle,
 } from "@/components/ui/alert-dialog";
-import { ArrowLeft, Download, FileText, Sparkles, AlertTriangle, Save, CheckCircle, ClipboardCheck, ShieldCheck, Trash2, Cpu } from "lucide-react";
+import { ArrowLeft, Download, FileText, Sparkles, AlertTriangle, Save, CheckCircle, ClipboardCheck, ShieldCheck, Trash2 } from "lucide-react";
 import DocumentUploader from "@/components/DocumentUploader";
 import ReactMarkdown from "react-markdown";
 import { toast } from "@/components/ui/use-toast";
@@ -164,6 +164,7 @@ export default function ClaimDetail() {
   const [loading, setLoading] = useState(true);
   const [analyzing, setAnalyzing] = useState(false);
   const [analysisProgress, setAnalysisProgress] = useState({ active: false, progress: 0, stage: "", step: 1, totalSteps: 4 });
+  const [preflightStats, setPreflightStats] = useState(null);
   const [analysis, setAnalysis] = useState(null);
   const [analysisError, setAnalysisError] = useState("");
   const [selectedProvider, setSelectedProvider] = useState("");
@@ -193,19 +194,26 @@ export default function ClaimDetail() {
   const runAnalysis = async () => {
     setAnalyzing(true);
     setAnalysisError("");
-    setAnalysisProgress({ active: true, progress: 15, stage: "Ingesting evidence files & extracting OCR metadata...", step: 1, totalSteps: 4 });
-    const timer1 = setTimeout(() => {
-      setAnalysisProgress({ active: true, progress: 45, stage: "Classifying document categories & confidence scoring...", step: 2, totalSteps: 4 });
-    }, 500);
-    const timer2 = setTimeout(() => {
-      setAnalysisProgress({ active: true, progress: 75, stage: "Extracting salient facts & policy coverage positions...", step: 3, totalSteps: 4 });
-    }, 1200);
+    setPreflightStats(null);
+    setAnalysisProgress({ active: true, progress: 10, stage: "Running local safety and request-size checks...", step: 1, totalSteps: 4 });
+    let timer1;
+    let timer2;
 
     try {
       const res = await appClient.functions.invoke("analyseClaim", {
         claim_id: id,
         provider: selectedProvider,
-        disable_fallback: !enableFallback,
+        disable_fallback: selectedProvider === "anthropic" || !enableFallback,
+        on_preflight: (stats) => {
+          setPreflightStats(stats);
+          setAnalysisProgress({ active: true, progress: 25, stage: "Preflight passed. Starting protected Claude analysis...", step: 1, totalSteps: 4 });
+          timer1 = setTimeout(() => {
+            setAnalysisProgress({ active: true, progress: 45, stage: "Classifying document categories & confidence scoring...", step: 2, totalSteps: 4 });
+          }, 500);
+          timer2 = setTimeout(() => {
+            setAnalysisProgress({ active: true, progress: 75, stage: "Extracting salient facts & policy coverage positions...", step: 3, totalSteps: 4 });
+          }, 1200);
+        },
       });
       clearTimeout(timer1);
       clearTimeout(timer2);
@@ -279,7 +287,7 @@ export default function ClaimDetail() {
       </div>
 
       {analysisProgress.active && (
-        <AIAnalysisProgressCard progress={analysisProgress} />
+        <AIAnalysisProgressCard progress={analysisProgress} provider={selectedProvider} preflight={preflightStats} />
       )}
 
       <ReleaseChain claim={claim} documents={documents} reports={reports} readiness={readiness} />

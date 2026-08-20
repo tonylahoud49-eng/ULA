@@ -6,10 +6,7 @@ export function formatModelDisplayName(provider, model) {
   const m = String(model || "").toLowerCase();
 
   if (p === "anthropic" || m.includes("claude") || m.includes("sonnet")) {
-    if (m.includes("sonnet-5") || m.includes("sonnet-3-5") || m.includes("sonnet")) return "Claude 3.5 Sonnet";
-    if (m.includes("opus")) return "Claude 3.5 Opus";
-    if (m.includes("haiku")) return "Claude 3.5 Haiku";
-    return `Claude (${model || "Sonnet"})`;
+    return `Anthropic · ${model || "Claude"}`;
   }
   if (p === "gemini" || m.includes("gemini")) {
     if (m.includes("2.5-flash") || m.includes("2.5")) return "Gemini 2.5 Flash";
@@ -36,7 +33,14 @@ const STAGES = [
   { step: 4, name: "Docket Synthesis", detail: "Quantum & report draft" },
 ];
 
-export default function AIAnalysisProgressCard({ progress, className = "" }) {
+const formatBytes = (value) => {
+  const bytes = Number(value) || 0;
+  if (bytes < 1024) return `${bytes} B`;
+  if (bytes < 1024 * 1024) return `${(bytes / 1024).toFixed(1)} KB`;
+  return `${(bytes / (1024 * 1024)).toFixed(1)} MB`;
+};
+
+export default function AIAnalysisProgressCard({ progress, provider, model, preflight, className = "" }) {
   const [aiStatus, setAiStatus] = useState(null);
 
   useEffect(() => {
@@ -52,7 +56,14 @@ export default function AIAnalysisProgressCard({ progress, className = "" }) {
     };
   }, []);
 
-  const modelLabel = formatModelDisplayName(aiStatus?.provider, aiStatus?.model);
+  const selectedProviderStatus = provider
+    ? aiStatus?.configured_providers?.find((item) => item.provider === provider)
+    : null;
+  const activeProvider = provider || aiStatus?.provider;
+  const activeModel = model
+    || selectedProviderStatus?.model
+    || (activeProvider === aiStatus?.provider ? aiStatus?.model : null);
+  const modelLabel = formatModelDisplayName(activeProvider, activeModel);
   const currentStep = progress?.step || 1;
   const percentage = Math.min(100, Math.max(0, progress?.progress || 0));
 
@@ -84,6 +95,26 @@ export default function AIAnalysisProgressCard({ progress, className = "" }) {
           <span className="font-mono text-sm font-bold text-primary">{percentage}%</span>
         </div>
       </div>
+
+      {preflight && (
+        <div className="grid grid-cols-2 gap-px border-b bg-border sm:grid-cols-3" aria-label="Anthropic preflight summary">
+          {[
+            ["Documents", preflight.document_count],
+            ["Extracted text", formatBytes(preflight.extracted_text_bytes)],
+            ["Sent text", formatBytes(preflight.sent_text_characters)],
+            ["Visual inputs", preflight.sent_visual_count || 0],
+            ["Estimated input", `${Number(preflight.estimated_input_tokens || 0).toLocaleString()} tokens`],
+            ["Request size", formatBytes(preflight.estimated_request_bytes)],
+            ["Provider", preflight.selected_provider],
+            ["Model", preflight.selected_model],
+          ].map(([label, value]) => (
+            <div key={label} className="bg-background px-3 py-2">
+              <div className="docket-label text-[0.6rem] text-muted-foreground">{label}</div>
+              <div className="mt-0.5 truncate font-mono text-[0.7rem] font-semibold text-foreground">{value}</div>
+            </div>
+          ))}
+        </div>
+      )}
 
       {/* Contiguous Ruled 4-Stage Workflow Ledger */}
       <div className="grid sm:grid-cols-4 border-b bg-card">

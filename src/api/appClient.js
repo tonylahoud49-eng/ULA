@@ -497,13 +497,13 @@ const auth = {
   },
 };
 
-const buildAnalysis = async ({ claim_id: claimId, provider, model, disable_fallback }) => {
+const buildAnalysis = async ({ claim_id: claimId, provider, model, disable_fallback, on_preflight: onPreflight }) => {
   const claim = await entities.Claim.get(claimId);
   if (!claim) throw createError("Claim not found", 404);
   const documents = await entities.ClaimDocument.filter({ claim_id: claimId });
   if (!documents.length) throw createError("No documents uploaded for this claim");
 
-  const analysis = await analyzeClaimWithProvider({ claim, documents, provider, model, disable_fallback });
+  const analysis = await analyzeClaimWithProvider({ claim, documents, provider, model, disable_fallback, onPreflight });
   await Promise.all(documents.map((document) => {
     const detections = analysis.document_types
       .map((type) => ({
@@ -613,6 +613,7 @@ const buildReport = async ({ claim_id: claimId, edited_data: editedData }) => {
     evidence_count: documents.length,
     normalized_claim_record: normalizedRecord,
     business_line: normalizedRecord.business_line,
+    applicant: factValue("applicant"),
     insured_name: factValue("insured"),
     insurer: factValue("insurer"),
     broker: factValue("broker"),
@@ -620,7 +621,7 @@ const buildReport = async ({ claim_id: claimId, edited_data: editedData }) => {
     date_of_loss: factValue("date_of_loss"),
     currency: normalizedRecord.financials.currency,
     claimed_amount: normalizedRecord.financials.presented_claim,
-    adjusted_amount: normalizedRecord.financials.concluded_indemnity,
+    adjusted_amount: normalizedRecord.financials.concluded_indemnity ?? normalizedRecord.financials.provisional_indemnity,
     human_approval_required: true,
     content,
     generated_by: user.full_name || user.email,

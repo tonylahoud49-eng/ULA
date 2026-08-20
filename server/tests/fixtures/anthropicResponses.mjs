@@ -140,7 +140,7 @@ export const anthropicMessageFixture = (analysis = validAnthropicAnalysisFixture
   id: "msg_mock_structured",
   type: "message",
   role: "assistant",
-  model: "claude-sonnet-5",
+  model: "claude-sonnet-4-6",
   content: [{ type: "text", text: JSON.stringify(analysis) }],
   stop_reason: "end_turn",
   stop_sequence: null,

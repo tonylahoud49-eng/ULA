@@ -185,6 +185,11 @@ function adjustmentTotal(record) {
   const financials = record?.financials || {};
   const currency = financials.currency;
   const lines = [`Adjusted Claim Amount ${"-".repeat(55)} ${amount(financials.adjusted_claim_amount ?? financials.presented_claim, currency)}`];
+  if (numberValue(financials.valuation_uplift_amount) !== null) {
+    const upliftLabel = `Add, Policy Valuation Uplift${numberValue(financials.valuation_uplift_percent) !== null ? ` (${financials.valuation_uplift_percent}%)` : ""}`;
+    lines.push(`${upliftLabel} ${"-".repeat(Math.max(8, 65 - upliftLabel.length))} ${amount(financials.valuation_uplift_amount, currency)}`);
+    lines.push(`Claim after Valuation Uplift ${"-".repeat(45)} ${amount(financials.claim_after_valuation_uplift, currency)}`);
+  }
   for (const [label, value] of [
     ["Less, Deductible / Excess", financials.deductible],
     ["Less, Salvage", financials.salvage],
@@ -192,6 +197,9 @@ function adjustmentTotal(record) {
     ["Less, Depreciation", financials.depreciation],
   ]) {
     if (numberValue(value) !== null) lines.push(`${label} ${"-".repeat(Math.max(8, 65 - label.length))} (${amount(Math.abs(value), currency)})`);
+  }
+  if (numberValue(financials.concluded_indemnity) === null && numberValue(financials.provisional_indemnity) !== null) {
+    lines.push(`Provisional Amount after Supported Adjustments ${"-".repeat(22)} ${amount(financials.provisional_indemnity, currency)}`);
   }
   lines.push(`Concluded Indemnity ${"-".repeat(54)} ${amount(financials.concluded_indemnity, currency)}`);
   if (numberValue(financials.concluded_indemnity) !== null) lines.push(`Say, ${amountWords(financials.concluded_indemnity, currency)}`);
@@ -214,9 +222,10 @@ function conclusionParagraphs(record) {
   const items = [];
   if (numberValue(financials.concluded_indemnity) !== null && financials.arithmetic_valid) items.push(`The evidence-supported adjustment reconciles arithmetically to ${amount(financials.concluded_indemnity, financials.currency)}.`);
   else if (numberValue(financials.concluded_indemnity) !== null) items.push(`The evidence states a concluded amount of ${amount(financials.concluded_indemnity, financials.currency)}, but the available components do not fully reproduce it; the amount requires professional reconciliation.`);
+  else if (numberValue(financials.provisional_indemnity) !== null) items.push(`The supported arithmetic produces a provisional amount of ${amount(financials.provisional_indemnity, financials.currency)} after the evidenced valuation uplift and deductions. This is not a concluded indemnity; remaining adjustment inputs and coverage require professional confirmation.`);
   else items.push("The evidence does not establish every component required to calculate a concluded indemnity without assumptions.");
   if (record?.cause_assessment?.explicit_cause) items.push(`The evidence-stated cause is ${cleanText(record.cause_assessment.explicit_cause.value)}. No broader proximate-cause conclusion is inferred.${sourceLabel(record.cause_assessment.explicit_cause.sources)}`);
-  else items.push(record?.cause_assessment?.evidence_gap || "A definitive proximate cause is not established by the available evidence.");
+  else items.push(`${record?.cause_assessment?.evidence_gap || "A definitive proximate cause is not established by the available evidence."}${sourceLabel(record?.cause_assessment?.inference_sources || [])}`);
   if (record?.policy_analysis?.has_wording) items.push(`${record.policy_analysis.entries.length} relevant policy topic(s) were identified and linked to the evidence; their legal effect, compliance, and coverage response remain subject to professional review.`);
   for (const conflict of record?.conflicts || []) items.push(`Human review required: ${conflict.message}`);
   return items;
@@ -228,10 +237,11 @@ export function buildMasterReportData({ report = {}, claim = {}, issueDate } = {
   const currency = financials.currency || report.currency || claim.currency || "";
   const resolvedIssueDate = issueDate || report.issue_date || new Date(report.approved_date || report.created_date || Date.now()).toLocaleDateString("en-GB", { day: "2-digit", month: "long", year: "numeric" });
   const insured = fact(record, "insured").value || report.insured_name || claim.insured;
+  const applicant = fact(record, "applicant").value || report.applicant || claim.applicant || fact(record, "insurer").value || report.insurer || claim.insurer;
   const insurer = fact(record, "insurer").value || report.insurer || claim.insurer;
   const consignee = fact(record, "consignee").value;
   const policyNumber = fact(record, "policy_number").value || report.policy_number || claim.policy_number;
-  const commodity = fact(record, "commodity").value || claim.title;
+  const commodity = fact(record, "commodity").value;
   const from = fact(record, "voyage_from").value || fact(record, "port_of_loading").value || fact(record, "country_of_origin").value;
   const to = fact(record, "voyage_to").value || fact(record, "port_of_discharge").value || fact(record, "destination_country").value;
   const transportReference = fact(record, "bill_of_lading").value || fact(record, "air_waybill").value;
@@ -255,17 +265,18 @@ export function buildMasterReportData({ report = {}, claim = {}, issueDate } = {
     `No. ${valueOrUnknown(policyNumber)}`,
     `Insured Value / Limit: ${amount(policyValue, currency)}`,
     isPresent(policyTerms) ? cleanText(policyTerms) : "Policy wording was not established in the reviewed evidence",
+    isPresent(fact(record, "valuation_basis").value) ? `Basis of Valuation: ${cleanText(fact(record, "valuation_basis").value)}` : null,
     `Deductible / Excess: ${amount(financials.deductible, currency)}`,
-  ].join("\n");
+  ].filter(Boolean).join("\n");
   const cargoParts = [fact(record, "container_numbers").value, fact(record, "quantity").value, commodity, fact(record, "gross_weight").value].filter(isPresent);
   const arrivalParts = [fact(record, "discharge_date").value && `Discharged ${fact(record, "discharge_date").value}`, fact(record, "arrival_date").value && `Arrived ${fact(record, "arrival_date").value}`, fact(record, "delivery_date").value && `Delivered ${fact(record, "delivery_date").value}`].filter(Boolean);
   const causeSection = record.cause_assessment?.explicit_cause
     ? [`The evidence records the cause as ${cleanText(record.cause_assessment.explicit_cause.value)}.${sourceLabel(record.cause_assessment.explicit_cause.sources)}`, "No broader proximate-cause or liability conclusion is inferred beyond the cited evidence."]
-    : [record.cause_assessment?.evidence_gap || "The available evidence records loss condition but does not establish a definitive proximate cause."];
+    : [`${record.cause_assessment?.evidence_gap || "The available evidence records loss condition but does not establish a definitive proximate cause."}${sourceLabel(record.cause_assessment?.inference_sources || [])}`];
   const adequacy = financials.insured_value !== null && financials.invoice_value !== null
     ? `The documented insured value / limit is ${amount(financials.insured_value, currency)} and the documented invoice value is ${amount(financials.invoice_value, currency)}. The difference is ${amount(financials.insured_value - financials.invoice_value, currency)}; the invoice represents ${(financials.invoice_value / financials.insured_value * 100).toFixed(2)}% of the insured value / limit. The applicable valuation basis remains subject to policy review.`
     : "The available evidence does not establish both a comparable insured value and invoice value; no underinsurance conclusion is made.";
-  const summaryIntro = `At the request of ${valueOrUnknown(insurer)} (the Applicant), ULA was requested to investigate a ${valueOrUnknown(record.business_line || report.business_line || claim.business_line)} claim for ${valueOrUnknown(insured)} (the Assured), establish the evidence-supported circumstances and extent of loss, and validate the claim presented under the policy. The insured interest is ${valueOrUnknown(commodity)}. Table 1 summarises the salient claim details.`;
+  const summaryIntro = `At the request of ${valueOrUnknown(applicant)} (the Applicant), ULA was requested to investigate a ${valueOrUnknown(record.business_line || report.business_line || claim.business_line)} claim for ${valueOrUnknown(insured)} (the Assured), establish the evidence-supported circumstances and extent of loss, and validate the claim presented under the policy. The insured interest is ${valueOrUnknown(commodity)}. Table 1 summarises the salient claim details.`;
   const noteIntro = `${summaryIntro} The following report and adjustment note is based on all uploaded evidence listed in the enclosure section. No historical template fact has been used as claim evidence.`;
   const invoiceComponents = [
     financials.fob_value !== null ? `FOB ${amount(financials.fob_value, currency)}` : null,
@@ -282,16 +293,20 @@ export function buildMasterReportData({ report = {}, claim = {}, issueDate } = {
     && numberValue(financials.adjusted_claim_amount) !== numberValue(financials.presented_claim)
     ? `The damaged quantities were reconciled against the insured commercial-invoice unit prices, producing an adjusted claim amount of ${amount(financials.adjusted_claim_amount, currency)}. The deterministic valuation adjustment is ${amount(financials.valuation_adjustment, currency)}.`
     : null;
+  const valuationUpliftNarrative = financials.valuation_uplift_amount !== null
+    ? `The evidenced valuation basis adds ${financials.valuation_uplift_percent !== null ? `${financials.valuation_uplift_percent}%` : "the stated uplift"}, equal to ${amount(financials.valuation_uplift_amount, currency)}, producing ${amount(financials.claim_after_valuation_uplift, currency)} before deductible and other supported deductions.`
+    : null;
   const freightInvoiceNarrative = financials.freight_invoice_value !== null
     ? `Separate freight invoice ${valueOrUnknown(fact(record, "freight_invoice_number").value)} records ${amount(financials.freight_invoice_value, currency)} and is retained as a source valuation, not automatically treated as a claim item.`
     : null;
 
   return {
     scalars: {
-      cover_title: `${valueOrUnknown(insurer)} - ${valueOrUnknown(insured)} - ${valueOrUnknown(claim.title || commodity)}`,
+      cover_title: `${valueOrUnknown(applicant)} - ${valueOrUnknown(insured)} - ${valueOrUnknown(claim.title || commodity)}`,
       claim_number: valueOrUnknown(report.claim_number || claim.claim_number),
       version_number: valueOrUnknown(report.version_number || 1),
-      insurer: valueOrUnknown(insurer),
+      insurer: valueOrUnknown(applicant),
+      actual_insurer: valueOrUnknown(insurer),
       insured_name: valueOrUnknown(insured),
       policy_number: valueOrUnknown(policyNumber),
       issue_date: resolvedIssueDate,
@@ -313,7 +328,11 @@ export function buildMasterReportData({ report = {}, claim = {}, issueDate } = {
       consignee: factWithSource(record, "consignee"),
       cargo_details: valueOrUnknown(cargoParts.join("; ")),
       routing_details: `${valueOrUnknown(from)} / ${valueOrUnknown(to)}`,
-      carrier_details: valueOrUnknown([fact(record, "vessel_name").value, fact(record, "carrier").value].filter(isPresent).join("; ")),
+      carrier_details: valueOrUnknown([
+        fact(record, "vessel_name").value && `${fact(record, "vessel_name").value}${isPresent(fact(record, "voyage_number").value) ? ` / ${fact(record, "voyage_number").value}` : ""}`,
+        fact(record, "feeder_vessel").value && `Feeder ${fact(record, "feeder_vessel").value}${isPresent(fact(record, "feeder_voyage").value) ? ` / ${fact(record, "feeder_voyage").value}` : ""}`,
+        fact(record, "carrier").value,
+      ].filter(isPresent).join("; ")),
       arrival_delivery_details: valueOrUnknown(arrivalParts.join("; ")),
       currency: currency || "Currency",
       adjustment_total: adjustmentTotal(record),
@@ -334,6 +353,7 @@ export function buildMasterReportData({ report = {}, claim = {}, issueDate } = {
       adjustment_intro: [
         `${presentedClaimNarrative} Source valuations are not substituted for an absent claim quantum, and unknown deductions are not treated as zero.`,
         adjustedClaimNarrative,
+        valuationUpliftNarrative,
         valuationNarrative,
         freightInvoiceNarrative,
       ].filter(Boolean),

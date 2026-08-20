@@ -26,4 +26,17 @@ export function safeAiDebugLog(label, value) {
   }
 }
 
+// Operational diagnostics are intentionally available in production too. Callers
+// must pass metadata only; never pass prompts, response bodies, API keys, or files.
+export function safeAiDiagnosticLog(label, value) {
+  protectDebugStream(process.stdout);
+  protectDebugStream(process.stderr);
+  try {
+    console.error(label, JSON.stringify(value, null, 2));
+    return true;
+  } catch {
+    return false;
+  }
+}
+
 export const debugLogInternals = { protectDebugStream };

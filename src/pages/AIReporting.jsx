@@ -11,7 +11,6 @@ import {
   ShieldCheck,
   Sparkles,
   Wand2,
-  Cpu,
 } from "lucide-react";
 import { appClient } from "@/api/appClient";
 import { Button } from "@/components/ui/button";
@@ -110,6 +109,7 @@ export default function AIReporting() {
   const [documents, setDocuments] = useState([]);
   const [analyzing, setAnalyzing] = useState(false);
   const [analysisProgress, setAnalysisProgress] = useState({ active: false, progress: 0, stage: "", step: 1, totalSteps: 4 });
+  const [preflightStats, setPreflightStats] = useState(null);
   const [analysis, setAnalysis] = useState(null);
   const [analysisError, setAnalysisError] = useState("");
   const [selectedProvider, setSelectedProvider] = useState("");
@@ -199,19 +199,26 @@ export default function AIReporting() {
   const runAnalysis = async () => {
     setAnalyzing(true);
     setAnalysisError("");
-    setAnalysisProgress({ active: true, progress: 15, stage: "Ingesting evidence files & extracting OCR metadata...", step: 1, totalSteps: 4 });
-    const timer1 = setTimeout(() => {
-      setAnalysisProgress({ active: true, progress: 45, stage: "Classifying document categories & confidence scoring...", step: 2, totalSteps: 4 });
-    }, 500);
-    const timer2 = setTimeout(() => {
-      setAnalysisProgress({ active: true, progress: 75, stage: "Extracting salient facts & policy coverage positions...", step: 3, totalSteps: 4 });
-    }, 1200);
+    setPreflightStats(null);
+    setAnalysisProgress({ active: true, progress: 10, stage: "Running local safety and request-size checks...", step: 1, totalSteps: 4 });
+    let timer1;
+    let timer2;
 
     try {
       const response = await appClient.functions.invoke("analyseClaim", {
         claim_id: selectedClaimId,
         provider: selectedProvider,
-        disable_fallback: !enableFallback,
+        disable_fallback: selectedProvider === "anthropic" || !enableFallback,
+        on_preflight: (stats) => {
+          setPreflightStats(stats);
+          setAnalysisProgress({ active: true, progress: 25, stage: "Preflight passed. Starting protected Claude analysis...", step: 1, totalSteps: 4 });
+          timer1 = setTimeout(() => {
+            setAnalysisProgress({ active: true, progress: 45, stage: "Classifying document categories & confidence scoring...", step: 2, totalSteps: 4 });
+          }, 500);
+          timer2 = setTimeout(() => {
+            setAnalysisProgress({ active: true, progress: 75, stage: "Extracting salient facts & policy coverage positions...", step: 3, totalSteps: 4 });
+          }, 1200);
+        },
       });
       clearTimeout(timer1);
       clearTimeout(timer2);
@@ -332,7 +339,7 @@ export default function AIReporting() {
       {step === 2 && claim && (
         <div>
           {analyzing ? (
-            <AIAnalysisProgressCard progress={analysisProgress} className="mx-auto max-w-2xl" />
+            <AIAnalysisProgressCard progress={analysisProgress} provider={selectedProvider} preflight={preflightStats} className="mx-auto max-w-2xl" />
           ) : (
             <Card className="docket-surface p-8 text-center shadow-none">
               <FileText className="mx-auto mb-4 h-11 w-11 text-primary" />
@@ -347,7 +354,7 @@ export default function AIReporting() {
                   onEnableFallbackChange={setEnableFallback}
                   disabled={analyzing}
                 />
-                <Button onClick={runAnalysis} className="ula-gradient text-white hover:opacity-90">Run AI Analysis</Button>
+                <Button onClick={runAnalysis} disabled={analyzing} className="ula-gradient text-white hover:opacity-90">Run AI Analysis</Button>
               </div>
               <div className="mt-6 flex justify-center"><Button variant="ghost" onClick={() => setStep(1)}><ArrowLeft className="w-4 h-4 mr-2" /> Back to upload</Button></div>
             </Card>

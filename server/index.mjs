@@ -6,6 +6,15 @@ import fs from "node:fs";
 import { fileURLToPath } from "node:url";
 import { createConfiguredProvider, getAIStatus } from "./ai/provider.mjs";
 import { safeAiDebugLog } from "./ai/debugLog.mjs";
+import {
+  AnthropicPreflightError,
+  consumeAnthropicPreflightToken,
+  issueAnthropicPreflightToken,
+  requestFingerprint,
+  testAnthropicConnectivity,
+  validateAnthropicClaimLocally,
+  validateAnthropicConfiguration,
+} from "./ai/anthropicPreflight.mjs";
 import { extractEvidenceFile, evidenceText } from "./evidence/extractEvidence.mjs";
 import { loadApprovedStyleReferences } from "./ai/referenceLayer.mjs";
 import { createLeaveEmailService } from "./leave/leaveEmailService.mjs";
@@ -19,12 +28,101 @@ const maxTotalBytes = Number(process.env.AI_MAX_TOTAL_BYTES || 50 * 1024 * 1024)
 const upload = multer({ storage: multer.memoryStorage(), limits: { files: maxFiles, fileSize: maxFileBytes } });
 const app = express();
 const leaveEmailService = createLeaveEmailService();
+const anthropicAnalysisRequests = new Map();
+const anthropicAnalysisCacheMs = Number(process.env.ANTHROPIC_DUPLICATE_CACHE_MS || 10 * 60 * 1000);
 
 app.disable("x-powered-by");
 app.use(express.json({ limit: "64kb" }));
 app.get("/api/health", (_request, response) => response.json({ ok: true }));
 app.get("/api/ai/status", (_request, response) => response.json(getAIStatus()));
 app.get("/api/leave/email/status", (_request, response) => response.json(leaveEmailService.getStatus()));
+
+function anthropicPreflightFailure(response, error) {
+  return response.status(Number(error.status) || 500).json({
+    ok: false,
+    error: error.message || "Anthropic preflight failed.",
+    code: error.code || "anthropic-preflight-failed",
+    provider: "anthropic",
+    model: String(process.env.ANTHROPIC_MODEL || "") || null,
+    provider_status: error.providerStatus || null,
+    provider_request_id: error.providerRequestId || null,
+    stats: error.stats || null,
+  });
+}
+
+app.post("/api/ai/connectivity", async (_request, response) => {
+  try {
+    const connectivity = await testAnthropicConnectivity();
+    return response.json({ ok: true, server_running: true, connectivity });
+  } catch (error) {
+    return anthropicPreflightFailure(response, error);
+  }
+});
+
+app.post("/api/ai/preflight", upload.array("files", maxFiles), async (request, response) => {
+  try {
+    const configuration = validateAnthropicConfiguration();
+    const requestedProvider = String(request.body?.provider || "anthropic").toLowerCase();
+    const requestedModel = String(request.body?.model || configuration.model);
+    if (requestedProvider !== "anthropic") {
+      throw new AnthropicPreflightError("Anthropic preflight cannot validate a different provider.", {
+        code: "anthropic-provider-not-selected",
+      });
+    }
+    if (requestedModel !== configuration.model) {
+      throw new AnthropicPreflightError("The selected model does not match ANTHROPIC_MODEL.", {
+        code: "anthropic-model-mismatch",
+      });
+    }
+    const claim = JSON.parse(request.body.claim || "{}");
+    const manifest = JSON.parse(request.body.manifest || "[]");
+    const files = request.files || [];
+    const styleReferenceDirectory = process.env.ULA_REPORT_REFERENCE_DIR
+      || path.join(root, "server", "ai", "references");
+    let styleReferences;
+    try {
+      styleReferences = await loadApprovedStyleReferences(styleReferenceDirectory);
+    } catch (error) {
+      throw new AnthropicPreflightError(`A required report-reference dependency failed: ${error.message}`, {
+        status: 500,
+        code: "preflight-dependency-failed",
+      });
+    }
+    const local = await validateAnthropicClaimLocally({ claim, manifest, files, styleReferences });
+    const fingerprint = requestFingerprint({
+      claim,
+      manifest,
+      files,
+      provider: "anthropic",
+      model: configuration.model,
+    });
+    const preflightToken = issueAnthropicPreflightToken(fingerprint, local.stats);
+    return response.json({
+      ok: true,
+      server_running: true,
+      checks: {
+        configuration: true,
+        uploaded_files: true,
+        extracted_text: true,
+        request_payload: true,
+        payload_limits: true,
+        backend_dependencies: true,
+        connectivity: "deferred-to-analysis",
+      },
+      stats: local.stats,
+      connectivity: {
+        checked: false,
+        provider: "anthropic",
+        model: configuration.model,
+        http_status: null,
+        reason: "The automatic run preflight is local-only so one click makes at most one Anthropic request.",
+      },
+      preflight_token: preflightToken,
+    });
+  } catch (error) {
+    return anthropicPreflightFailure(response, error);
+  }
+});
 
 app.post("/api/leave/notifications", async (request, response) => {
   try {
@@ -52,10 +150,14 @@ app.post("/api/leave/notifications", async (request, response) => {
 
 app.post("/api/ai/analyze", upload.array("files", maxFiles), async (request, response) => {
   let activeProviderInfo = null;
+  let anthropicFingerprint = null;
   try {
-    const requestedProvider = request.body.provider || undefined;
-    const requestedModel = request.body.model || undefined;
-    const disableFallback = request.body.disable_fallback === "true" || request.body.disable_fallback === true;
+    const requestedProvider = request.body?.provider || undefined;
+    const requestedModel = request.body?.model || undefined;
+    const isAnthropicRequest = String(requestedProvider || process.env.AI_PROVIDER || "").toLowerCase() === "anthropic";
+    const disableFallback = isAnthropicRequest
+      || request.body?.disable_fallback === "true"
+      || request.body?.disable_fallback === true;
     const { status, provider } = createConfiguredProvider({
       providerName: requestedProvider,
       modelName: requestedModel,
@@ -80,6 +182,48 @@ app.post("/api/ai/analyze", upload.array("files", maxFiles), async (request, res
     const totalBytes = files.reduce((total, file) => total + file.size, 0);
     if (totalBytes > maxTotalBytes) {
       return response.status(413).json({ error: "The complete evidence set is too large for one analysis request.", code: "evidence-set-too-large" });
+    }
+    if (isAnthropicRequest) {
+      anthropicFingerprint = requestFingerprint({
+        claim,
+        manifest,
+        files,
+        provider: "anthropic",
+        model: provider.model,
+      });
+      const preflight = consumeAnthropicPreflightToken(request.body?.preflight_token, anthropicFingerprint);
+      const now = Date.now();
+      for (const [fingerprint, record] of anthropicAnalysisRequests.entries()) {
+        if (record.expiresAt < now) anthropicAnalysisRequests.delete(fingerprint);
+      }
+      const existing = anthropicAnalysisRequests.get(anthropicFingerprint);
+      if (existing?.state === "complete") {
+        return response.json({ ...existing.payload, duplicate_request_reused: true });
+      }
+      if (existing?.state === "in_flight") {
+        return response.status(409).json({
+          error: "An identical Anthropic analysis request is already in progress.",
+          code: "anthropic-duplicate-request",
+          provider: "anthropic",
+          model: provider.model,
+        });
+      }
+      anthropicAnalysisRequests.set(anthropicFingerprint, {
+        state: "in_flight",
+        expiresAt: now + anthropicAnalysisCacheMs,
+      });
+      try {
+        console.info("[ULA Anthropic estimate]", {
+          model: provider.model,
+          document_count: preflight.stats?.document_count || files.length,
+          extracted_text_characters: preflight.stats?.extracted_text_characters || null,
+          sent_text_characters: preflight.stats?.sent_text_characters || null,
+          estimated_input_tokens: preflight.stats?.estimated_input_tokens || null,
+          estimated_request_bytes: preflight.stats?.estimated_request_bytes || null,
+        });
+      } catch {
+        // Logging metadata must never affect a paid provider request.
+      }
     }
 
     const evidence = await Promise.all(files.map((file, index) => extractEvidenceFile(file, { ...manifest[index], index })));
@@ -112,7 +256,7 @@ app.post("/api/ai/analyze", upload.array("files", maxFiles), async (request, res
       .filter((item) => item.warning || item.extraction_status === "unsupported" || item.extraction_status === "failed")
       .map((item) => `${item.document_name}: ${item.warning || "The file content could not be extracted or sent for vision analysis."}`);
     result.analysis.warnings = [...new Set([...result.analysis.warnings, ...extractionWarnings])];
-    return response.json({
+    const responsePayload = {
       ...result,
       evidence_register: evidence.map(({ pages: _pages, embedded_images: _embeddedImages, vision_images: _visionImages, ...item }) => item),
       evidence_snapshot: evidence.map((item) => ({
@@ -122,8 +266,20 @@ app.post("/api/ai/analyze", upload.array("files", maxFiles), async (request, res
         extraction_status: item.extraction_status,
         pages: item.pages,
       })),
-    });
+    };
+    if (anthropicFingerprint) {
+      anthropicAnalysisRequests.set(anthropicFingerprint, {
+        state: "complete",
+        payload: responsePayload,
+        expiresAt: Date.now() + anthropicAnalysisCacheMs,
+      });
+    }
+    return response.json(responsePayload);
   } catch (error) {
+    if (anthropicFingerprint && anthropicAnalysisRequests.get(anthropicFingerprint)?.state === "in_flight") {
+      anthropicAnalysisRequests.delete(anthropicFingerprint);
+    }
+    if (error instanceof AnthropicPreflightError) return anthropicPreflightFailure(response, error);
     const errorProvider = error?.provider || activeProviderInfo?.provider || "Configured AI Provider";
     const errorModel = error?.model || activeProviderInfo?.model || "model";
     const isNetworkError = /terminated|timed?\s*out|socket|network|fetch failed|connection (?:closed|reset|error)/i.test(error?.message || "");

@@ -56,7 +56,19 @@ const xmlText = (xml) => normalizeWhitespace(
 async function renderPdfPageForVision(page, pageNumber) {
   const viewport = page.getViewport({ scale: 1.25 });
   const canvas = createCanvas(Math.ceil(viewport.width), Math.ceil(viewport.height));
-  await page.render({ canvasContext: canvas.getContext("2d"), viewport }).promise;
+  const context = canvas.getContext("2d");
+  await page.render({ canvasContext: context, viewport }).promise;
+  const pixels = context.getImageData(0, 0, canvas.width, canvas.height).data;
+  let sampled = 0;
+  let nonBlank = 0;
+  for (let index = 0; index < pixels.length; index += 4 * 16) {
+    sampled += 1;
+    const red = pixels[index];
+    const green = pixels[index + 1];
+    const blue = pixels[index + 2];
+    if (red < 242 || green < 242 || blue < 242) nonBlank += 1;
+  }
+  if (!sampled || nonBlank / sampled < 0.001) return null;
   return {
     page: pageNumber,
     mime_type: "image/jpeg",
@@ -69,7 +81,10 @@ async function extractPdf(buffer) {
   const standardFontDataUrl = fileURLToPath(
     new URL("../../node_modules/pdfjs-dist/standard_fonts/", import.meta.url),
   ).replaceAll(path.sep, "/");
-  const task = pdfjs.getDocument({ data: new Uint8Array(buffer), disableWorker: true, standardFontDataUrl });
+  const wasmUrl = fileURLToPath(
+    new URL("../../node_modules/pdfjs-dist/wasm/", import.meta.url),
+  ).replaceAll(path.sep, "/");
+  const task = pdfjs.getDocument({ data: new Uint8Array(buffer), disableWorker: true, standardFontDataUrl, wasmUrl });
   const pdf = await task.promise;
   const pages = [];
   const visionImages = [];
@@ -78,7 +93,10 @@ async function extractPdf(buffer) {
     const content = await page.getTextContent();
     const extracted = { page: pageNumber, ...pdfPageText(content.items) };
     pages.push(extracted);
-    if (!extracted.text) visionImages.push(await renderPdfPageForVision(page, pageNumber));
+    if (!extracted.text) {
+      const rendered = await renderPdfPageForVision(page, pageNumber);
+      if (rendered) visionImages.push(rendered);
+    }
   }
   return { pages, visionImages };
 }

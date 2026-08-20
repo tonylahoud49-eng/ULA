@@ -1,5 +1,5 @@
 import React, { useEffect, useState } from "react";
-import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
+import { Select, SelectContent, SelectItem, SelectTrigger } from "@/components/ui/select";
 import { Switch } from "@/components/ui/switch";
 import { formatModelDisplayName } from "@/components/AIAnalysisProgressCard";
 
@@ -22,7 +22,7 @@ export default function AIModelSelector({
         if (!active || !data) return;
         const list = data.configured_providers && data.configured_providers.length > 0
           ? data.configured_providers
-          : [{ provider: data.provider || "anthropic", model: data.model || "claude-sonnet-5" }];
+          : [{ provider: data.provider || "anthropic", model: data.model || "claude-sonnet-4-6" }];
         
         setProviders(list);
         

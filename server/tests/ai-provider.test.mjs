@@ -3,7 +3,9 @@ import assert from "node:assert/strict";
 import { createOpenAIProvider } from "../ai/providers/openaiProvider.mjs";
 import { createOpenRouterProvider } from "../ai/providers/openrouterProvider.mjs";
 import { createGeminiProvider } from "../ai/providers/geminiProvider.mjs";
-import { createAnthropicProvider } from "../ai/providers/anthropicProvider.mjs";
+import { createAnthropicProvider, anthropicProviderInternals } from "../ai/providers/anthropicProvider.mjs";
+import { CLAIM_FIELDS } from "../ai/claimAnalysisSchema.mjs";
+import { prepareEvidenceForAnthropic } from "../evidence/prepareAnthropicEvidence.mjs";
 import { getAIStatus, createConfiguredProvider } from "../ai/provider.mjs";
 import {
   anthropicMessageFixture,
@@ -56,7 +58,7 @@ test("anthropic status accepts the standard key and the existing misspelled migr
   const standard = getAIStatus({ AI_PROVIDER: "anthropic", ANTHROPIC_API_KEY: "test-key" });
   const aliased = getAIStatus({ AI_PROVIDER: "anthropic", ANTHROTIC_API_KEY: "legacy-test-key" });
   assert.equal(standard.configured, true);
-  assert.equal(standard.model, "claude-sonnet-5");
+  assert.equal(standard.model, "claude-sonnet-4-6");
   assert.equal(aliased.configured, true);
   assert.equal(aliased.provider, "anthropic");
 });
@@ -67,7 +69,7 @@ test("anthropic sends uploaded content to Messages API and retains only grounded
     request = options;
     return new Response(JSON.stringify({
       id: "msg_test",
-      model: "claude-sonnet-5",
+      model: "claude-sonnet-4-6",
       content: [{ type: "text", text: JSON.stringify(structuredAnalysis) }],
     }), { status: 200, headers: { "request-id": "req_test" } });
   };
@@ -84,7 +86,8 @@ test("anthropic sends uploaded content to Messages API and retains only grounded
     mime_type: "application/pdf",
     kind: "pdf",
     extraction_status: "vision-required",
-    pages: [],
+    pages: [{ page: 1, text: "", extraction_status: "image-only" }],
+    vision_images: [{ page: 1, mime_type: "image/jpeg", buffer: Buffer.from("scan-image") }],
   }, {
     document_id: "photo-3",
     document_name: "damage.jpg",
@@ -103,47 +106,189 @@ test("anthropic sends uploaded content to Messages API and retains only grounded
   const body = JSON.parse(request.body);
 
   assert.equal(request.headers["x-api-key"], "server-only-key");
-  assert.equal(body.model, "claude-sonnet-5");
+  assert.equal(body.model, "claude-sonnet-4-6");
+  assert.equal(body.max_tokens, 64_000);
+  assert.equal(body.stream, true);
   assert.equal(body.output_config.format.type, "json_schema");
-  const schemaText = JSON.stringify(body.output_config.format.schema);
-  for (const unsupportedKeyword of [
-    "minimum", "maximum", "exclusiveMinimum", "exclusiveMaximum", "multipleOf",
-    "minLength", "maxLength", "minItems", "maxItems", "uniqueItems", "contains",
-    "minContains", "maxContains", "minProperties", "maxProperties", "patternProperties",
-    "propertyNames", "dependentRequired", "dependentSchemas", "unevaluatedProperties",
-    "unevaluatedItems", "contentEncoding", "contentMediaType", "contentSchema", "allOf",
-    "not", "if", "then", "else", "nullable", "$schema",
-  ]) {
-    assert.equal(schemaText.includes(`\"${unsupportedKeyword}\":`), false, `${unsupportedKeyword} must not be sent to Claude`);
-  }
-  const allowedSchemaKeywords = new Set([
-    "$ref", "additionalProperties", "anyOf", "definitions", "enum", "items",
-    "properties", "required", "type",
-  ]);
-  const auditSchema = (node) => {
-    if (!node || typeof node !== "object" || Array.isArray(node)) return;
-    for (const [key, value] of Object.entries(node)) {
-      if (key === "properties" || key === "definitions") {
-        Object.values(value).forEach(auditSchema);
-        continue;
-      }
-      assert.equal(allowedSchemaKeywords.has(key), true, `Unexpected Anthropic schema keyword: ${key}`);
-      if (key !== "required" && key !== "enum" && key !== "$ref" && key !== "type") auditSchema(value);
-      if (key === "items" || key === "anyOf") {
-        (Array.isArray(value) ? value : [value]).forEach(auditSchema);
-      }
+  assert.equal(body.output_config.format.schema.additionalProperties, false);
+  assert.ok(JSON.stringify(body.output_config.format.schema).length < 5_000);
+  assert.equal(JSON.stringify(body.output_config.format.schema).includes('"enum"'), false);
+  let unionTypes = 0;
+  let optionalParameters = 0;
+  const auditSchemaComplexity = (node) => {
+    if (!node || typeof node !== "object") return;
+    if (Array.isArray(node.type)) unionTypes += 1;
+    if (node.type === "object") {
+      optionalParameters += Object.keys(node.properties || {})
+        .filter((key) => !(node.required || []).includes(key)).length;
+      assert.equal(node.additionalProperties, false);
     }
+    Object.values(node).forEach(auditSchemaComplexity);
   };
-  auditSchema(body.output_config.format.schema);
-  assert.deepEqual(body.output_config.format.schema.properties.fields.items.properties.value.type, ["string", "null"]);
-  assert.equal(body.output_config.format.schema.definitions.ula_claim_analysis, undefined);
+  auditSchemaComplexity(body.output_config.format.schema);
+  assert.equal(unionTypes, 10);
+  assert.equal(optionalParameters, 0);
+  assert.match(body.system, /Return only the structured payload/);
+  assert.match(body.system, /no Markdown fences, preface, trailing commentary, or extra keys/i);
+  assert.match(body.system, /return only evidence-supported non-null fields/i);
+  assert.match(body.system, /Never omit a material claim finding/i);
+  assert.ok(body.system.length < 15_000, "The Claude instructions and plain-text contract must stay compact");
   assert.match(body.messages[0].content[0].text, /Claimant: Example Trading SAL/);
-  assert.equal(body.messages[0].content.filter((item) => item.type === "document").length, 1);
-  assert.equal(body.messages[0].content.filter((item) => item.type === "image").length, 1);
+  assert.equal(body.messages[0].content.filter((item) => item.type === "document").length, 0);
+  assert.equal(body.messages[0].content.filter((item) => item.type === "image").length, 2);
+  assert.ok(body.messages[0].content.some((item) => item.type === "text" && /survey\.pdf, page 1/.test(item.text)));
   assert.equal(result.provider, "anthropic");
   assert.equal(result.provider_api_status, 200);
   assert.equal(result.response_id, "msg_test");
   assert.equal(result.analysis.fields[0].value, "Example Trading SAL");
+  assert.equal(result.analysis.fields.length, CLAIM_FIELDS.length);
+  assert.equal(result.analysis.fields.find((field) => field.field === "recovery_findings").value, null);
+});
+
+test("anthropic streams and locally accumulates one long-running Messages API response", async () => {
+  let requestBody;
+  const json = JSON.stringify(validAnthropicAnalysisFixture);
+  const splitAt = Math.floor(json.length / 2);
+  const sse = [
+    `event: message_start\ndata: ${JSON.stringify({
+      type: "message_start",
+      message: {
+        id: "msg_streamed",
+        type: "message",
+        role: "assistant",
+        model: "claude-sonnet-4-6",
+        content: [],
+        stop_reason: null,
+        usage: { input_tokens: 100 },
+      },
+    })}`,
+    `event: content_block_start\ndata: ${JSON.stringify({
+      type: "content_block_start",
+      index: 0,
+      content_block: { type: "text", text: "" },
+    })}`,
+    `event: content_block_delta\ndata: ${JSON.stringify({
+      type: "content_block_delta",
+      index: 0,
+      delta: { type: "text_delta", text: json.slice(0, splitAt) },
+    })}`,
+    "event: ping\ndata: {\"type\":\"ping\"}",
+    `event: content_block_delta\ndata: ${JSON.stringify({
+      type: "content_block_delta",
+      index: 0,
+      delta: { type: "text_delta", text: json.slice(splitAt) },
+    })}`,
+    "event: content_block_stop\ndata: {\"type\":\"content_block_stop\",\"index\":0}",
+    "event: message_delta\ndata: {\"type\":\"message_delta\",\"delta\":{\"stop_reason\":\"end_turn\",\"stop_sequence\":null},\"usage\":{\"output_tokens\":900}}",
+    "event: message_stop\ndata: {\"type\":\"message_stop\"}",
+  ].join("\n\n");
+  const provider = createAnthropicProvider({
+    apiKey: "server-only-key",
+    fetchImpl: async (_url, options) => {
+      requestBody = JSON.parse(options.body);
+      return new Response(sse, {
+        status: 200,
+        headers: { "content-type": "text/event-stream", "request-id": "req_streamed" },
+      });
+    },
+  });
+  const result = await provider.analyze({ claim: { id: "streamed" }, evidence: [], files: [] });
+
+  assert.equal(requestBody.stream, true);
+  assert.equal(result.response_id, "msg_streamed");
+  assert.equal(result.model, "claude-sonnet-4-6");
+  assert.equal(result.analysis.summary, validAnthropicAnalysisFixture.summary);
+  assert.equal(result.analysis.fields.length, CLAIM_FIELDS.length);
+});
+
+test("anthropic exposes the nested network cause and never retries a failed stream", async () => {
+  let calls = 0;
+  let thrown;
+  const provider = createAnthropicProvider({
+    apiKey: "server-only-key",
+    fetchImpl: async () => {
+      calls += 1;
+      const error = new TypeError("fetch failed");
+      error.cause = Object.assign(new Error("socket reset"), { code: "ECONNRESET" });
+      throw error;
+    },
+  });
+
+  await assert.rejects(
+    provider.analyze({ claim: { id: "network-failure" }, evidence: [], files: [] }),
+    (error) => {
+      thrown = error;
+      return error.isNetworkError === true && /ECONNRESET/.test(error.message);
+    },
+  );
+  assert.equal(calls, 1);
+  assert.equal(thrown.transportPhase, "awaiting_response_headers");
+  assert.equal(thrown.causeCode, "ECONNRESET");
+  assert.ok(thrown.elapsedMs >= 0);
+});
+
+test("anthropic diagnostics distinguish a response-stream reset after HTTP headers", async () => {
+  const streamError = Object.assign(new Error("peer closed the response stream"), { code: "UND_ERR_SOCKET" });
+  const provider = createAnthropicProvider({
+    apiKey: "server-only-key",
+    fetchImpl: async () => new Response(new ReadableStream({
+      start(controller) {
+        controller.enqueue(new TextEncoder().encode("event: ping\ndata: {\"type\":\"ping\"}\n\n"));
+        controller.error(streamError);
+      },
+    }), {
+      status: 200,
+      headers: { "content-type": "text/event-stream", "request-id": "req_stream_reset" },
+    }),
+  });
+  let thrown;
+  await assert.rejects(
+    provider.analyze({ claim: { id: "stream-reset" }, evidence: [], files: [] }),
+    (error) => {
+      thrown = error;
+      return error.isNetworkError === true;
+    },
+  );
+  assert.equal(thrown.transportPhase, "reading_response_stream");
+  assert.equal(thrown.causeCode, "UND_ERR_SOCKET");
+  assert.ok(thrown.elapsedMs >= 0);
+});
+
+test("anthropic diagnostics extract the first concrete Undici AggregateError cause", () => {
+  const outer = new TypeError("fetch failed");
+  outer.cause = new AggregateError([
+    Object.assign(new Error("IPv6 unreachable"), { code: "ENETUNREACH" }),
+    Object.assign(new Error("IPv4 timed out"), { code: "ETIMEDOUT" }),
+  ]);
+  const metadata = anthropicProviderInternals.transportErrorMetadata(outer);
+
+  assert.deepEqual(metadata, {
+    error_name: "TypeError",
+    error_message: "fetch failed",
+    cause_name: "Error",
+    cause_message: "IPv6 unreachable",
+    cause_code: "ENETUNREACH",
+    nested_cause_codes: ["ENETUNREACH", "ETIMEDOUT"],
+  });
+});
+
+test("anthropic output allowance is configurable locally and capped for Sonnet 4.6", async () => {
+  let requestBody;
+  const provider = createAnthropicProvider({
+    apiKey: "server-only-key",
+    maxOutputTokens: "32000",
+    fetchImpl: async (_url, options) => {
+      requestBody = JSON.parse(options.body);
+      return new Response(JSON.stringify(anthropicMessageFixture(validAnthropicAnalysisFixture)), { status: 200 });
+    },
+  });
+  await provider.analyze({ claim: { id: "configured-output" }, evidence: [], files: [] });
+  assert.equal(requestBody.max_tokens, 32_000);
+
+  assert.throws(
+    () => createAnthropicProvider({ apiKey: "server-only-key", maxOutputTokens: "128001" }),
+    /cannot exceed 128000/i,
+  );
 });
 
 test("anthropic retains content-grounded categories when citation metadata drifts", async () => {
@@ -235,7 +380,7 @@ test("anthropic retains content-grounded categories when citation metadata drift
       request = JSON.parse(options.body);
       return new Response(JSON.stringify({
         id: "msg_grounding_regression",
-        model: "claude-sonnet-5",
+        model: "claude-sonnet-4-6",
         content: [{ type: "text", text: JSON.stringify(resultFixture) }],
       }), { status: 200 });
     },
@@ -275,14 +420,14 @@ test("anthropic preserves stripped numeric constraints through application valid
     apiKey: "server-only-key",
     fetchImpl: async () => new Response(JSON.stringify({
       id: "msg_invalid",
-      model: "claude-sonnet-5",
+      model: "claude-sonnet-4-6",
       content: [{ type: "text", text: JSON.stringify(invalidAnalysis) }],
     }), { status: 200 }),
   });
 
   await assert.rejects(
     provider.analyze({ claim: { id: "claim-1" }, evidence: [], files: [] }),
-    /Claude returned invalid structured analysis/,
+    /structured output schema validation failed/,
   );
 });
 
@@ -352,7 +497,8 @@ test("regression: the last paid request fixture does not collapse grounded six-d
   });
 
   const prompt = requestBody.messages[0].content[0].text;
-  for (const document of paidRequestEvidenceFixture) {
+  const preparedEvidence = prepareEvidenceForAnthropic(paidRequestEvidenceFixture).evidence;
+  for (const document of preparedEvidence) {
     assert.match(prompt, new RegExp(document.document_id));
     assert.equal(prompt.includes(document.pages[0].text), true);
   }
@@ -425,9 +571,128 @@ test("anthropic combines non-empty text blocks before parsing structured JSON", 
   assert.equal(result.analysis.classification.confidence, 0.94);
 });
 
-test("anthropic rejects a mocked response missing required structured fields", async () => {
+test("anthropic accepts valid schema-constrained structured output", async () => {
+  let requestBody;
+  let calls = 0;
+  const provider = createAnthropicProvider({
+    apiKey: "server-only-key",
+    fetchImpl: async (_url, options) => {
+      calls += 1;
+      requestBody = JSON.parse(options.body);
+      return new Response(JSON.stringify(anthropicMessageFixture(validAnthropicAnalysisFixture)), { status: 200 });
+    },
+  });
+  const result = await provider.analyze({ claim: { id: "valid-structured" }, evidence: [], files: [] });
+
+  assert.equal(calls, 1);
+  assert.equal(requestBody.output_config.format.type, "json_schema");
+  assert.equal(result.analysis.summary, validAnthropicAnalysisFixture.summary);
+});
+
+test("Anthropic production JSON schema stays within documented constrained-output complexity limits", () => {
+  const schema = anthropicProviderInternals.structuredOutputSchema();
+  const supportedKeywords = new Set(["type", "properties", "required", "additionalProperties", "items"]);
+  let optionalParameters = 0;
+  let unionTypes = 0;
+  let closedObjects = 0;
+
+  const visit = (node) => {
+    if (!node || typeof node !== "object" || Array.isArray(node)) return;
+    for (const keyword of Object.keys(node)) assert.ok(supportedKeywords.has(keyword), `Unsupported schema keyword: ${keyword}`);
+    if (Array.isArray(node.type)) unionTypes += 1;
+    if (node.type === "object") {
+      closedObjects += 1;
+      assert.equal(node.additionalProperties, false);
+      const required = new Set(node.required || []);
+      optionalParameters += Object.keys(node.properties || {}).filter((key) => !required.has(key)).length;
+      Object.values(node.properties || {}).forEach(visit);
+    }
+    if (node.items) visit(node.items);
+  };
+  visit(schema);
+
+  assert.equal(optionalParameters, 0);
+  assert.ok(unionTypes <= 16, `Expected no more than 16 unions, received ${unionTypes}`);
+  assert.equal(unionTypes, 10);
+  assert.equal(closedObjects, 12);
+  assert.ok(JSON.stringify(schema).length < 10_000);
+});
+
+test("anthropic rejects markdown-fenced JSON locally", async () => {
+  let calls = 0;
+  const fenced = `\`\`\`json\n${JSON.stringify(validAnthropicAnalysisFixture)}\n\`\`\``;
+  const provider = createAnthropicProvider({
+    apiKey: "server-only-key",
+    fetchImpl: async () => {
+      calls += 1;
+      return new Response(JSON.stringify(anthropicMessageFixture(undefined, {
+        content: [{ type: "text", text: fenced }],
+      })), { status: 200 });
+    },
+  });
+  await assert.rejects(
+    provider.analyze({ claim: { id: "fenced" }, evidence: [], files: [] }),
+    /structured output JSON parse failed/i,
+  );
+  assert.equal(calls, 1);
+});
+
+test("anthropic rejects trailing commentary after structured JSON locally", async () => {
+  const trailing = `${JSON.stringify(validAnthropicAnalysisFixture)}\nAnalysis complete.`;
+  const provider = createAnthropicProvider({
+    apiKey: "server-only-key",
+    fetchImpl: async () => new Response(JSON.stringify(anthropicMessageFixture(undefined, {
+      content: [{ type: "text", text: trailing }],
+    })), { status: 200 }),
+  });
+  await assert.rejects(
+    provider.analyze({ claim: { id: "trailing" }, evidence: [], files: [] }),
+    /structured output JSON parse failed.*after JSON/i,
+  );
+});
+
+test("anthropic rejects malformed commas and quotes locally", async () => {
+  for (const [id, malformed] of [
+    ["comma", '{"classification":,}'],
+    ["quote", '{"classification":{"business_line":"Marine Cargo}}'],
+  ]) {
+    const provider = createAnthropicProvider({
+      apiKey: "server-only-key",
+      fetchImpl: async () => new Response(JSON.stringify(anthropicMessageFixture(undefined, {
+        content: [{ type: "text", text: malformed }],
+      })), { status: 200 }),
+    });
+    await assert.rejects(
+      provider.analyze({ claim: { id }, evidence: [], files: [] }),
+      /structured output JSON parse failed/i,
+    );
+  }
+});
+
+test("anthropic completes missing optional claim fields locally as null after validation", async () => {
+  const sparse = structuredClone(validAnthropicAnalysisFixture);
+  sparse.fields = sparse.fields.filter((field) => field.field === "insured");
+  const provider = createAnthropicProvider({
+    apiKey: "server-only-key",
+    fetchImpl: async () => new Response(JSON.stringify(anthropicMessageFixture(sparse)), { status: 200 }),
+  });
+  const result = await provider.analyze({ claim: { id: "sparse-fields" }, evidence: [], files: [] });
+  const completed = result.analysis.fields.find((field) => field.field === "recovery_findings");
+
+  assert.equal(result.analysis.fields.length, CLAIM_FIELDS.length);
+  assert.deepEqual(completed, {
+    field: "recovery_findings",
+    value: null,
+    normalized_value: null,
+    confidence: 0,
+    requires_confirmation: true,
+    sources: [],
+  });
+});
+
+test("anthropic rejects a mocked response missing required material fields", async () => {
   const missingFields = structuredClone(validAnthropicAnalysisFixture);
-  delete missingFields.summary;
+  delete missingFields.evidence_findings;
   const provider = createAnthropicProvider({
     apiKey: "server-only-key",
     fetchImpl: async () => new Response(JSON.stringify(anthropicMessageFixture(missingFields)), { status: 200 }),
@@ -435,11 +700,11 @@ test("anthropic rejects a mocked response missing required structured fields", a
 
   await assert.rejects(
     provider.analyze({ claim: { id: "missing-fields" }, evidence: [], files: [] }),
-    /Claude returned invalid structured analysis.*summary/is,
+    /structured output schema validation failed.*evidence_findings/is,
   );
 });
 
-test("anthropic rejects malformed mocked JSON without a production fallback", async () => {
+test("anthropic rejects truncated JSON without a production fallback", async () => {
   const provider = createAnthropicProvider({
     apiKey: "server-only-key",
     fetchImpl: async () => new Response(JSON.stringify(anthropicMessageFixture(undefined, {
@@ -449,7 +714,7 @@ test("anthropic rejects malformed mocked JSON without a production fallback", as
 
   await assert.rejects(
     provider.analyze({ claim: { id: "malformed" }, evidence: [], files: [] }),
-    (error) => error.isProviderError === true && /invalid structured analysis/i.test(error.message),
+    (error) => error.isProviderError === true && /structured output JSON parse failed/i.test(error.message),
   );
 });
 
@@ -794,7 +1059,8 @@ test("openrouter provider sends a Chat Completions request without sending PDF i
   assert.equal(request.max_completion_tokens, 16384);
   assert.deepEqual(request.plugins, [{ id: "response-healing" }]);
   assert.equal(request.temperature, 0);
-  assert.equal(request.response_format.json_schema.strict, true);
+  assert.equal(request.response_format.type, "json_object");
+  assert.equal(request.response_format.json_schema, undefined);
   // System message + user message
   assert.equal(request.messages.length, 2);
   assert.equal(request.messages[0].role, "system");
@@ -806,7 +1072,8 @@ test("openrouter provider sends a Chat Completions request without sending PDF i
   assert.equal(images.length, 1);
   assert.match(images[0].image_url.url, /^data:image\/jpeg;base64,/);
   // response_format should be set
-  assert.equal(request.response_format.type, "json_schema");
+  assert.equal(request.response_format.type, "json_object");
+  assert.match(request.messages[0].content, /matching this schema exactly/i);
 });
 
 test("openrouter provider retries the base model slug after a 404", async () => {
@@ -897,6 +1164,55 @@ test("openrouter retries malformed structured output with the free router fallba
   assert.equal(requests[1].models, undefined);
   assert.equal(result.model, "nvidia/nemotron-nano-9b-v2:free");
   assert.equal(result.response_id, "chatcmpl-recovered");
+});
+
+test("openrouter retries an empty Gemma response with the compatible free router fallback", async () => {
+  const requests = [];
+  const client = {
+    chat: {
+      completions: {
+        create: async (value) => {
+          requests.push(value);
+          if (requests.length === 1) {
+            return {
+              id: "chatcmpl-empty",
+              model: "google/gemma-4-26b-a4b-it:free",
+              choices: [{ finish_reason: "stop", message: { content: "" } }],
+            };
+          }
+          return {
+            id: "chatcmpl-empty-recovered",
+            model: "openrouter/free",
+            choices: [{ finish_reason: "stop", message: { content: JSON.stringify(structuredAnalysis) } }],
+          };
+        },
+      },
+    },
+  };
+  const provider = createOpenRouterProvider({
+    client,
+    model: "google/gemma-4-26b-a4b-it:free",
+    fallbackModels: "openrouter/free",
+  });
+  const evidence = [{
+    document_id: "combined-1",
+    document_name: "upload-a.docx",
+    mime_type: "text/plain",
+    kind: "text",
+    extraction_status: "extracted",
+    pages: [{ page: null, text: textSource.supporting_text }],
+  }];
+
+  const result = await provider.analyze({
+    claim: { id: "claim-1" },
+    evidence,
+    files: [{ mimetype: "text/plain", buffer: Buffer.from(textSource.supporting_text) }],
+  });
+
+  assert.equal(requests.length, 2);
+  assert.equal(requests[0].response_format.type, "json_object");
+  assert.equal(requests[1].response_format.type, "json_object");
+  assert.equal(result.response_id, "chatcmpl-empty-recovered");
 });
 
 test("openrouter retries a terminated request with the explicit fallback model", async () => {

@@ -531,6 +531,176 @@ total damage 16068`,
   assert.doesNotMatch(draft.content, /LBP 0\.00/i);
 });
 
+test("marine intact-seal shortage logic reconciles roles, survey limitations, policy tension, and valuation uplift", () => {
+  const evidence = [{
+    document_id: "marine-shortage",
+    document_name: "260613 - Documents.pdf",
+    mime_type: "application/pdf",
+    extraction_status: "extracted",
+    searchable_page_count: 10,
+    image_only_page_count: 1,
+    pages: [{
+      page: 1,
+      text: `Cover Note
+Cope Re Reference: CPRLBN-2025-0593-QAT-MAR
+Type: Marine Cargo Open Cover Reinsurance
+Assured Name: Two Trade Solutions and Sister Companies – Sierraleone
+Reassured: Arabia Insurance, Qatar
+Period: 12 months from 23 July,2025 at 00:01 to 22 July 2026 at 11:59 Hours
+Conveyances: Sea, Land`,
+    }, {
+      page: 2,
+      text: `Basis of Valuation: Invoice Value + 10%
+Conditions: All Terms, Clauses, Conditions and Settlements as follow
+Institute Cargo Clauses “A” CL. 382 dated 01.01.2009`,
+    }, {
+      page: 4,
+      text: `Including Shortage noticed on unstuffing intact container seal
+Including shortage & Loss of weight
+Exclusions:
+Excluding Mysterious and/or Unexplained Disappearance
+Excluding Mysterious Disappearance and Stocktaking losses in respect of storage risks`,
+    }, {
+      page: 5,
+      text: `Warranted Shipped under a clean Original Bill of Lading and/or Original Packing List and/or Original Commercial Invoice
+Deductibles: Bulk: 0.5% of shipment value each and every loss
+Containerized: USD 2,500 each and every loss`,
+    }, {
+      page: 13,
+      text: `Two Trade Solutions - Shipment Declarations Report - March 2026
+26 SALONE MILK SUPPLIER LIMITED Baby Food 266909987 OAKLAND EXPRESS 9667174 NETHERLANDS ROTTERDAM Warehouse in Sierra Leone via freetown Port 3 40' Dry 28-03-26 02-05-26 - - $ 238,950.00 USD $ 262,845.00`,
+    }, {
+      page: 20,
+      text: `Salone Milk Supplier Ltd
+49 Cline Street
+Invoice
+Invoice Date 28-03-2026
+Invoice Number 25006446
+Product Quality Origin Plant / Brand
+Fat Filled Powder Instant, Protein: min. 24%, Food Netherlands Snowy
+Yellow Colour grade
+Quantity Packing Price Total Amount
+81 MT 25 kg bags, Slip sheets USD 2,950.00 / MT USD 238,950.00
+Amount due USD 238,950.00
+Port of Loading Rotterdam Port of Discharge Freetown
+Vessel Name OAKLAND EXPRESS
+B/L No. 266909987 dated 28-03-2026
+Delivery Condition CFR Freetown Incoterms® 2020`,
+    }, {
+      page: 31,
+      text: `CargoSnap report Transport Report Gorinchem1
+Reference: MSKU1835000 800258285 106576
+Does the container have signs of corrosion, damage or repairs? No
+Does the container have signs of oil, fat or moisture? No
+Are there signs of pests infestations in the container? No
+Does the container have signs of dust, dirt, allergens or foreign odours? No`,
+    }, {
+      page: 41,
+      text: `DELIVERY ORDER
+Transport Document No.: 266909987
+Release To: 23800025367
+SALONE MILK SUPPLIER LIMITED
+Equipment count: 3
+MRSU6290650 40 DR Y 9'6 3720.000 KGS 27540.000 KGS Shipper Seal 106574 1080
+MSKU1835000 40 DR Y 9'6 3880.000 KGS 27540.000 KGS Shipper Seal 106576 1080
+TCKU7323602 40 DR Y 9'6 3700.000 KGS 27540.000 KGS Shipper Seal 106578 1080
+Transport Plan
+Delta Container Terminal Tanger Med 2 MVS OAKLAND EXPRESS 613E 2026-03-28 2026-04-15
+Tanger Med 2 Freetown Terminal MVS FILOTIMO 618S 2026-04-29 2026-05-11
+Cargo Description
+81 METRIC TONS INSTANT FATFILLED POWDER, DUTCH ORIGIN
+PACKING : IN 3240 BAGS OF 25 KGS NET WEIGHT EACH`,
+    }, {
+      page: 59,
+      text: `Vessel arrival (FILOTIMO / 618S)
+11 May 2026
+Discharge (FILOTIMO / 618S)
+12 May 2026
+Gate out for delivery
+05 Jun 2026
+Empty container return
+14 Jun 2026`,
+    }, {
+      page: 63,
+      text: `From: Lama Abou Ammou <lama.abouammo@eliteinsurance.org>
+Subject: Elite Ref: 113/2026
+1. Was the seal intact at delivery? – Seal intact.
+2. EIR for container with missing cartons – Attached.
+3. Damaged report issued at any port – Not available.`,
+    }, { page: 47, text: "", extraction_status: "image-only" }],
+  }];
+  const source = (page, supporting_text, evidence_mode = "document_vision") => ({
+    document_id: "marine-shortage",
+    document_name: "260613 - Documents.pdf",
+    page,
+    supporting_text,
+    confidence: 0.99,
+    evidence_mode,
+  });
+  const analysis = {
+    business_line: "Marine Cargo (Non-Reefer)",
+    fields: [
+      { field: "applicant", value: "Elite Insurance", normalized_value: "Elite Insurance", confidence: 0.95, requires_confirmation: false, sources: [source(63, "lama.abouammo@eliteinsurance.org", "extracted_text")] },
+      { field: "affected_quantity", value: "131 bags", normalized_value: "131 bags", confidence: 0.99, requires_confirmation: false, sources: [source(47, "Total Shortage: 131 out of 3,240 bags")] },
+      { field: "shortage_breakdown", value: "MSKU1835000: 30 bags; TCKU7323602: 41 bags; MRSU6290650: 60 bags", normalized_value: "MSKU1835000: 30 bags; TCKU7323602: 41 bags; MRSU6290650: 60 bags", confidence: 0.99, requires_confirmation: false, sources: [source(47, "MSKU1835000 shortage 30 bags; TCKU7323602 shortage 41 bags; MRSU6290650 60 bags")] },
+      { field: "survey_attendance_scope", value: "MRSU6290650 was physically counted during attendance; the other two containers had already been de-stuffed and their shortages rely on the consignee's counts", normalized_value: "MRSU6290650 physically counted; other two counts reported by consignee", confidence: 0.99, requires_confirmation: false, sources: [source(47, "Survey attendance was only possible for container MRSU6290650")] },
+      { field: "seal_condition", value: "Original shipper's seals intact; no signs of tampering or forced entry", normalized_value: "Original shipper's seals intact; no signs of tampering or forced entry", confidence: 0.99, requires_confirmation: false, sources: [source(47, "Containers arrived with original seals intact; no signs of tampering or forced entry")] },
+    ],
+    adjustment_line_items: [{
+      description: "Fat Filled Powder Instant - shortage",
+      quantity: "131 bags = 3.275 MT",
+      unit_price: "2950.00",
+      adjusted_value: "9661.25",
+      currency: "USD",
+      basis: "131 bags x 25 kg = 3.275 MT; 3.275 MT x invoice unit price USD 2,950.00",
+      confidence: 0.99,
+      sources: [source(47, "Total Shortage: 131 out of 3,240 bags"), source(20, "81 MT 25 kg bags, Slip sheets USD 2,950.00 / MT USD 238,950.00", "extracted_text")],
+    }],
+    document_types: [],
+    evidence_findings: [
+      { finding: "Shortage was recorded across all three containers: 30, 41, and 60 bags, totalling 131 of 3,240 bags.", confidence: 0.99, sources: [source(47, "Total Shortage: 131 out of 3,240 bags")] },
+      { finding: "Only MRSU6290650 was physically counted during ULA attendance; the other two shortage figures were based on the consignee's counts.", confidence: 0.99, sources: [source(47, "Survey attendance was only possible for container MRSU6290650")] },
+      { finding: "All three containers were reported with original seals intact and no signs of tampering or forced entry.", confidence: 0.99, sources: [source(47, "Containers arrived with original seals intact; no signs of tampering or forced entry")] },
+      { finding: "The carrier abstained from attending, and no carrier-recognised shortage certificate was established.", confidence: 0.98, sources: [source(48, "Carrier - Abstained from attending")] },
+    ],
+  };
+  const claim = { claim_number: "ULA-2026-0003", title: "New AI Claim", business_line: "Marine Cargo (Non-Reefer)" };
+  const documents = [{ id: "marine-shortage", file_name: "260613 - Documents.pdf", detected_categories: [] }];
+
+  const draft = createUnifiedReportDraft({ claim, documents, versions: [], generatedBy: "Test", analysis, evidence });
+  const record = draft.normalizedRecord;
+
+  assert.equal(record.facts.applicant.value, "Elite Insurance");
+  assert.equal(record.facts.insured.value, "Two Trade Solutions and Sister Companies – Sierraleone");
+  assert.equal(record.facts.reassured.value, "Arabia Insurance, Qatar");
+  assert.equal(record.facts.policy_number.value, "CPRLBN-2025-0593-QAT-MAR");
+  assert.equal(record.facts.policy_period.value, "12 months from 23 July,2025 at 00:01 to 22 July 2026 at 11:59 Hours");
+  assert.equal(record.facts.insured_value.value, "262,845.00");
+  assert.equal(record.facts.invoice_total.value, "238,950.00");
+  assert.equal(record.facts.valuation_uplift_percent.value, "10");
+  assert.equal(record.facts.deductible.value, "2,500");
+  assert.equal(record.facts.invoice_number.value, "25006446");
+  assert.equal(record.facts.bill_of_lading.value, "266909987");
+  assert.equal(record.facts.quantity.value, "3240 BAGS");
+  assert.equal(record.facts.gross_weight.value, "82,620 kg");
+  assert.equal(record.facts.feeder_vessel.value, "FILOTIMO");
+  assert.equal(record.facts.feeder_voyage.value, "618S");
+  assert.equal(record.financials.itemized_claim_total, 9_661.25);
+  assert.equal(record.financials.valuation_uplift_amount, 966.125);
+  assert.equal(record.financials.claim_after_valuation_uplift, 10_627.375);
+  assert.equal(record.financials.provisional_indemnity, 8_127.375);
+  assert.equal(record.financials.concluded_indemnity, null);
+  assert.ok(record.validation_checks.some((check) => check.id === "insured-valuation-basis" && check.status === "validated"));
+  assert.ok(record.policy_analysis.entries.some((entry) => entry.topic === "Intact-seal shortage extension"));
+  assert.ok(record.policy_analysis.entries.some((entry) => entry.topic === "Mysterious / unexplained disappearance exclusion"));
+  assert.match(record.cause_assessment.evidence_gap, /pre-shipment quantity discrepancy/i);
+  assert.match(record.cause_assessment.evidence_gap, /not every container count was witnessed/i);
+  assert.match(draft.content, /provisional amount of USD 8,127\.38/i);
+  assert.match(draft.content, /Two Trade Solutions and Sister Companies/);
+  assert.doesNotMatch(draft.content, /insured interest is New AI Claim/i);
+  assert.doesNotMatch(draft.content, /Conflicting evidence values were found for insured: Arabia Insurance/i);
+});
+
 test("template readiness counts normalized evidence facts and analyzed document types instead of raw claim fields only", () => {
   const requiredValues = {
     claim_number: "ULA-2026-0001",

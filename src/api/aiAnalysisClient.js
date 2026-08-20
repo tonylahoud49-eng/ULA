@@ -1,4 +1,5 @@
 import { documentStorage } from "@/api/documentStorage";
+import { analysisSingleFlightKey, runAnalysisSingleFlight } from "@/api/analysisSingleFlight";
 import { getReportTemplate } from "@/lib/reportTemplates";
 
 const createRequestError = (message, status, code) => {
@@ -12,6 +13,8 @@ const createRequestError = (message, status, code) => {
 const numericFields = new Set([
   "policy_limit",
   "insured_value",
+  "valuation_uplift_percent",
+  "valuation_uplift_amount",
   "deductible",
   "claim_amount",
   "gross_claim_amount",
@@ -109,12 +112,40 @@ export async function getActiveAIStatus() {
   } catch {
     // fallback
   }
-  return { configured: true, provider: "anthropic", model: "claude-sonnet-5", configured_providers: [] };
+  return { configured: true, provider: "anthropic", model: "claude-sonnet-4-6", configured_providers: [] };
 }
 
-export async function analyzeClaimWithProvider({ claim, documents, provider, model, disable_fallback }) {
-  const form = new FormData();
+const readResponseBody = async (response) => {
+  const responseText = await response.text();
+  let body = {};
+  try {
+    body = responseText ? JSON.parse(responseText) : {};
+  } catch {
+    body = {};
+  }
+  return { body, responseText };
+};
+
+async function analyzeClaimWithProviderOnce({ claim, documents, provider, model, disable_fallback, onPreflight }) {
+  let statusResponse;
+  try {
+    statusResponse = await fetch("/api/ai/status");
+  } catch {
+    throw createRequestError(
+      "AI analysis unavailable â€” the local analysis server is not running. Start the app with npm run dev.",
+      503,
+      "ai-server-unavailable",
+    );
+  }
+  if (!statusResponse.ok) {
+    throw createRequestError("AI analysis unavailable â€” the local analysis server health check failed.", 503, "ai-server-unavailable");
+  }
+  const status = await statusResponse.json();
+  const resolvedProvider = provider || status.provider;
+  const configuredSelection = status.configured_providers?.find((item) => item.provider === resolvedProvider);
+  const resolvedModel = model || configuredSelection?.model || (resolvedProvider === status.provider ? status.model : null);
   const manifest = [];
+  const storedFiles = [];
 
   for (const document of documents) {
     let stored;
@@ -129,7 +160,7 @@ export async function analyzeClaimWithProvider({ claim, documents, provider, mod
     }
     const index = manifest.length;
     const fileName = document.file_name || stored.name || `document-${index + 1}`;
-    form.append("files", stored.blob, fileName);
+    storedFiles.push({ blob: stored.blob, fileName });
     manifest.push({
       index,
       id: document.id,
@@ -140,15 +171,52 @@ export async function analyzeClaimWithProvider({ claim, documents, provider, mod
     });
   }
 
-  form.append("claim", JSON.stringify(claim));
-  form.append("manifest", JSON.stringify(manifest));
-  if (provider) form.append("provider", provider);
-  if (model) form.append("model", model);
-  if (disable_fallback) form.append("disable_fallback", "true");
+  const buildForm = ({ preflightToken } = {}) => {
+    const form = new FormData();
+    storedFiles.forEach((file) => form.append("files", file.blob, file.fileName));
+    form.append("claim", JSON.stringify(claim));
+    form.append("manifest", JSON.stringify(manifest));
+    if (resolvedProvider) form.append("provider", resolvedProvider);
+    if (resolvedModel) form.append("model", resolvedModel);
+    if (disable_fallback || resolvedProvider === "anthropic") form.append("disable_fallback", "true");
+    if (preflightToken) form.append("preflight_token", preflightToken);
+    return form;
+  };
+
+  let preflightToken;
+  if (resolvedProvider === "anthropic") {
+    let preflightResponse;
+    try {
+      preflightResponse = await fetch("/api/ai/preflight", { method: "POST", body: buildForm() });
+    } catch {
+      throw createRequestError(
+        "Anthropic preflight failed â€” the local analysis server is not running.",
+        503,
+        "ai-server-unavailable",
+      );
+    }
+    const { body: preflightBody } = await readResponseBody(preflightResponse);
+    if (!preflightResponse.ok || !preflightBody.ok) {
+      const error = createRequestError(
+        preflightBody.error || `Anthropic preflight failed with HTTP ${preflightResponse.status}.`,
+        preflightResponse.status,
+        preflightBody.code || "anthropic-preflight-failed",
+      );
+      error.provider = preflightBody.provider;
+      error.model = preflightBody.model;
+      error.details = preflightBody.error;
+      error.providerStatus = preflightBody.provider_status;
+      error.preflight = preflightBody.stats;
+      throw error;
+    }
+    preflightToken = preflightBody.preflight_token;
+    if (onPreflight) onPreflight({ ...preflightBody.stats, connectivity: preflightBody.connectivity });
+    await new Promise((resolve) => setTimeout(resolve, 0));
+  }
 
   let response;
   try {
-    response = await fetch("/api/ai/analyze", { method: "POST", body: form });
+    response = await fetch("/api/ai/analyze", { method: "POST", body: buildForm({ preflightToken }) });
   } catch {
     throw createRequestError(
       "AI analysis unavailable — the local analysis server is not running. Start the app with npm run dev.",
@@ -156,13 +224,7 @@ export async function analyzeClaimWithProvider({ claim, documents, provider, mod
       "ai-server-unavailable",
     );
   }
-  const responseText = await response.text();
-  let body = {};
-  try {
-    body = responseText ? JSON.parse(responseText) : {};
-  } catch {
-    body = {};
-  }
+  const { body, responseText } = await readResponseBody(response);
   if (!response.ok) {
     const nonHtmlDetails = responseText && !/^\s*</.test(responseText)
       ? ` (Details: ${responseText.slice(0, 300)})`
@@ -178,4 +240,9 @@ export async function analyzeClaimWithProvider({ claim, documents, provider, mod
     throw err;
   }
   return mapAnalysis(body);
+}
+
+export function analyzeClaimWithProvider(options) {
+  const key = analysisSingleFlightKey(options);
+  return runAnalysisSingleFlight(key, () => analyzeClaimWithProviderOnce(options));
 }
