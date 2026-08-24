@@ -2,6 +2,7 @@ import fs from "node:fs/promises";
 import path from "node:path";
 import { z } from "zod";
 import { createMicrosoftGraphMailClient, getMicrosoftGraphStatus } from "../integrations/microsoftGraphMail.mjs";
+import { createEmailJSMailClient, getEmailJSStatus } from "../integrations/emailjsMail.mjs";
 
 const emailSchema = z.string().trim().email();
 const leaveSchema = z.object({
@@ -49,9 +50,17 @@ const balances = (employee) => {
 };
 
 const detailTable = (rows) => `<table style="border-collapse:collapse;width:100%;max-width:680px">${rows.map(([label, value]) => `<tr><th style="border:1px solid #d9dde3;padding:8px;text-align:left;background:#f6f7f9">${escapeHtml(label)}</th><td style="border:1px solid #d9dde3;padding:8px">${escapeHtml(value)}</td></tr>`).join("")}</table>`;
-const shell = (title, introduction, table, link) => `<!doctype html><html><body style="font-family:Arial,sans-serif;color:#18212b;line-height:1.45"><h2>${escapeHtml(title)}</h2><p>${escapeHtml(introduction)}</p>${table}<p><a href="${escapeHtml(link)}" style="display:inline-block;padding:10px 16px;background:#0b4b78;color:#fff;text-decoration:none;border-radius:4px">Open request in ULA</a></p><p style="color:#667085;font-size:12px">Automated notification from the ULA Annual Leave / TOIL system.</p></body></html>`;
+const shell = (title, introduction, table, link) => `<!doctype html><html><body style="font-family:Arial,sans-serif;color:#18212b;line-height:1.45"><h2>${escapeHtml(title)}</h2><p>${escapeHtml(introduction)}</p>${table}<p><a href="${escapeHtml(link)}" style="display:inline-block;padding:10px 16px;background:#0b4b78;color:#fff;text-decoration:none;border-radius:4px">Open request in ULA (Feature yet to come)</a></p><p style="color:#667085;font-size:12px">Automated notification from the ULA Annual Leave / TOIL system.</p></body></html>`;
 
 const defaultState = () => ({ events: {} });
+
+const getProviderType = (env = process.env) => {
+  const explicit = String(env.LEAVE_EMAIL_PROVIDER || "").trim().toLowerCase();
+  if (explicit === "emailjs") return "emailjs";
+  if (explicit === "microsoft_graph" || explicit === "graph" || explicit === "microsoft" || explicit === "outlook") return "microsoft_graph";
+  if (env.EMAILJS_SERVICE_ID || env.EMAILJS_TEMPLATE_ID || env.EMAILJS_PUBLIC_KEY) return "emailjs";
+  return "microsoft_graph";
+};
 
 export function createLeaveEmailService({
   env = process.env,
@@ -80,9 +89,10 @@ export function createLeaveEmailService({
   };
 
   const getStatus = () => {
-    const graph = getMicrosoftGraphStatus(env);
-    const missing = [...graph.missing];
-    const invalid = [...graph.invalid];
+    const provider = getProviderType(env);
+    const providerStatus = provider === "emailjs" ? getEmailJSStatus(env) : getMicrosoftGraphStatus(env);
+    const missing = [...providerStatus.missing];
+    const invalid = [...providerStatus.invalid];
     if (!String(env.LEAVE_ADMIN_EMAIL || "").trim()) missing.push("LEAVE_ADMIN_EMAIL");
     else if (!emailSchema.safeParse(String(env.LEAVE_ADMIN_EMAIL).trim()).success) invalid.push("LEAVE_ADMIN_EMAIL");
     if (!String(env.APP_BASE_URL || "").trim()) missing.push("APP_BASE_URL");
@@ -92,7 +102,13 @@ export function createLeaveEmailService({
         if (!['http:', 'https:'].includes(url.protocol)) invalid.push("APP_BASE_URL");
       } catch { invalid.push("APP_BASE_URL"); }
     }
-    return { configured: missing.length === 0 && invalid.length === 0, missing, invalid, sender_email: graph.sender_email };
+    return {
+      provider,
+      configured: missing.length === 0 && invalid.length === 0,
+      missing,
+      invalid,
+      sender_email: providerStatus.sender_email || null,
+    };
   };
 
   const buildMessage = ({ event_type: eventType, leave, employee }) => {
@@ -112,16 +128,38 @@ export function createLeaveEmailService({
       ["Employee note / reason", leave.note || "Not provided"],
       ["Request ID", leave.id],
     ];
+    const templateParams = {
+      employee_name: leave.employee_name,
+      employee_email: leave.employee_email,
+      leave_type: leave.leave_type,
+      start_date: leave.start_date,
+      end_date: leave.end_date,
+      days: leave.days,
+      annual_balance: `${current.annual_leave ?? current.annual} days`,
+      toil_balance: `${current.toil} days`,
+      total_balance: `${current.total} days`,
+      note: leave.note || "Not provided",
+      request_id: leave.id,
+      link,
+      event_type: eventType,
+      status: leave.status,
+      decision: eventType === "submitted" ? "Pending" : (eventType === "approved" ? "Approved" : "Rejected"),
+    };
+
     if (eventType === "submitted") return {
       to: String(env.LEAVE_ADMIN_EMAIL).trim(),
+      toName: "Leave Administrator",
       subject: `[ULA Leave] Review required: ${leave.employee_name} — ${leave.leave_type}`,
       html: shell("Leave request awaiting review", "A new leave request has been saved with Pending status.", detailTable(rows), link),
+      templateParams,
     };
     const approved = eventType === "approved";
     return {
       to: employee.email,
+      toName: employee.name || leave.employee_name,
       subject: `[ULA Leave] Request ${approved ? "approved" : "rejected"}: ${leave.leave_type}`,
       html: shell(`Leave request ${approved ? "approved" : "rejected"}`, approved ? "Your request was approved and the applicable balance was updated." : "Your request was rejected. No leave balance was deducted.", detailTable(rows), link),
+      templateParams,
     };
   };
 
@@ -154,10 +192,12 @@ export function createLeaveEmailService({
       throw error;
     }
     const configuration = getStatus();
+    const provider = configuration.provider;
     if (!configuration.configured) {
-      const error = new Error(`Outlook email is not configured. Missing: ${configuration.missing.join(", ") || "none"}. Invalid: ${configuration.invalid.join(", ") || "none"}.`);
+      const providerLabel = provider === "emailjs" ? "EmailJS" : "Microsoft Graph";
+      const error = new Error(`${providerLabel} email is not configured. Missing: ${configuration.missing.join(", ") || "none"}. Invalid: ${configuration.invalid.join(", ") || "none"}.`);
       error.status = 503;
-      error.code = "microsoft-graph-unconfigured";
+      error.code = `${provider === "emailjs" ? "emailjs" : "microsoft-graph"}-unconfigured`;
       throw error;
     }
 
@@ -172,7 +212,9 @@ export function createLeaveEmailService({
     await writeState(state);
 
     try {
-      const client = createMicrosoftGraphMailClient({ env, fetchImpl, wait });
+      const client = provider === "emailjs"
+        ? createEmailJSMailClient({ env, fetchImpl, wait })
+        : createMicrosoftGraphMailClient({ env, fetchImpl, wait });
       const result = await client.sendMail({ ...buildMessage(event), idempotencyKey: event.idempotency_key });
       const delivery = { ...result, attempts, idempotency_key: event.idempotency_key, sent_at: new Date().toISOString(), updated_at: new Date().toISOString() };
       state.events[event.idempotency_key] = delivery;
@@ -181,10 +223,11 @@ export function createLeaveEmailService({
     } catch (error) {
       const delivery = {
         status: "failed",
+        provider,
         attempts,
         idempotency_key: event.idempotency_key,
         error: error.message,
-        code: error.code || "microsoft-graph-error",
+        code: error.code || `${provider}-error`,
         retryable: error.retryable === true,
         provider_status: error.providerStatus || null,
         updated_at: new Date().toISOString(),

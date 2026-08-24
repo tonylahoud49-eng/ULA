@@ -87,8 +87,9 @@ export function createMicrosoftGraphMailClient({ env = process.env, fetchImpl = 
     return token;
   };
 
-  const sendMail = async ({ to, subject, html, idempotencyKey }) => {
+  const sendMail = async ({ to, cc, subject, html, idempotencyKey }) => {
     const recipient = normalizeEmail(to);
+    const carbonCopy = cc ? normalizeEmail(cc) : null;
     if (!recipient || !subject || !html || !idempotencyKey) {
       throw new MicrosoftGraphError("Recipient, subject, HTML body, and idempotency key are required.", { status: 400, code: "invalid-email-payload" });
     }
@@ -98,6 +99,7 @@ export function createMicrosoftGraphMailClient({ env = process.env, fetchImpl = 
         subject,
         body: { contentType: "HTML", content: html },
         toRecipients: [{ emailAddress: { address: recipient } }],
+        ...(carbonCopy ? { ccRecipients: [{ emailAddress: { address: carbonCopy } }] } : {}),
         internetMessageHeaders: [{ name: "X-ULA-Idempotency-Key", value: idempotencyKey }],
       },
       saveToSentItems: true,

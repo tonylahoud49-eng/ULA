@@ -9,7 +9,10 @@ import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter, DialogT
 import { Textarea } from "@/components/ui/textarea";
 import { toast } from "@/components/ui/use-toast";
 import { calculateWorkingDays } from "@/lib/leaveWorkflow";
-import { Plus, Check, X, UserPlus, Plane, ChevronLeft, ChevronRight, RefreshCw } from "lucide-react";
+import { Plus, Check, X, UserPlus, Plane, ChevronLeft, ChevronRight, RefreshCw, Pencil, Trash2 } from "lucide-react";
+import { EmailTestDialog } from "@/components/EmailTestDialog";
+import { LeaveEmailAuditDialog } from "@/components/LeaveEmailAuditDialog";
+import { NotificationSettingsDialog } from "@/components/NotificationSettingsDialog";
 
 const MONTHS = ["January","February","March","April","May","June","July","August","September","October","November","December"];
 const DOW = ["Sun","Mon","Tue","Wed","Thu","Fri","Sat"];
@@ -25,11 +28,30 @@ export default function AnnualLeave() {
 
   const load = async () => {
     try {
-      const [employeeRecords, leaveRecords, user] = await Promise.all([
+      let [employeeRecords, leaveRecords, user] = await Promise.all([
         appClient.entities.Employee.list(),
         appClient.entities.Leave.list(),
         appClient.auth.me().catch(() => null),
       ]);
+      if (user && user.role !== "admin") {
+        let matching = employeeRecords.find(
+          (e) => (e.email && user.email && e.email.trim().toLowerCase() === user.email.trim().toLowerCase()) ||
+                 (e.name && user.full_name && e.name.trim().toLowerCase() === user.full_name.trim().toLowerCase())
+        );
+        if (!matching && (user.full_name || user.email)) {
+          matching = await appClient.entities.Employee.create({
+            name: user.full_name || user.email.split("@")[0] || "Employee",
+            email: user.email || "",
+            department: "Operations",
+            role: "Staff",
+            annual_leave_total: 15,
+            annual_leave_used: 0,
+            toil_balance: 0,
+            year: new Date().getFullYear(),
+          });
+          employeeRecords = [...employeeRecords, matching];
+        }
+      }
       setEmployees(employeeRecords);
       setLeaves(leaveRecords);
       setCurrentUser(user);
@@ -55,11 +77,17 @@ export default function AnnualLeave() {
           <h2 className="docket-title">Annual leave control</h2>
           <p className="docket-subtitle">Track the existing 15-day annual leave allowance, TOIL balances, requests, approvals, and team availability.</p>
         </div>
-        <div className="flex gap-2">
-          <AddEmployeeDialog onAdded={load} />
+        <div className="flex gap-2 items-center flex-wrap">
+          {currentUser?.role === "admin" && (
+            <>
+              <NotificationSettingsDialog />
+              <EmailTestDialog />
+              <AddEmployeeDialog onAdded={load} />
+            </>
+          )}
           <Dialog open={open} onOpenChange={setOpen}>
             <DialogTrigger asChild><Button className="ula-gradient text-white hover:opacity-90"><Plus className="w-4 h-4 mr-2" /> Request Leave</Button></DialogTrigger>
-            <LeaveRequestDialog employees={employees} onCreated={() => { setOpen(false); load(); }} />
+            <LeaveRequestDialog employees={employees} currentUser={currentUser} onCreated={() => { setOpen(false); load(); }} />
           </Dialog>
         </div>
       </div>
@@ -79,15 +107,27 @@ export default function AnnualLeave() {
               const annual = Math.max(0, (e.annual_leave_total ?? 15) - (e.annual_leave_used ?? 0));
               const total = annual + (e.toil_balance ?? 0);
               return (
-                <div key={e.id} className="flex items-center justify-between p-3 rounded-lg border border-border hover:bg-muted/30">
-                  <div>
-                    <p className="font-medium text-sm">{e.name}</p>
-                    <p className="text-xs text-muted-foreground">{e.department || "—"}</p>
+                <div key={e.id} className="flex items-center justify-between p-3 rounded-lg border border-border hover:bg-muted/30 gap-2">
+                  <div className="flex-1 min-w-0">
+                    <div className="flex items-center gap-2">
+                      <p className="font-medium text-sm truncate">{e.name}</p>
+                      {currentUser?.role === "admin" && (
+                        <EditEmployeeDialog employee={e} onUpdated={load} />
+                      )}
+                    </div>
+                    <p className="text-xs text-muted-foreground truncate">
+                      {e.email ? (
+                        <span className="font-mono text-[11px] text-slate-600">{e.email}</span>
+                      ) : (
+                        <span className="text-amber-700 font-medium text-[11px]">⚠️ No email set</span>
+                      )}
+                      {e.department ? ` • ${e.department}` : ""}
+                    </p>
                   </div>
-                  <div className="flex gap-4 text-right">
-                    <div><p className="text-xs text-muted-foreground">Annual</p><p className="font-semibold text-sm">{annual}d</p></div>
-                    <div><p className="text-xs text-muted-foreground">TOIL</p><p className="font-semibold text-sm">{e.toil_balance ?? 0}d</p></div>
-                    <div><p className="text-xs text-muted-foreground">Total</p><p className="font-semibold text-sm text-primary">{total}d</p></div>
+                  <div className="flex gap-3 text-right shrink-0">
+                    <div><p className="text-[11px] text-muted-foreground">Annual</p><p className="font-semibold text-sm">{annual}d</p></div>
+                    <div><p className="text-[11px] text-muted-foreground">TOIL</p><p className="font-semibold text-sm">{e.toil_balance ?? 0}d</p></div>
+                    <div><p className="text-[11px] text-muted-foreground">Total</p><p className="font-semibold text-sm text-primary">{total}d</p></div>
                   </div>
                 </div>
               );
@@ -124,7 +164,17 @@ export default function AnnualLeave() {
                     <td className="py-2.5 text-muted-foreground">{l.start_date}</td>
                     <td className="py-2.5 text-muted-foreground">{l.end_date}</td>
                     <td className="py-2.5 text-center">{l.days}</td>
-                    <td className="py-2.5"><LeaveBadge status={l.status} /><EmailDeliveryState leave={l} /></td>
+                    <td className="py-2.5">
+                      <div className="flex flex-col items-start gap-1">
+                        <LeaveBadge status={l.status} />
+                        <LeaveEmailAuditDialog
+                          leave={l}
+                          employee={employees.find((e) => e.id === l.employee_id)}
+                          currentUser={currentUser}
+                          onRetried={load}
+                        />
+                      </div>
+                    </td>
                     <td className="py-2.5 text-right">
                       {l.status === "Pending" && currentUser?.role === "admin" && (
                         <div className="flex justify-end gap-1">
@@ -132,7 +182,11 @@ export default function AnnualLeave() {
                           <Button size="icon" variant="ghost" title="Reject request" onClick={() => decideLeave(l, "Rejected", load)}><X className="w-4 h-4 text-red-500" /></Button>
                         </div>
                       )}
-                      {currentUser?.role === "admin" && failedEmailTarget(l) && <Button size="icon" variant="ghost" title="Retry Outlook email" onClick={() => retryLeaveEmail(l, load)}><RefreshCw className="w-4 h-4 text-amber-600" /></Button>}
+                      {currentUser?.role === "admin" && failedEmailTarget(l) && (
+                        <Button size="icon" variant="ghost" title="Retry email notification" onClick={() => retryLeaveEmail(l, load)}>
+                          <RefreshCw className="w-4 h-4 text-amber-600" />
+                        </Button>
+                      )}
                     </td>
                   </tr>
                 ))}
@@ -198,21 +252,21 @@ function failedEmailTarget(leave) {
   return null;
 }
 
-function EmailDeliveryState({ leave }) {
-  const delivery = leave.status === "Pending" ? leave.email_delivery?.admin_notification : leave.email_delivery?.employee_notification;
-  if (!delivery || delivery.status === "sent") return null;
-  const label = delivery.status === "failed" ? "Email failed" : "Email pending";
-  return <p className={`mt-1 text-[10px] ${delivery.status === "failed" ? "text-red-600" : "text-amber-700"}`} title={delivery.error || label}>{label}</p>;
-}
-
 async function decideLeave(leave, decision, reload) {
   try {
     const result = await appClient.functions.invoke("decideLeaveRequest", { request_id: leave.id, decision });
-    toast({
-      title: `Request ${decision.toLowerCase()}`,
-      description: result.data.email_error || `The employee Outlook notification was sent.`,
-      variant: result.data.email_error ? "destructive" : "default",
-    });
+    if (result.data?.email_error) {
+      toast({
+        title: `Request ${decision} (Email Failed)`,
+        description: `Leave ${decision.toLowerCase()} locally, but automated email failed: ${result.data.email_error}`,
+        variant: "destructive",
+      });
+    } else {
+      toast({
+        title: `Request ${decision} & Notified`,
+        description: `Leave ${decision.toLowerCase()} and notification email dispatched to ${leave.employee_name}.`,
+      });
+    }
   } catch (error) {
     toast({ title: "Leave request was not updated", description: error.message, variant: "destructive" });
   } finally {
@@ -225,42 +279,97 @@ async function retryLeaveEmail(leave, reload) {
   if (!target) return;
   try {
     const result = await appClient.functions.invoke("retryLeaveNotification", { request_id: leave.id, target });
-    toast({
-      title: result.data.email_error ? "Outlook email still unavailable" : "Outlook email sent",
-      description: result.data.email_error || "The notification was delivered without changing the leave request.",
-      variant: result.data.email_error ? "destructive" : "default",
-    });
+    if (result.data?.email_error) {
+      toast({
+        title: "Email Dispatch Failed",
+        description: result.data.email_error,
+        variant: "destructive",
+      });
+    } else {
+      toast({
+        title: "Notification Dispatched",
+        description: "Email was successfully delivered with single-delivery guarantee.",
+      });
+    }
   } catch (error) {
-    toast({ title: "Outlook email was not retried", description: error.message, variant: "destructive" });
+    toast({ title: "Email notification was not retried", description: error.message, variant: "destructive" });
   } finally {
     await reload();
   }
 }
 
-function LeaveRequestDialog({ employees, onCreated }) {
-  const [form, setForm] = useState({ employee_id: "", leave_type: "Annual Leave", start_date: "", end_date: "", note: "" });
+function LeaveRequestDialog({ employees, currentUser, onCreated }) {
+  const isAdmin = currentUser?.role === "admin";
+
+  const userEmployee = useMemo(() => {
+    if (!currentUser) return employees[0] || null;
+    return (
+      employees.find((e) => e.email && currentUser.email && e.email.trim().toLowerCase() === currentUser.email.trim().toLowerCase()) ||
+      employees.find((e) => e.name && currentUser.full_name && e.name.trim().toLowerCase() === currentUser.full_name.trim().toLowerCase()) ||
+      (employees.length === 1 ? employees[0] : null)
+    );
+  }, [employees, currentUser]);
+
+  const defaultEmpId = !isAdmin && userEmployee ? userEmployee.id : (isAdmin ? "" : employees[0]?.id || "");
+
+  const [form, setForm] = useState({
+    employee_id: defaultEmpId,
+    leave_type: "Annual Leave",
+    start_date: "",
+    end_date: "",
+    note: "",
+  });
+  const [employeeEmail, setEmployeeEmail] = useState("");
   const [saving, setSaving] = useState(false);
 
+  useEffect(() => {
+    if (!isAdmin && userEmployee) {
+      setForm((prev) => ({ ...prev, employee_id: userEmployee.id }));
+      setEmployeeEmail(userEmployee.email || currentUser?.email || "");
+    }
+  }, [isAdmin, userEmployee, currentUser]);
+
+  const emp = employees.find((e) => e.id === form.employee_id) || (!isAdmin ? userEmployee : null);
   const days = form.start_date && form.end_date ? calculateWorkingDays(form.start_date, form.end_date) : 0;
-  const emp = employees.find((e) => e.id === form.employee_id);
   const annualLeft = emp ? Math.max(0, (emp.annual_leave_total ?? 15) - (emp.annual_leave_used ?? 0)) : 0;
   const toilLeft = emp ? emp.toil_balance ?? 0 : 0;
   const balance = form.leave_type === "Annual Leave" ? annualLeft : toilLeft;
   const insufficient = days > balance;
 
+  const validEmpEmail = Boolean(emp?.email && /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(emp.email.trim()));
+  const validDraftEmail = /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(employeeEmail.trim());
+  const emailResolved = validEmpEmail || validDraftEmail;
+
+  const handleEmployeeChange = (id) => {
+    setForm({ ...form, employee_id: id });
+    const selected = employees.find((e) => e.id === id);
+    setEmployeeEmail(selected?.email || "");
+  };
+
   const submit = async () => {
     if (!form.employee_id || days < 1) return;
     setSaving(true);
     try {
+      if (!validEmpEmail && validDraftEmail && emp) {
+        await appClient.entities.Employee.update(emp.id, { email: employeeEmail.trim() });
+      }
       const requestId = globalThis.crypto?.randomUUID?.() || `${Date.now()}-${Math.random().toString(36).slice(2)}`;
       const result = await appClient.functions.invoke("submitLeaveRequest", { ...form, request_id: requestId, client_request_id: requestId });
       onCreated();
-      setForm({ employee_id: "", leave_type: "Annual Leave", start_date: "", end_date: "", note: "" });
-      toast({
-        title: "Leave request submitted",
-        description: result.data.email_error || "The administrator Outlook notification was sent.",
-        variant: result.data.email_error ? "destructive" : "default",
-      });
+      setForm({ employee_id: defaultEmpId, leave_type: "Annual Leave", start_date: "", end_date: "", note: "" });
+      setEmployeeEmail("");
+      if (result.data?.email_error) {
+        toast({
+          title: "Leave Saved (Email Degraded)",
+          description: `Request saved with Pending status, but notification email could not be sent: ${result.data.email_error}`,
+          variant: "destructive",
+        });
+      } else {
+        toast({
+          title: "Leave Request Submitted & Dispatched",
+          description: "Request saved as Pending and review notification email dispatched to administrator.",
+        });
+      }
     } catch (error) {
       toast({ title: "Leave request was not submitted", description: error.message, variant: "destructive" });
     } finally {
@@ -268,17 +377,51 @@ function LeaveRequestDialog({ employees, onCreated }) {
     }
   };
 
+  const modalTitle = !isAdmin || emp
+    ? `Request Leave — ${emp?.name || currentUser?.full_name || "Employee"}`
+    : "Request Leave";
+
   return (
     <DialogContent className="max-w-md">
-      <DialogHeader><DialogTitle>Request Leave</DialogTitle></DialogHeader>
+      <DialogHeader>
+        <DialogTitle>{modalTitle}</DialogTitle>
+      </DialogHeader>
       <div className="space-y-4 py-2">
-        <div>
-          <Label>Employee</Label>
-          <Select value={form.employee_id} onValueChange={(v) => setForm({ ...form, employee_id: v })}>
-            <SelectTrigger className="mt-1"><SelectValue placeholder="Select employee" /></SelectTrigger>
-            <SelectContent>{employees.map((e) => <SelectItem key={e.id} value={e.id}>{e.name}</SelectItem>)}</SelectContent>
-          </Select>
-        </div>
+        {isAdmin && (
+          <div>
+            <Label>Employee</Label>
+            <Select value={form.employee_id} onValueChange={handleEmployeeChange}>
+              <SelectTrigger className="mt-1"><SelectValue placeholder="Select employee" /></SelectTrigger>
+              <SelectContent>{employees.map((e) => <SelectItem key={e.id} value={e.id}>{e.name}</SelectItem>)}</SelectContent>
+            </Select>
+          </div>
+        )}
+
+        {emp && !validEmpEmail && (
+          <div className="p-3 rounded-lg border border-amber-300 bg-amber-50/80 text-xs space-y-1.5 animate-in fade-in-50">
+            <Label htmlFor="emp-email" className="text-amber-900 font-semibold flex items-center gap-1.5">
+              <span>{emp.name}'s Email Address *</span>
+            </Label>
+            <p className="text-[11px] text-amber-700">
+              Required so {emp.name} can receive automated decision notifications.
+            </p>
+            <Input
+              id="emp-email"
+              type="email"
+              placeholder="e.g. tony@company.com"
+              value={employeeEmail}
+              onChange={(e) => setEmployeeEmail(e.target.value)}
+              className="h-8 text-xs bg-white mt-1 border-amber-300 focus-visible:ring-amber-500"
+            />
+          </div>
+        )}
+
+        {emp && validEmpEmail && (
+          <p className="text-[11px] text-muted-foreground">
+            Notification target: <span className="font-medium text-foreground">{emp.email}</span>
+          </p>
+        )}
+
         <div>
           <Label>Leave Type</Label>
           <Select value={form.leave_type} onValueChange={(v) => setForm({ ...form, leave_type: v })}>
@@ -300,7 +443,7 @@ function LeaveRequestDialog({ employees, onCreated }) {
         {insufficient && <p className="text-xs text-red-600">Insufficient balance for this request.</p>}
       </div>
       <DialogFooter>
-        <Button onClick={submit} disabled={saving || !form.employee_id || days < 1 || insufficient} className="ula-gradient text-white hover:opacity-90">
+        <Button onClick={submit} disabled={saving || !form.employee_id || days < 1 || insufficient || !emailResolved} className="ula-gradient text-white hover:opacity-90">
           {saving ? "Submitting…" : "Submit Request"}
         </Button>
       </DialogFooter>
@@ -343,6 +486,220 @@ function AddEmployeeDialog({ onAdded }) {
         <DialogFooter>
           <Button onClick={submit} disabled={saving || !form.name || !validEmail} className="ula-gradient text-white hover:opacity-90">{saving ? "Adding…" : "Add Employee"}</Button>
         </DialogFooter>
+      </DialogContent>
+    </Dialog>
+  );
+}
+
+function EditEmployeeDialog({ employee, onUpdated }) {
+  const [open, setOpen] = useState(false);
+  const [saving, setSaving] = useState(false);
+  const [deleting, setDeleting] = useState(false);
+  const [form, setForm] = useState({
+    name: employee.name || "",
+    email: employee.email || "",
+    department: employee.department || "",
+    role: employee.role || "",
+    annual_leave_total: employee.annual_leave_total ?? 15,
+    annual_leave_used: employee.annual_leave_used ?? 0,
+    toil_balance: employee.toil_balance ?? 0,
+  });
+
+  const validEmail = /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(form.email.trim());
+
+  const handleOpen = (val) => {
+    if (val) {
+      setForm({
+        name: employee.name || "",
+        email: employee.email || "",
+        department: employee.department || "",
+        role: employee.role || "",
+        annual_leave_total: employee.annual_leave_total ?? 15,
+        annual_leave_used: employee.annual_leave_used ?? 0,
+        toil_balance: employee.toil_balance ?? 0,
+      });
+    }
+    setOpen(val);
+  };
+
+  const handleSave = async (e) => {
+    e?.preventDefault();
+    if (!form.name.trim() || !validEmail) return;
+    setSaving(true);
+    try {
+      await appClient.entities.Employee.update(employee.id, {
+        name: form.name.trim(),
+        email: form.email.trim(),
+        department: form.department.trim(),
+        role: form.role.trim(),
+        annual_leave_total: Number(form.annual_leave_total) || 15,
+        annual_leave_used: Number(form.annual_leave_used) || 0,
+        toil_balance: Number(form.toil_balance) || 0,
+      });
+      toast({
+        title: "Employee Profile Updated",
+        description: `Updated details for ${form.name} (${form.email}).`,
+      });
+      setOpen(false);
+      if (onUpdated) onUpdated();
+    } catch (err) {
+      toast({
+        title: "Update Failed",
+        description: err.message,
+        variant: "destructive",
+      });
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  const handleDelete = async () => {
+    if (!confirm(`Are you sure you want to delete ${employee.name}?`)) return;
+    setDeleting(true);
+    try {
+      await appClient.entities.Employee.delete(employee.id);
+      toast({
+        title: "Employee Removed",
+        description: `${employee.name} has been removed.`,
+      });
+      setOpen(false);
+      if (onUpdated) onUpdated();
+    } catch (err) {
+      toast({
+        title: "Delete Failed",
+        description: err.message,
+        variant: "destructive",
+      });
+    } finally {
+      setDeleting(false);
+    }
+  };
+
+  return (
+    <Dialog open={open} onOpenChange={handleOpen}>
+      <DialogTrigger asChild>
+        <button
+          type="button"
+          className="p-1 rounded text-muted-foreground hover:text-foreground hover:bg-muted transition-colors"
+          title={`Edit ${employee.name}'s profile`}
+        >
+          <Pencil className="w-3.5 h-3.5" />
+        </button>
+      </DialogTrigger>
+      <DialogContent className="max-w-md">
+        <DialogHeader>
+          <DialogTitle>Edit Employee — {employee.name}</DialogTitle>
+        </DialogHeader>
+        <form onSubmit={handleSave} className="space-y-3 py-2 text-xs">
+          <div className="space-y-1">
+            <Label>Name *</Label>
+            <Input
+              value={form.name}
+              onChange={(e) => setForm({ ...form, name: e.target.value })}
+              className="h-8 text-xs mt-0.5"
+            />
+          </div>
+          <div className="space-y-1">
+            <Label>Email Address *</Label>
+            <Input
+              type="email"
+              value={form.email}
+              onChange={(e) => setForm({ ...form, email: e.target.value })}
+              placeholder="e.g. tony@company.com"
+              className="h-8 text-xs mt-0.5"
+            />
+            {!validEmail && (
+              <p className="text-[10.5px] text-rose-600">A valid email address is required for leave notifications.</p>
+            )}
+          </div>
+          <div className="grid grid-cols-2 gap-2.5">
+            <div className="space-y-1">
+              <Label>Department</Label>
+              <Input
+                value={form.department}
+                onChange={(e) => setForm({ ...form, department: e.target.value })}
+                className="h-8 text-xs mt-0.5"
+              />
+            </div>
+            <div className="space-y-1">
+              <Label>Role</Label>
+              <Input
+                value={form.role}
+                onChange={(e) => setForm({ ...form, role: e.target.value })}
+                className="h-8 text-xs mt-0.5"
+              />
+            </div>
+          </div>
+
+          <div className="pt-2 border-t space-y-2">
+            <Label className="text-slate-900 font-semibold">Leave Allowances & Balances</Label>
+            <div className="grid grid-cols-3 gap-2">
+              <div>
+                <Label className="text-[11px] text-muted-foreground">Annual Total</Label>
+                <Input
+                  type="number"
+                  min={0}
+                  value={form.annual_leave_total}
+                  onChange={(e) => setForm({ ...form, annual_leave_total: Number(e.target.value) })}
+                  className="h-8 text-xs mt-0.5"
+                />
+              </div>
+              <div>
+                <Label className="text-[11px] text-muted-foreground">Annual Used</Label>
+                <Input
+                  type="number"
+                  min={0}
+                  value={form.annual_leave_used}
+                  onChange={(e) => setForm({ ...form, annual_leave_used: Number(e.target.value) })}
+                  className="h-8 text-xs mt-0.5"
+                />
+              </div>
+              <div>
+                <Label className="text-[11px] text-muted-foreground">TOIL Balance</Label>
+                <Input
+                  type="number"
+                  min={0}
+                  value={form.toil_balance}
+                  onChange={(e) => setForm({ ...form, toil_balance: Number(e.target.value) })}
+                  className="h-8 text-xs mt-0.5"
+                />
+              </div>
+            </div>
+          </div>
+
+          <DialogFooter className="pt-3 flex items-center justify-between sm:justify-between">
+            <Button
+              type="button"
+              variant="ghost"
+              size="sm"
+              onClick={handleDelete}
+              disabled={deleting || saving}
+              className="h-8 text-xs text-rose-600 hover:bg-rose-50 hover:text-rose-700"
+            >
+              <Trash2 className="w-3.5 h-3.5 mr-1" />
+              Delete
+            </Button>
+            <div className="flex gap-2">
+              <Button
+                type="button"
+                variant="outline"
+                size="sm"
+                onClick={() => setOpen(false)}
+                className="h-8 text-xs"
+              >
+                Cancel
+              </Button>
+              <Button
+                type="submit"
+                size="sm"
+                disabled={saving || !form.name.trim() || !validEmail}
+                className="h-8 text-xs ula-gradient text-white"
+              >
+                {saving ? "Saving…" : "Save Changes"}
+              </Button>
+            </div>
+          </DialogFooter>
+        </form>
       </DialogContent>
     </Dialog>
   );

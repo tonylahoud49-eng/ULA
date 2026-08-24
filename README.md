@@ -88,11 +88,33 @@ The application stores lightweight accounts, claim metadata, reports, employees,
 
 This persistence and authentication remain intended for development and demonstration. Production use still requires a secure server database, server-side authentication/authorization for application APIs, and durable document storage such as SharePoint or another backend. AI suggestions never silently replace claim fields; users review and save them through the existing workflow.
 
-## Outlook notifications for Annual Leave / TOIL
+## Email notifications for Annual Leave / TOIL
 
-Leave notification email is sent only by the backend through Microsoft Graph using the OAuth 2.0 client-credentials flow. Microsoft credentials and access tokens are never returned to the browser. Configure these server environment variables:
+Leave notification emails are sent securely from the backend with idempotency, automatic deduplication, and atomic balance safeguards. Two providers are supported:
+
+### 1. EmailJS Provider (Recommended / Easiest)
+Connect your Outlook, Gmail, or SMTP account directly via [EmailJS](https://www.emailjs.com/):
 
 ```dotenv
+LEAVE_EMAIL_PROVIDER=emailjs
+EMAILJS_SERVICE_ID=service_xxx
+EMAILJS_TEMPLATE_ID=template_xxx
+EMAILJS_PUBLIC_KEY=your-public-key
+EMAILJS_PRIVATE_KEY=your-private-key
+LEAVE_ADMIN_EMAIL=leave-manager@company.example
+APP_BASE_URL=http://localhost:5173
+```
+
+In your EmailJS template:
+- Subject: `{{subject}}`
+- To Email: `{{to_email}}`
+- Body: `{{{message_html}}}` (triple braces render formatted HTML directly).
+
+### 2. Microsoft Graph Provider (Alternative)
+Direct corporate Microsoft 365 OAuth 2.0 client-credentials flow (`Mail.Send` application permission):
+
+```dotenv
+LEAVE_EMAIL_PROVIDER=microsoft_graph
 MICROSOFT_TENANT_ID=your-tenant-id
 MICROSOFT_CLIENT_ID=your-application-client-id
 MICROSOFT_CLIENT_SECRET=your-client-secret
@@ -101,8 +123,4 @@ LEAVE_ADMIN_EMAIL=leave-manager@company.example
 APP_BASE_URL=http://localhost:5173
 ```
 
-`MICROSOFT_SENDER_EMAIL` must be a licensed or otherwise Graph-enabled mailbox in the tenant. `LEAVE_ADMIN_EMAIL` is the recipient that reviews new Pending requests. For a deployed application, set `APP_BASE_URL` to the public HTTPS origin with no path suffix. `LEAVE_MAIL_STATE_FILE` may optionally override the durable idempotency/delivery-status file; the default `.data/leave-email-delivery.json` is ignored by Git.
-
-Register a single-tenant application in Microsoft Entra ID and create a client secret. The only mail capability required is **Application `Mail.Send`**; no read, mailbox-settings, file, SharePoint, or calendar permission is used. The simplest Entra application-permission setup is tenant-wide and requires administrator consent. For true least-privilege mailbox scoping, the preferred production setup is an Exchange Online Application RBAC assignment for `Application Mail.Send` limited to `MICROSOFT_SENDER_EMAIL`, without a duplicate unscoped Entra `Mail.Send` grant. Microsoft documents Application Access Policies as legacy. No delegated permission, redirect URI, or callback URL is used by this implementation's client-credentials flow.
-
-The leave workflow saves the request before attempting email delivery. Failed delivery remains visible on the request and can be retried with the same idempotency key. Approval and rejection are atomic local transitions: Pending requests do not deduct balances, rejection never deducts, and approval records a permanent deduction marker so the same request cannot deduct twice. Approved requests continue to appear in the existing company calendar; no Outlook calendar permission or event is used.
+The leave workflow saves the request before attempting email delivery. Failed delivery remains visible on the request and can be retried with the same idempotency key. Approval and rejection are atomic local transitions: Pending requests do not deduct balances, rejection never deducts, and approval records a permanent deduction marker so the same request cannot deduct twice. Approved requests continue to appear in the existing company calendar.

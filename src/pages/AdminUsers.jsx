@@ -2,7 +2,11 @@ import React, { useEffect, useState } from "react";
 import { appClient } from "@/api/appClient";
 import { Card } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
-import { Shield, UserCheck, UserMinus, ShieldAlert } from "lucide-react";
+import { Input } from "@/components/ui/input";
+import { Label } from "@/components/ui/label";
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
+import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter, DialogTrigger } from "@/components/ui/dialog";
+import { Shield, UserCheck, UserMinus, ShieldAlert, UserPlus } from "lucide-react";
 import { toast } from "@/components/ui/use-toast";
 
 export default function AdminUsers() {
@@ -69,6 +73,9 @@ export default function AdminUsers() {
         <div>
           <h2 className="docket-title">User administration</h2>
           <p className="docket-subtitle">Review local accounts, manage access status, and assign administrator authority.</p>
+        </div>
+        <div>
+          <AddUserDialog onCreated={loadData} />
         </div>
       </div>
 
@@ -164,5 +171,138 @@ export default function AdminUsers() {
         </div>
       </Card>
     </div>
+  );
+}
+
+function AddUserDialog({ onCreated }) {
+  const [open, setOpen] = useState(false);
+  const [saving, setSaving] = useState(false);
+  const [form, setForm] = useState({
+    full_name: "",
+    email: "",
+    password: "password123",
+    role: "user",
+  });
+
+  const validEmail = /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(form.email.trim());
+
+  const handleSubmit = async (e) => {
+    e?.preventDefault();
+    if (!form.full_name.trim() || !validEmail) return;
+    setSaving(true);
+    try {
+      await appClient.auth.createAccount({
+        full_name: form.full_name.trim(),
+        email: form.email.trim(),
+        role: form.role,
+        status: "approved",
+        password: form.password || "password123",
+      });
+      toast({
+        title: "User Account Created",
+        description: `Account created for ${form.full_name} (${form.email}).`,
+      });
+      setOpen(false);
+      setForm({ full_name: "", email: "", password: "password123", role: "user" });
+      if (onCreated) onCreated();
+    } catch (err) {
+      toast({
+        title: "Creation Failed",
+        description: err.message,
+        variant: "destructive",
+      });
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  return (
+    <Dialog open={open} onOpenChange={setOpen}>
+      <DialogTrigger asChild>
+        <Button className="ula-gradient text-white hover:opacity-90 gap-1.5">
+          <UserPlus className="w-4 h-4" />
+          <span>Add User Account</span>
+        </Button>
+      </DialogTrigger>
+      <DialogContent className="sm:max-w-[460px]">
+        <DialogHeader>
+          <DialogTitle>Add User Account</DialogTitle>
+        </DialogHeader>
+        <form onSubmit={handleSubmit} className="space-y-3.5 py-2">
+          <div className="space-y-1.5">
+            <Label htmlFor="user-fullname" className="text-xs font-medium">
+              Full Name <span className="text-red-500">*</span>
+            </Label>
+            <Input
+              id="user-fullname"
+              required
+              placeholder="e.g. Jane Doe"
+              value={form.full_name}
+              onChange={(e) => setForm({ ...form, full_name: e.target.value })}
+              className="h-8 text-xs"
+            />
+          </div>
+          <div className="space-y-1.5">
+            <Label htmlFor="user-email" className="text-xs font-medium">
+              Email Address <span className="text-red-500">*</span>
+            </Label>
+            <Input
+              id="user-email"
+              type="email"
+              required
+              placeholder="e.g. jane@company.com"
+              value={form.email}
+              onChange={(e) => setForm({ ...form, email: e.target.value })}
+              className="h-8 text-xs"
+            />
+          </div>
+          <div className="grid grid-cols-2 gap-3">
+            <div className="space-y-1.5">
+              <Label className="text-xs font-medium">Role</Label>
+              <Select value={form.role} onValueChange={(val) => setForm({ ...form, role: val })}>
+                <SelectTrigger className="h-8 text-xs">
+                  <SelectValue />
+                </SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="user">Standard User</SelectItem>
+                  <SelectItem value="admin">Administrator</SelectItem>
+                </SelectContent>
+              </Select>
+            </div>
+            <div className="space-y-1.5">
+              <Label htmlFor="user-password" className="text-xs font-medium">Password</Label>
+              <Input
+                id="user-password"
+                type="password"
+                placeholder="password123"
+                value={form.password}
+                onChange={(e) => setForm({ ...form, password: e.target.value })}
+                className="h-8 text-xs"
+              />
+            </div>
+          </div>
+
+          <DialogFooter className="pt-2">
+            <Button
+              type="button"
+              variant="ghost"
+              size="sm"
+              onClick={() => setOpen(false)}
+              className="h-8 text-xs"
+            >
+              Cancel
+            </Button>
+            <Button
+              type="submit"
+              size="sm"
+              disabled={saving || !form.full_name.trim() || !validEmail}
+              className="h-8 text-xs ula-gradient text-white"
+            >
+              {saving ? "Creating..." : "Create Account"}
+            </Button>
+          </DialogFooter>
+        </form>
+      </DialogContent>
+    </Dialog>
   );
 }

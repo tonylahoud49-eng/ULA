@@ -486,6 +486,29 @@ const auth = {
     return (state.accounts || []).map(({ passwordHash: _hash, ...user }) => clone(user));
   },
 
+  async createAccount({ full_name, email, role = "user", status = "approved", password = "password123" }) {
+    const normalizedEmail = normalizeEmail(email);
+    if (!normalizedEmail || !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(normalizedEmail)) {
+      throw createError("A valid email address is required.", 400);
+    }
+    const state = getMemoryAuth();
+    if (state.accounts.some((item) => item.email === normalizedEmail)) {
+      throw createError("An account with this email already exists", 409);
+    }
+    const account = {
+      id: createId(),
+      email: normalizedEmail,
+      full_name: full_name?.trim() || normalizedEmail.split("@")[0] || "User",
+      passwordHash: await hashPassword(password),
+      status,
+      role,
+    };
+    state.accounts.push(account);
+    saveMemoryAuth();
+    const { passwordHash: _hash, ...user } = account;
+    return clone(user);
+  },
+
   async updateAccount(userId, updates) {
     const state = getMemoryAuth();
     const index = (state.accounts || []).findIndex((acc) => acc.id === userId);

@@ -1,4 +1,4 @@
-import "dotenv/config";
+import dotenv from "dotenv";
 import express from "express";
 import multer from "multer";
 import path from "node:path";
@@ -18,6 +18,11 @@ import {
 import { extractEvidenceFile, evidenceText } from "./evidence/extractEvidence.mjs";
 import { loadApprovedStyleReferences } from "./ai/referenceLayer.mjs";
 import { createLeaveEmailService } from "./leave/leaveEmailService.mjs";
+import { sendTestEmail, getEmailDiagnosticsStatus } from "./email/emailTestService.mjs";
+
+if (process.env.NODE_ENV !== "test") {
+  dotenv.config();
+}
 
 const serverFile = fileURLToPath(import.meta.url);
 const root = path.resolve(path.dirname(serverFile), "..");
@@ -27,7 +32,12 @@ const maxFileBytes = Number(process.env.AI_MAX_FILE_BYTES || 20 * 1024 * 1024);
 const maxTotalBytes = Number(process.env.AI_MAX_TOTAL_BYTES || 50 * 1024 * 1024);
 const upload = multer({ storage: multer.memoryStorage(), limits: { files: maxFiles, fileSize: maxFileBytes } });
 const app = express();
-const leaveEmailService = createLeaveEmailService();
+const getLeaveEmailService = () => {
+  if (process.env.NODE_ENV !== "test") {
+    dotenv.config();
+  }
+  return createLeaveEmailService({ env: process.env });
+};
 const anthropicAnalysisRequests = new Map();
 const anthropicAnalysisCacheMs = Number(process.env.ANTHROPIC_DUPLICATE_CACHE_MS || 10 * 60 * 1000);
 
@@ -35,7 +45,36 @@ app.disable("x-powered-by");
 app.use(express.json({ limit: "64kb" }));
 app.get("/api/health", (_request, response) => response.json({ ok: true }));
 app.get("/api/ai/status", (_request, response) => response.json(getAIStatus()));
-app.get("/api/leave/email/status", (_request, response) => response.json(leaveEmailService.getStatus()));
+app.get("/api/leave/email/status", (_request, response) => response.json(getLeaveEmailService().getStatus()));
+app.get("/api/email/diagnostics", (_request, response) => {
+  dotenv.config({ override: true });
+  return response.json(getEmailDiagnosticsStatus(process.env));
+});
+
+app.post("/api/email/test", async (request, response) => {
+  try {
+    dotenv.config({ override: true });
+    const configuredBaseUrl = String(process.env.APP_BASE_URL || "").trim();
+    const requestOrigin = request.get("origin");
+    if (configuredBaseUrl && requestOrigin) {
+      try {
+        if (new URL(configuredBaseUrl).origin !== requestOrigin) {
+          return response.status(403).json({ error: "Email test requests must originate from the configured ULA application.", code: "email-test-origin-rejected" });
+        }
+      } catch {
+        // Continue to validator
+      }
+    }
+    const result = await sendTestEmail(request.body);
+    return response.json(result);
+  } catch (error) {
+    return response.status(Number(error.status) || 502).json({
+      ok: false,
+      error: error.message || "Failed to send test email.",
+      code: error.code || "email-test-failed",
+    });
+  }
+});
 
 function anthropicPreflightFailure(response, error) {
   return response.status(Number(error.status) || 500).json({
@@ -137,11 +176,11 @@ app.post("/api/leave/notifications", async (request, response) => {
         // The service returns a precise invalid-configuration error below.
       }
     }
-    const delivery = await leaveEmailService.sendEvent(request.body);
+    const delivery = await getLeaveEmailService().sendEvent(request.body);
     return response.json({ delivery });
   } catch (error) {
     return response.status(Number(error.status) || 502).json({
-      error: error.message || "Outlook could not send the leave notification.",
+      error: error.message || "Could not send the leave notification email.",
       code: error.code || "leave-email-delivery-failed",
       delivery: error.delivery || null,
     });

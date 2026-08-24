@@ -33,6 +33,10 @@ test("HTTP API exposes health and a truthful unavailable analysis state without 
     MICROSOFT_CLIENT_ID: "",
     MICROSOFT_CLIENT_SECRET: "",
     MICROSOFT_SENDER_EMAIL: "",
+    EMAILJS_SERVICE_ID: "",
+    EMAILJS_TEMPLATE_ID: "",
+    EMAILJS_PUBLIC_KEY: "",
+    EMAILJS_PRIVATE_KEY: "",
     LEAVE_ADMIN_EMAIL: "",
     APP_BASE_URL: "",
   });
@@ -72,6 +76,7 @@ test("regression: closed debug output does not turn a valid mocked Claude analys
   const originalEnv = {
     AI_PROVIDER: process.env.AI_PROVIDER,
     ANTHROPIC_API_KEY: process.env.ANTHROPIC_API_KEY,
+    ANTHROPIC_MODEL: process.env.ANTHROPIC_MODEL,
     ANTHROTIC_API_KEY: process.env.ANTHROTIC_API_KEY,
     OPENAI_API_KEY: process.env.OPENAI_API_KEY,
     OPENROUTER_API_KEY: process.env.OPENROUTER_API_KEY,
@@ -82,6 +87,7 @@ test("regression: closed debug output does not turn a valid mocked Claude analys
   Object.assign(process.env, {
     AI_PROVIDER: "anthropic",
     ANTHROPIC_API_KEY: "mock-server-only-key",
+    ANTHROPIC_MODEL: "claude-sonnet-4-6",
     ANTHROTIC_API_KEY: "",
     OPENAI_API_KEY: "",
     OPENROUTER_API_KEY: "",
