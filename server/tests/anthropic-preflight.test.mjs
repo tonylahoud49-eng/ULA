@@ -2,6 +2,7 @@ import test from "node:test";
 import assert from "node:assert/strict";
 import {
   AnthropicPreflightError,
+  anthropicSafetyLimits,
   testAnthropicConnectivity,
   validateAnthropicClaimLocally,
 } from "../ai/anthropicPreflight.mjs";
@@ -13,6 +14,10 @@ const configuredEnv = {
   ANTHROPIC_MAX_REQUEST_BYTES: "1048576",
   ANTHROPIC_MAX_ESTIMATED_INPUT_TOKENS: "10000",
 };
+
+test("Anthropic default request ceiling stays below the provider's 32 MB Messages limit", () => {
+  assert.equal(anthropicSafetyLimits({}).max_request_bytes, 30 * 1024 * 1024);
+});
 
 test("Anthropic connectivity preflight uses one minimal document-free request", async () => {
   let request;
@@ -68,6 +73,14 @@ test("Anthropic local preflight extracts text and calculates safety statistics w
   );
   assert.ok(result.stats.estimated_context_headroom_tokens > 0);
   assert.equal(result.stats.raw_pdf_files_sent, 0);
+  assert.deepEqual(result.stats.json_schema_complexity, {
+    serialized_bytes: 1_145,
+    property_occurrences: 21,
+    object_nodes: 3,
+    array_nodes: 4,
+    union_nodes: 0,
+    union_branches: 0,
+  });
 });
 
 test("Anthropic local preflight rejects an unsupported output allowance before any provider call", async () => {
@@ -83,7 +96,7 @@ test("Anthropic local preflight rejects an unsupported output allowance before a
       claim: { id: "invalid-output-limit" },
       manifest: [{ id: "document-1", file_name: "policy.txt", category: "Policy" }],
       files: [file],
-      env: { ...configuredEnv, ANTHROPIC_MAX_OUTPUT_TOKENS: "128001" },
+      env: { ...configuredEnv, ANTHROPIC_MAX_OUTPUT_TOKENS: "64001" },
     }),
     (error) => error instanceof AnthropicPreflightError
       && error.code === "anthropic-output-token-limit-invalid",

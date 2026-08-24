@@ -110,7 +110,7 @@ export function createGeminiProvider({ apiKey, model, client } = {}) {
         model: resolvedModel,
         response_id: response.id || null,
         analyzed_at: new Date().toISOString(),
-        analysis: enforceGrounding(parsed, evidence),
+        analysis: enforceGrounding(parsed, evidence, styleReferences),
       };
     },
   };

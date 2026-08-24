@@ -30,6 +30,7 @@ import { toast } from "@/components/ui/use-toast";
 import { REPORT_LIFECYCLE, reportReadiness } from "@/lib/reportTemplates";
 import AIAnalysisProgressCard, { formatModelDisplayName } from "@/components/AIAnalysisProgressCard";
 import AIModelSelector from "@/components/AIModelSelector";
+import { MAX_REPORT_PHOTOGRAPHS, selectReportPhotographs } from "@/lib/reportPhotoSelection";
 
 const BUSINESS_LINES = ["Yacht", "Property", "Marine Cargo (Reefer/GFS)", "Marine Cargo (Non-Reefer)", "Bulk Vessel", "Air Shipment (NET)", "Land Shipment", "Fidelity Claims", "Requires Review", "Unclassified"];
 const STATUSES = ["New", "Under Investigation", "Pending Documents", "Report Draft", "Report Final", "Closed"];
@@ -86,6 +87,7 @@ const canvasBlob = (canvas, type = "image/jpeg", quality = 0.84) => new Promise(
 
 const collectAppendixImages = async (documents, normalizedRecord) => {
   const appendixIds = new Set((normalizedRecord?.appendices || []).map((item) => item.document_id));
+  const preferredPhotographs = normalizedRecord?.selected_photographs || [];
   const candidates = documents.filter((document) => appendixIds.has(document.id) && (
     document.detected_categories?.includes("Photographs")
     || document.file_type === "Photo"
@@ -116,7 +118,13 @@ const collectAppendixImages = async (documents, normalizedRecord) => {
         pdfjs.GlobalWorkerOptions.workerSrc = worker.default;
         const task = pdfjs.getDocument({ data: new Uint8Array(await stored.blob.arrayBuffer()), disableWorker: true });
         const pdf = await task.promise;
-        for (let pageNumber = 1; pageNumber <= pdf.numPages; pageNumber += 1) {
+        const selectedPages = [...new Set(preferredPhotographs
+          .filter((item) => item.document_id === document.id && Number.isInteger(item.page) && item.page > 0 && item.page <= pdf.numPages)
+          .map((item) => item.page))];
+        const pagesToRender = selectedPages.length
+          ? selectedPages.slice(0, MAX_REPORT_PHOTOGRAPHS)
+          : Array.from({ length: Math.min(pdf.numPages, MAX_REPORT_PHOTOGRAPHS) }, (_, index) => index + 1);
+        for (const pageNumber of pagesToRender) {
           const page = await pdf.getPage(pageNumber);
           const viewport = page.getViewport({ scale: 1.35 });
           const canvas = globalThis.document.createElement("canvas");
@@ -140,7 +148,7 @@ const collectAppendixImages = async (documents, normalizedRecord) => {
       console.warn(`Unable to embed appendix evidence ${document.file_name}: ${error.message}`);
     }
   }
-  return images;
+  return selectReportPhotographs(images, preferredPhotographs);
 };
 
 const markdownComponents = {

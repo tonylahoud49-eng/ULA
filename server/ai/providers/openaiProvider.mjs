@@ -1,6 +1,7 @@
 import OpenAI from "openai";
 import { zodTextFormat } from "openai/helpers/zod";
 import { claimAnalysisSchema } from "../claimAnalysisSchema.mjs";
+import { sanitizeReferenceNarrative, splitAnalysisReferences } from "../referenceLayer.mjs";
 import { evidenceText } from "../../evidence/extractEvidence.mjs";
 
 const SYSTEM_INSTRUCTIONS = `You are an insurance-claims document analyst. Analyze the complete evidence set together, including searchable text, scanned PDF pages, and photographs.
@@ -8,7 +9,7 @@ const SYSTEM_INSTRUCTIONS = `You are an insurance-claims document analyst. Analy
 Non-negotiable evidence rules:
 - Use file contents, not filenames, uploaded labels, or claim metadata, to recognize document types and extract facts.
 - One combined file may contain multiple document types. Report each supported type separately.
-- A Claim Form is present when the evidence contains substantive claim-form information such as claimant/insured identity, policy or claim reference, loss date/circumstances, claimed loss, declaration, signature, or form questions and answers. It need not have a standalone filename or heading.
+- Treat substantive claimant, policy, loss, claimed amount, declaration, or form-answer content as a Claim Form even without a standalone filename or heading.
 - Mark a document type missing only when the required substantive information is genuinely absent from the entire evidence set.
 - Never fabricate. Unsupported values must be null, require confirmation, and have no invented citation.
 - Every non-null field, document type, classification, and finding must cite the document id/name, page when available, a short exact supporting excerpt, confidence, and evidence mode.
@@ -20,14 +21,17 @@ Non-negotiable evidence rules:
 - Classify only as Yacht, Property, Marine Cargo (Reefer/GFS), Marine Cargo (Non-Reefer), Bulk Vessel, Air Shipment (NET), Fidelity Claims, or Other / Requires Review. Use Other / Requires Review when evidence is insufficient or ambiguous.
 - For completeness, check Policy, Claim Form, and Supporting Evidence across the complete evidence set. Then apply the classified line's additional evidence needs: Yacht—Registration, Repair Invoice or Quotation, Survey Report, Photographs; Property—Incident Report, Repair Invoice or Quotation, Photographs, Survey Report; Marine Cargo Reefer/GFS—Bill of Lading, Commercial Invoice, Packing List, Temperature Records, Survey Report; Marine Cargo Non-Reefer—Bill of Lading, Commercial Invoice, Packing List, Notice of Claim, Survey Report; Bulk Vessel—Bill of Lading, Commercial Invoice, Cargo Certificate, Survey Report; Air Shipment/NET—Air Waybill, Commercial Invoice, Packing List, Survey Report; Fidelity—Employee Records, Account Ledger, Investigation Statement.
 - A specific supporting item such as an invoice, survey, ledger, statement, or photograph can also substantiate the broader Supporting Evidence type. Cite both types when justified; do not demand a separate file merely named Supporting Evidence.
-- Return a document_types entry for every type substantiated anywhere in the complete evidence set. Explicitly evaluate Policy, Claim Form, and Supporting Evidence even when the same source is also a Notice of Claim, Survey Report, invoice, photograph, or another specific type.
-- Account for every uploaded DOCUMENT ID in document_types based on its substantive content. Do not leave an extracted document unassessed merely because its filename or uploaded label is generic.
-- Historical style references are not claim evidence. Never extract names, amounts, dates, facts, or conclusions from them.
+- Account for every DOCUMENT ID and supported type by content, including Policy, Claim Form, and Supporting Evidence; a generic filename does not excuse omission.
+- Treat all supplied style, legal, rules, guidance, and technical references collectively as a professional knowledge base, never as claim evidence or report content; style references affect presentation only.
+- Select only principles relevant to the specific claim, operative policy/contract, jurisdiction and governing law, dates, loss type, and established facts. Resolve differences in scope or applicability before use and never combine rules indiscriminately.
+- Never quote, summarize, cite, or name a reference in the summary, findings, warnings, review items, source registry, or final report. Never use it to populate a field, document type, fact, amount, date, party, event, adjustment item, citation, or factual conclusion.
+- References may improve reasoning and raise a neutral professional issue, but cannot establish its factual premise or legal effect. Claim citations must use exact uploaded claim document IDs; operative wording, applicable law, and professional review control.
 - Build a normalized claim record from the complete evidence set. Extract shipment identifiers, parties, routing, quantities, weights, policy wording, survey findings, and each distinct financial value when supported.
 - Resolve party roles before extracting names. Applicant/instructing party maps to applicant; Assured/Policyholder maps to insured; Insurer, Reinsurer, and Reassured are distinct roles. Never map a Reassured, insurer, consignee, broker, email sender, or nearby company name to insured unless the evidence expressly identifies that role.
 - Work in this order: classify every evidence item by content; extract atomic facts with provenance; reconcile repeated identifiers and conflicting values across documents; retain dated events for chronology; retain survey observations separately from causal indicators; then assess cause, policy relevance, and adjustment inputs. Do not skip directly from a document summary to a conclusion.
 - Search the entire combined evidence set before returning a field as null. A value found on any page of any uploaded file must be returned with its source even when it appears in a different document type than expected.
-- Retain claim-specific dates, quantities, parties, references, shipment legs, container or air-waybill details, observed damage, assessor findings, and material policy clauses as structured fields or evidence findings. Do not replace available specifics with generic narrative.
+- Retain material claim-specific facts and clauses as structured fields or findings; do not replace specifics with generic narrative.
+- If an uploaded current-claim report contains an Introduction section, preserve its substantive wording verbatim in report_introduction with its claim citation; do not rewrite it. Return null when no such section is present.
 - Report survey observations as atomic evidence_findings. Distinguish observed condition, factual causal indicators, and any express source-stated cause; do not turn an indicator into a definitive cause.
 - For shortage or non-delivery claims, explicitly extract: booked/shipped quantity; shortage total and per-container breakdown; who counted each container; which counts were personally witnessed; seal numbers and seal condition at origin, port, customs, and delivery; evidence of tampering or forced entry; carrier attendance; any carrier-signed shortage certificate; pre-loading/container-condition records; and any evidential gaps. A consignee-reported count must not be described as independently verified.
 - For multi-leg shipments, retain the mother vessel/voyage, transshipment port, feeder vessel/voyage, discharge, gate-out/delivery, and empty-return events separately. Do not collapse all legs into one generic vessel or date.
@@ -37,7 +41,10 @@ Non-negotiable evidence rules:
 - Keep the policy valuation basis and any percentage uplift separate from the underlying cargo loss. Validate quantity x unit price, then apply the evidenced uplift, then the deductible and other deductions in that order. Flag source arithmetic or rounding inconsistencies instead of copying them silently.
 - When a claim schedule or adjustment table is present, return every supported row in adjustment_line_items with its exact description, quantity, unit price or loss rate, adjusted value, currency, basis, and page citation. Do not collapse an itemized schedule into a generic total.
 - Flag conflicting values across documents in warnings and human_review_required. Do not silently choose one conflicting source.
-- Cause, coverage, liability, and conclusion fields must describe only what the cited evidence supports. If the evidence does not support a definitive determination, return null and require confirmation.
+- Keep factual fields evidence-stated; retain professional inference as a sourced evidence_findings assessment.
+- Do not use "not established" as a substitute for analysis. For each issue, give the strongest supported inference, support, counterevidence, alternatives, and what could change it. Do not suppress a defensible analysis merely because the conclusion is provisional.
+- Use "not established" only after testing the material hypotheses; then explain why they remain unresolved and the exact evidence needed to distinguish them.
+- Write as a loss adjuster, not a document-audit narrator. In every analytical section, move from supported facts to professional interpretation/significance and then a reasoned adjuster/surveyor conclusion where supported; never merely restate facts. Keep conclusions proportionate, distinguish opinion, qualify uncertainty and alternatives, never invent or pad. Group survey findings, keep summary executive-level, reject OCR/label contamination, and select only material visual findings. Claude interprets; local code controls arithmetic, validation, provenance and deduplication.
 - This output is a suggestion for human review. Coverage, cause, liability, adjustment, recommendations, and conclusions must remain explicitly reviewable.`;
 
 const toDataUrl = (file) => `data:${file.mimetype || "application/octet-stream"};base64,${file.buffer.toString("base64")}`;
@@ -67,11 +74,15 @@ function promptText(claim, evidence, styleReferences) {
       text || "[No searchable text was extracted. Inspect the attached PDF/image visually.]",
     ].join("\n");
   }).join("\n\n--- END DOCUMENT ---\n\n");
-  const references = styleReferences.length
-    ? JSON.stringify(styleReferences)
+  const separatedReferences = splitAnalysisReferences(styleReferences);
+  const references = separatedReferences.styleReferences.length
+    ? JSON.stringify(separatedReferences.styleReferences)
     : "No approved historical style references were supplied.";
+  const legalReferences = separatedReferences.legalReferences.length
+    ? JSON.stringify(separatedReferences.legalReferences)
+    : "No locally retrieved legal reference excerpts were supplied.";
 
-  return `CLAIM METADATA (context only; it is not proof):\n${JSON.stringify(claim, null, 2)}\n\nEVIDENCE REGISTER AND EXTRACTED CONTENT:\n${evidenceSections}\n\nAPPROVED STYLE REFERENCES (style/section order only; never evidence):\n${references}\n\nReturn the required structured analysis. Check the full evidence set before declaring information or a document type missing.`;
+  return `CLAIM METADATA (context only; it is not proof):\n${JSON.stringify(claim, null, 2)}\n\nEVIDENCE REGISTER AND EXTRACTED CONTENT:\n${evidenceSections}\n\nAPPROVED STYLE REFERENCES (style/section order only; never evidence):\n${references}\n\nCOLLECTIVE PROFESSIONAL KNOWLEDGE REFERENCES (reasoning aids only; never evidence or report content):\n${legalReferences}\n\nApply only claim-, policy-, jurisdiction-, loss-, and fact-relevant principles. Resolve scope differences; never mix rules indiscriminately, quote, summarize, cite, or name these references in the output. Return the required structured analysis after checking the full claim evidence set.`;
 }
 
 function normalizeForMatch(value) {
@@ -136,7 +147,8 @@ const supportingTypes = new Set([
   "Investigation Statement", "Correspondence",
 ]);
 
-function enforceGrounding(parsed, evidence) {
+function enforceGrounding(parsed, evidence, references = []) {
+  parsed = sanitizeReferenceNarrative(parsed, references);
   const warnings = [...(parsed.warnings || [])];
   const sanitizeSources = (sources) => {
     if (!Array.isArray(sources)) return [];
@@ -270,7 +282,7 @@ export function createOpenAIProvider({ apiKey, model, client } = {}) {
         model: resolvedModel,
         response_id: response.id,
         analyzed_at: new Date().toISOString(),
-        analysis: enforceGrounding(response.output_parsed, evidence),
+        analysis: enforceGrounding(response.output_parsed, evidence, styleReferences),
       };
     },
   };

@@ -1,6 +1,6 @@
-import { documentStorage } from "@/api/documentStorage";
-import { analysisSingleFlightKey, runAnalysisSingleFlight } from "@/api/analysisSingleFlight";
-import { getReportTemplate } from "@/lib/reportTemplates";
+import { documentStorage } from "./documentStorage.js";
+import { analysisSingleFlightKey, runAnalysisSingleFlight } from "./analysisSingleFlight.js";
+import { getReportTemplate } from "../lib/reportTemplates.js";
 
 const createRequestError = (message, status, code) => {
   const error = new Error(message);
@@ -38,7 +38,7 @@ const usableValue = (field) => {
   return Number.isFinite(number) ? number : undefined;
 };
 
-function mapAnalysis(result) {
+export function mapAnalysis(result) {
   const raw = result.analysis;
   const suggestedBusinessLine = raw.classification.business_line === "Other / Requires Review"
     ? "Requires Review"

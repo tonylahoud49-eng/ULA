@@ -136,12 +136,75 @@ export const validAnthropicAnalysisFixture = {
   human_review_required: ["Coverage and quantum require human review."],
 };
 
+export function canonicalAnalysisToAnthropicTransportFixture(analysis) {
+  const sources = [];
+  const sourceIndexes = new Map();
+  const refs = (items = []) => items.map((item) => {
+    const transportSource = { ...item, page: item.page ?? 0 };
+    const key = JSON.stringify(transportSource);
+    if (!sourceIndexes.has(key)) {
+      sourceIndexes.set(key, sources.length);
+      sources.push(transportSource);
+    }
+    return sourceIndexes.get(key);
+  });
+  const record = (kind, values = {}) => ({
+    kind,
+    key: "",
+    value: "",
+    normalized_value: "",
+    text: "",
+    quantity: "",
+    unit_price: "",
+    currency: "",
+    basis: "",
+    confidence: 0,
+    flag: false,
+    source_refs: [],
+    details: [],
+    ...values,
+  });
+  const records = [];
+  if (analysis.classification) records.push(record("classification", {
+    key: analysis.classification.business_line,
+    text: analysis.classification.rationale,
+    confidence: analysis.classification.confidence,
+    source_refs: refs(analysis.classification.sources),
+  }));
+  for (const item of analysis.document_types || []) records.push(record("document_type", {
+    key: item.document_type, text: item.rationale, confidence: item.confidence,
+    flag: item.sufficient_information, source_refs: refs(item.sources),
+  }));
+  for (const item of (analysis.fields || []).filter((field) => field.value !== null)) records.push(record("field", {
+    key: item.field, value: item.value ?? "", normalized_value: item.normalized_value ?? "",
+    confidence: item.confidence, flag: item.requires_confirmation, source_refs: refs(item.sources),
+  }));
+  for (const item of analysis.adjustment_line_items || []) records.push(record("adjustment", {
+    text: item.description, quantity: item.quantity ?? "", unit_price: item.unit_price ?? "",
+    value: item.adjusted_value, currency: item.currency ?? "", basis: item.basis,
+    confidence: item.confidence, source_refs: refs(item.sources),
+  }));
+  for (const item of analysis.missing_documents || []) records.push(record("missing_document", {
+    key: item.document_type, text: item.reason, details: item.missing_information,
+  }));
+  for (const item of analysis.evidence_findings || []) records.push(record("finding", {
+    text: item.finding, confidence: item.confidence, source_refs: refs(item.sources),
+  }));
+  if (typeof analysis.summary === "string") records.push(record("summary", { text: analysis.summary }));
+  for (const item of analysis.warnings || []) records.push(record("warning", { text: item }));
+  for (const item of analysis.human_review_required || []) records.push(record("review", { text: item }));
+  return { sources, records };
+}
+
 export const anthropicMessageFixture = (analysis = validAnthropicAnalysisFixture, overrides = {}) => ({
   id: "msg_mock_structured",
   type: "message",
   role: "assistant",
   model: "claude-sonnet-4-6",
-  content: [{ type: "text", text: JSON.stringify(analysis) }],
+  content: [{
+    type: "text",
+    text: JSON.stringify(canonicalAnalysisToAnthropicTransportFixture(analysis)),
+  }],
   stop_reason: "end_turn",
   stop_sequence: null,
   usage: { input_tokens: 1200, output_tokens: 900 },

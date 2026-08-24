@@ -24,7 +24,7 @@ export function safeReturnTo() {
     for (const p of ["access_token", "clear_access_token", "app_id", "app_base_url", "functions_version", "from_url"]) {
       url.searchParams.delete(p);
     }
-    const path = url.pathname + url.search;
+    const path = url.pathname + url.search + url.hash;
     if (!path.startsWith("/") || path.startsWith("//") || path.includes("\\")) return "/";
     return path;
   } catch {

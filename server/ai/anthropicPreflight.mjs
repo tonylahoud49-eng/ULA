@@ -2,13 +2,16 @@ import crypto from "node:crypto";
 import { safeAiDebugLog } from "./debugLog.mjs";
 import { anthropicProviderInternals } from "./providers/anthropicProvider.mjs";
 import { extractEvidenceFile, evidenceText } from "../evidence/extractEvidence.mjs";
+import { selectLegalReferences } from "./referenceLayer.mjs";
 import {
   prepareClaimContextForAnthropic,
   prepareEvidenceForAnthropic,
 } from "../evidence/prepareAnthropicEvidence.mjs";
 
 const ANTHROPIC_MESSAGES_URL = "https://api.anthropic.com/v1/messages";
-const DEFAULT_MAX_REQUEST_BYTES = 40 * 1024 * 1024;
+// The direct Messages API limit is 32 MB. Keep local headroom for encoding and
+// provider-side request framing so an oversized request is stopped before fetch.
+const DEFAULT_MAX_REQUEST_BYTES = 30 * 1024 * 1024;
 const DEFAULT_MAX_ESTIMATED_INPUT_TOKENS = 180_000;
 const DEFAULT_CONNECTIVITY_TIMEOUT_MS = 15_000;
 const PREFLIGHT_TTL_MS = 5 * 60 * 1000;
@@ -181,6 +184,7 @@ export async function validateAnthropicClaimLocally({
   manifest,
   files,
   styleReferences = [],
+  legalReferenceIndexPath,
   env = process.env,
 } = {}) {
   const { model, maxOutputTokens } = validateAnthropicConfiguration(env);
@@ -247,13 +251,17 @@ export async function validateAnthropicClaimLocally({
 
   const prepared = prepareEvidenceForAnthropic(evidence);
   const claimContext = prepareClaimContextForAnthropic(claim);
+  const legalReferences = legalReferenceIndexPath
+    ? await selectLegalReferences({ claim: claimContext, evidence: prepared.evidence, indexPath: legalReferenceIndexPath })
+    : [];
+  const analysisReferences = [...styleReferences, ...legalReferences];
   const requestBody = fullRequestBody(
     model,
     maxOutputTokens,
     claimContext,
     prepared.evidence,
     files,
-    styleReferences,
+    analysisReferences,
   );
   const requestBytes = Buffer.byteLength(JSON.stringify(requestBody));
   const estimatedInputTokens = estimateInputTokens(requestBody, prepared.evidence);
@@ -284,6 +292,12 @@ export async function validateAnthropicClaimLocally({
     system_instruction_characters: requestBody.system.length,
     json_contract_characters: anthropicProviderInternals.jsonContract.length,
     json_schema_characters: JSON.stringify(requestBody.output_config.format.schema).length,
+    json_schema_complexity: anthropicProviderInternals.measureJsonSchemaComplexity(
+      requestBody.output_config.format.schema,
+    ),
+    legal_reference_count: legalReferences.length,
+    legal_reference_characters: legalReferences.reduce((total, item) => total + item.excerpt.length, 0),
+    legal_reference_sources: [...new Set(legalReferences.map((item) => item.title))],
     limits,
     local_reduction: prepared.stats,
     payload_summary: prepared.evidence.map((item) => ({

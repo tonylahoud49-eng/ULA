@@ -4,11 +4,12 @@ import { createOpenAIProvider } from "../ai/providers/openaiProvider.mjs";
 import { createOpenRouterProvider } from "../ai/providers/openrouterProvider.mjs";
 import { createGeminiProvider } from "../ai/providers/geminiProvider.mjs";
 import { createAnthropicProvider, anthropicProviderInternals } from "../ai/providers/anthropicProvider.mjs";
-import { CLAIM_FIELDS } from "../ai/claimAnalysisSchema.mjs";
+import { CLAIM_FIELDS, claimAnalysisSchema } from "../ai/claimAnalysisSchema.mjs";
 import { prepareEvidenceForAnthropic } from "../evidence/prepareAnthropicEvidence.mjs";
 import { getAIStatus, createConfiguredProvider } from "../ai/provider.mjs";
 import {
   anthropicMessageFixture,
+  canonicalAnalysisToAnthropicTransportFixture,
   multiDocumentEvidenceFixture,
   paidRequestEvidenceFixture,
   paidRequestZeroPercentClaudeFixture,
@@ -54,6 +55,8 @@ const structuredAnalysis = {
   human_review_required: ["Coverage", "Cause of loss"],
 };
 
+const toAnthropicTransport = canonicalAnalysisToAnthropicTransportFixture;
+
 test("anthropic status accepts the standard key and the existing misspelled migration alias", () => {
   const standard = getAIStatus({ AI_PROVIDER: "anthropic", ANTHROPIC_API_KEY: "test-key" });
   const aliased = getAIStatus({ AI_PROVIDER: "anthropic", ANTHROTIC_API_KEY: "legacy-test-key" });
@@ -70,7 +73,7 @@ test("anthropic sends uploaded content to Messages API and retains only grounded
     return new Response(JSON.stringify({
       id: "msg_test",
       model: "claude-sonnet-4-6",
-      content: [{ type: "text", text: JSON.stringify(structuredAnalysis) }],
+      content: [{ type: "text", text: JSON.stringify(toAnthropicTransport(structuredAnalysis)) }],
     }), { status: 200, headers: { "request-id": "req_test" } });
   };
   const evidence = [{
@@ -111,7 +114,7 @@ test("anthropic sends uploaded content to Messages API and retains only grounded
   assert.equal(body.stream, true);
   assert.equal(body.output_config.format.type, "json_schema");
   assert.equal(body.output_config.format.schema.additionalProperties, false);
-  assert.ok(JSON.stringify(body.output_config.format.schema).length < 5_000);
+  assert.ok(JSON.stringify(body.output_config.format.schema).length < 2_500);
   assert.equal(JSON.stringify(body.output_config.format.schema).includes('"enum"'), false);
   let unionTypes = 0;
   let optionalParameters = 0;
@@ -126,11 +129,11 @@ test("anthropic sends uploaded content to Messages API and retains only grounded
     Object.values(node).forEach(auditSchemaComplexity);
   };
   auditSchemaComplexity(body.output_config.format.schema);
-  assert.equal(unionTypes, 10);
+  assert.equal(unionTypes, 0);
   assert.equal(optionalParameters, 0);
   assert.match(body.system, /Return only the structured payload/);
   assert.match(body.system, /no Markdown fences, preface, trailing commentary, or extra keys/i);
-  assert.match(body.system, /return only evidence-supported non-null fields/i);
+  assert.match(body.system, /return only evidence-supported non-null field records/i);
   assert.match(body.system, /Never omit a material claim finding/i);
   assert.ok(body.system.length < 15_000, "The Claude instructions and plain-text contract must stay compact");
   assert.match(body.messages[0].content[0].text, /Claimant: Example Trading SAL/);
@@ -147,7 +150,7 @@ test("anthropic sends uploaded content to Messages API and retains only grounded
 
 test("anthropic streams and locally accumulates one long-running Messages API response", async () => {
   let requestBody;
-  const json = JSON.stringify(validAnthropicAnalysisFixture);
+  const json = JSON.stringify(toAnthropicTransport(validAnthropicAnalysisFixture));
   const splitAt = Math.floor(json.length / 2);
   const sse = [
     `event: message_start\ndata: ${JSON.stringify({
@@ -286,8 +289,8 @@ test("anthropic output allowance is configurable locally and capped for Sonnet 4
   assert.equal(requestBody.max_tokens, 32_000);
 
   assert.throws(
-    () => createAnthropicProvider({ apiKey: "server-only-key", maxOutputTokens: "128001" }),
-    /cannot exceed 128000/i,
+    () => createAnthropicProvider({ apiKey: "server-only-key", maxOutputTokens: "64001" }),
+    /cannot exceed 64000/i,
   );
 });
 
@@ -381,7 +384,7 @@ test("anthropic retains content-grounded categories when citation metadata drift
       return new Response(JSON.stringify({
         id: "msg_grounding_regression",
         model: "claude-sonnet-4-6",
-        content: [{ type: "text", text: JSON.stringify(resultFixture) }],
+        content: [{ type: "text", text: JSON.stringify(toAnthropicTransport(resultFixture)) }],
       }), { status: 200 });
     },
   });
@@ -421,13 +424,13 @@ test("anthropic preserves stripped numeric constraints through application valid
     fetchImpl: async () => new Response(JSON.stringify({
       id: "msg_invalid",
       model: "claude-sonnet-4-6",
-      content: [{ type: "text", text: JSON.stringify(invalidAnalysis) }],
+      content: [{ type: "text", text: JSON.stringify(toAnthropicTransport(invalidAnalysis)) }],
     }), { status: 200 }),
   });
 
   await assert.rejects(
     provider.analyze({ claim: { id: "claim-1" }, evidence: [], files: [] }),
-    /structured output schema validation failed/,
+    /transport schema validation failed/,
   );
 });
 
@@ -547,7 +550,7 @@ test("anthropic citation repair still rejects fabricated evidence", async () => 
 });
 
 test("anthropic combines non-empty text blocks before parsing structured JSON", async () => {
-  const output = JSON.stringify(validAnthropicAnalysisFixture);
+  const output = JSON.stringify(toAnthropicTransport(validAnthropicAnalysisFixture));
   const splitAt = Math.floor(output.length / 2);
   const provider = createAnthropicProvider({
     apiKey: "server-only-key",
@@ -589,19 +592,22 @@ test("anthropic accepts valid schema-constrained structured output", async () =>
   assert.equal(result.analysis.summary, validAnthropicAnalysisFixture.summary);
 });
 
-test("Anthropic production JSON schema stays within documented constrained-output complexity limits", () => {
-  const schema = anthropicProviderInternals.structuredOutputSchema();
+test("exact Anthropic production request uses the compact transport schema within its grammar budget", () => {
+  const requestBody = anthropicProviderInternals.buildRequestBody({
+    model: "claude-sonnet-4-6",
+    maxOutputTokens: 64_000,
+    claim: { id: "offline-production-body" },
+    evidence: [],
+    files: [],
+  });
+  const schema = requestBody.output_config.format.schema;
   const supportedKeywords = new Set(["type", "properties", "required", "additionalProperties", "items"]);
   let optionalParameters = 0;
-  let unionTypes = 0;
-  let closedObjects = 0;
 
   const visit = (node) => {
     if (!node || typeof node !== "object" || Array.isArray(node)) return;
     for (const keyword of Object.keys(node)) assert.ok(supportedKeywords.has(keyword), `Unsupported schema keyword: ${keyword}`);
-    if (Array.isArray(node.type)) unionTypes += 1;
     if (node.type === "object") {
-      closedObjects += 1;
       assert.equal(node.additionalProperties, false);
       const required = new Set(node.required || []);
       optionalParameters += Object.keys(node.properties || {}).filter((key) => !required.has(key)).length;
@@ -611,16 +617,89 @@ test("Anthropic production JSON schema stays within documented constrained-outpu
   };
   visit(schema);
 
+  assert.deepEqual(schema, anthropicProviderInternals.structuredOutputSchema());
+  assert.deepEqual(Object.keys(schema.properties), ["sources", "records"]);
+  assert.equal("classification" in schema.properties, false);
   assert.equal(optionalParameters, 0);
-  assert.ok(unionTypes <= 16, `Expected no more than 16 unions, received ${unionTypes}`);
-  assert.equal(unionTypes, 10);
-  assert.equal(closedObjects, 12);
-  assert.ok(JSON.stringify(schema).length < 10_000);
+  assert.deepEqual(anthropicProviderInternals.measureJsonSchemaComplexity(schema), {
+    serialized_bytes: 1_145,
+    property_occurrences: 21,
+    object_nodes: 3,
+    array_nodes: 4,
+    union_nodes: 0,
+    union_branches: 0,
+  });
+  assert.ok(Buffer.byteLength(JSON.stringify(schema)) < 2_500);
+  assert.equal(JSON.stringify(schema).includes('"enum"'), false);
+});
+
+test("Anthropic transport round-trip preserves every material canonical report channel", () => {
+  const materialSource = {
+    document_id: "survey-quantum-1",
+    document_name: "survey-and-adjustment.pdf",
+    page: 3,
+    supporting_text: "Net claimed damage USD 84,000; salvage offer USD 6,000.",
+    confidence: 0.93,
+    evidence_mode: "document_vision",
+  };
+  const materialAnalysis = {
+    classification: {
+      business_line: "Marine Cargo (Non-Reefer)",
+      confidence: 0.93,
+      rationale: "The evidence concerns non-refrigerated cargo transit damage.",
+      sources: [materialSource],
+    },
+    document_types: [{
+      document_type: "Survey Report",
+      confidence: 0.93,
+      sufficient_information: true,
+      rationale: "The report records condition, cause indicators, and quantum.",
+      sources: [materialSource],
+    }],
+    fields: [
+      { field: "cause_of_loss", value: "Handling impact", normalized_value: "Handling impact", confidence: 0.81, requires_confirmation: true, sources: [materialSource] },
+      { field: "policy_terms", value: "Impact damage subject to policy terms", normalized_value: null, confidence: 0.78, requires_confirmation: true, sources: [materialSource] },
+      { field: "claim_amount", value: "USD 84,000", normalized_value: "84000", confidence: 0.93, requires_confirmation: false, sources: [materialSource] },
+      { field: "salvage_findings", value: "Salvage offer received", normalized_value: null, confidence: 0.9, requires_confirmation: true, sources: [materialSource] },
+      { field: "recovery_findings", value: "Carrier recovery remains open", normalized_value: null, confidence: 0.76, requires_confirmation: true, sources: [materialSource] },
+    ],
+    adjustment_line_items: [{
+      description: "Damaged cargo",
+      quantity: "12 units",
+      unit_price: "USD 7,000",
+      adjusted_value: "USD 84,000",
+      currency: "USD",
+      basis: "Survey adjustment schedule",
+      confidence: 0.93,
+      sources: [materialSource],
+    }],
+    missing_documents: [{
+      document_type: "Notice of Claim",
+      reason: "No carrier notice was located.",
+      missing_information: ["Dated carrier notice", "Proof of delivery"],
+    }],
+    evidence_findings: [{
+      finding: "Twelve units showed impact damage; causation remains qualified.",
+      confidence: 0.84,
+      sources: [materialSource],
+    }],
+    summary: "Evidence supports a cargo damage claim with unresolved coverage and liability questions.",
+    warnings: ["The invoice and survey state conflicting gross values."],
+    human_review_required: ["Review coverage, liability, quantum, salvage, and carrier recovery."],
+  };
+
+  const transport = toAnthropicTransport(materialAnalysis);
+  assert.equal(transport.sources.length, 1, "Repeated citations must be de-duplicated in transport");
+  assert.equal(anthropicProviderInternals.anthropicTransportSchema.safeParse(transport).success, true);
+  const reconstructed = anthropicProviderInternals.reconstructCanonicalAnalysis(transport);
+
+  assert.deepEqual(reconstructed, materialAnalysis);
+  assert.equal(claimAnalysisSchema.safeParse(reconstructed).success, true);
 });
 
 test("anthropic rejects markdown-fenced JSON locally", async () => {
   let calls = 0;
-  const fenced = `\`\`\`json\n${JSON.stringify(validAnthropicAnalysisFixture)}\n\`\`\``;
+  const fenced = `\`\`\`json\n${JSON.stringify(toAnthropicTransport(validAnthropicAnalysisFixture))}\n\`\`\``;
   const provider = createAnthropicProvider({
     apiKey: "server-only-key",
     fetchImpl: async () => {
@@ -638,7 +717,7 @@ test("anthropic rejects markdown-fenced JSON locally", async () => {
 });
 
 test("anthropic rejects trailing commentary after structured JSON locally", async () => {
-  const trailing = `${JSON.stringify(validAnthropicAnalysisFixture)}\nAnalysis complete.`;
+  const trailing = `${JSON.stringify(toAnthropicTransport(validAnthropicAnalysisFixture))}\nAnalysis complete.`;
   const provider = createAnthropicProvider({
     apiKey: "server-only-key",
     fetchImpl: async () => new Response(JSON.stringify(anthropicMessageFixture(undefined, {
@@ -649,6 +728,165 @@ test("anthropic rejects trailing commentary after structured JSON locally", asyn
     provider.analyze({ claim: { id: "trailing" }, evidence: [], files: [] }),
     /structured output JSON parse failed.*after JSON/i,
   );
+});
+
+test("anthropic ignores populated generic slots that are irrelevant to each transport record kind", async () => {
+  const transport = canonicalAnalysisToAnthropicTransportFixture(validAnthropicAnalysisFixture);
+  const classification = transport.records.find((record) => record.kind === "classification");
+  classification.value = "MUST NOT ENTER THE CANONICAL CLAIM";
+  classification.normalized_value = "MUST NOT ENTER THE CANONICAL CLAIM";
+  for (const record of transport.records.filter((item) => item.kind === "document_type")) {
+    record.value = "MUST NOT ENTER THE CANONICAL CLAIM";
+  }
+
+  let calls = 0;
+  const provider = createAnthropicProvider({
+    apiKey: "server-only-key",
+    fetchImpl: async () => {
+      calls += 1;
+      return new Response(JSON.stringify(anthropicMessageFixture(undefined, {
+        content: [{ type: "text", text: JSON.stringify(transport) }],
+      })), { status: 200 });
+    },
+  });
+  const result = await provider.analyze({
+    claim: { id: "irrelevant-transport-slots" },
+    evidence: multiDocumentEvidenceFixture,
+    files: multiDocumentEvidenceFixture.map((item) => ({
+      mimetype: item.mime_type,
+      buffer: Buffer.from(item.pages[0].text),
+    })),
+  });
+
+  assert.equal(calls, 1);
+  assert.equal(result.analysis.classification.business_line, validAnthropicAnalysisFixture.classification.business_line);
+  assert.equal(claimAnalysisSchema.safeParse(result.analysis).success, true);
+  assert.doesNotMatch(JSON.stringify(result.analysis), /MUST NOT ENTER THE CANONICAL CLAIM/);
+});
+
+test("anthropic canonicalizes unambiguous transport kind and enum formatting drift", async () => {
+  const transport = canonicalAnalysisToAnthropicTransportFixture(validAnthropicAnalysisFixture);
+  const classification = transport.records.find((record) => record.kind === "classification");
+  classification.kind = " Classification ";
+  classification.key = "air shipment net";
+  classification.confidence = 94;
+  const documentType = transport.records.find((record) => record.kind === "document_type");
+  documentType.kind = "Document Type";
+  documentType.key = documentType.key.replaceAll(" ", "-").toLowerCase();
+  const field = transport.records.find((record) => record.kind === "field");
+  field.kind = "FIELD";
+  field.key = field.key.replaceAll("_", " ").toUpperCase();
+  transport.sources[0].page = -1;
+  transport.sources[0].confidence = 94;
+
+  const provider = createAnthropicProvider({
+    apiKey: "server-only-key",
+    fetchImpl: async () => new Response(JSON.stringify(anthropicMessageFixture(undefined, {
+      content: [{ type: "text", text: JSON.stringify(transport) }],
+    })), { status: 200 }),
+  });
+  const result = await provider.analyze({
+    claim: { id: "transport-format-drift" },
+    evidence: multiDocumentEvidenceFixture,
+    files: multiDocumentEvidenceFixture.map((item) => ({ mimetype: item.mime_type, buffer: Buffer.from(item.pages[0].text) })),
+  });
+
+  assert.equal(result.analysis.classification.business_line, "Air Shipment (NET)");
+  assert.equal(result.analysis.classification.confidence, 0.94);
+  assert.equal(result.analysis.classification.sources[0].page, null);
+  assert.equal(claimAnalysisSchema.safeParse(result.analysis).success, true);
+});
+
+test("anthropic safely recovers missing envelope records and invalid citation indexes without inventing facts", async () => {
+  const transport = canonicalAnalysisToAnthropicTransportFixture(validAnthropicAnalysisFixture);
+  transport.records = transport.records.filter((record) => !["classification", "summary"].includes(record.kind));
+  const supportedField = transport.records.find((record) => record.kind === "field" && record.value);
+  supportedField.source_refs = [transport.sources.length + 100];
+  const unknownField = structuredClone(supportedField);
+  unknownField.key = "unsupported_claim_fact";
+  unknownField.value = "MUST NOT ENTER THE CANONICAL CLAIM";
+  transport.records.push(unknownField);
+
+  let calls = 0;
+  const provider = createAnthropicProvider({
+    apiKey: "server-only-key",
+    fetchImpl: async () => {
+      calls += 1;
+      return new Response(JSON.stringify(anthropicMessageFixture(undefined, {
+        content: [{ type: "text", text: JSON.stringify(transport) }],
+      })), { status: 200 });
+    },
+  });
+  const result = await provider.analyze({
+    claim: { id: "safe-transport-recovery" },
+    evidence: multiDocumentEvidenceFixture,
+    files: multiDocumentEvidenceFixture.map((item) => ({ mimetype: item.mime_type, buffer: Buffer.from(item.pages[0].text) })),
+  });
+
+  assert.equal(calls, 1);
+  assert.equal(result.analysis.classification.business_line, "Other / Requires Review");
+  assert.match(result.analysis.summary, /no claim summary/i);
+  assert.equal(result.analysis.fields.find((item) => item.field === supportedField.key).value, null);
+  assert.match(result.analysis.warnings.join(" "), /invalid citation reference/i);
+  assert.doesNotMatch(JSON.stringify(result.analysis), /MUST NOT ENTER THE CANONICAL CLAIM/);
+  assert.equal(claimAnalysisSchema.safeParse(result.analysis).success, true);
+});
+
+test("anthropic turns conflicting classification records into explicit human review", async () => {
+  const transport = canonicalAnalysisToAnthropicTransportFixture(validAnthropicAnalysisFixture);
+  const conflicting = structuredClone(transport.records.find((record) => record.kind === "classification"));
+  conflicting.key = "Property";
+  conflicting.text = "A second incompatible classification was returned.";
+  transport.records.push(conflicting);
+
+  const provider = createAnthropicProvider({
+    apiKey: "server-only-key",
+    fetchImpl: async () => new Response(JSON.stringify(anthropicMessageFixture(undefined, {
+      content: [{ type: "text", text: JSON.stringify(transport) }],
+    })), { status: 200 }),
+  });
+  const result = await provider.analyze({
+    claim: { id: "conflicting-classification" },
+    evidence: multiDocumentEvidenceFixture,
+    files: multiDocumentEvidenceFixture.map((item) => ({ mimetype: item.mime_type, buffer: Buffer.from(item.pages[0].text) })),
+  });
+
+  assert.equal(result.analysis.classification.business_line, "Other / Requires Review");
+  assert.match(result.analysis.warnings.join(" "), /conflicting classification candidates/i);
+  assert.match(result.analysis.human_review_required.join(" "), /confirm the claim business line/i);
+  assert.equal(claimAnalysisSchema.safeParse(result.analysis).success, true);
+});
+
+test("anthropic nullable-slot recovery does not accept malformed nested values, unknown keys, or invalid structures", async () => {
+  const cases = [
+    ["nested value object", (transport) => { transport.records[0].value = { value: null }; }],
+    ["unknown top-level field", (transport) => { transport.unexpected = true; }],
+    ["unknown record field", (transport) => { transport.records[0].unexpected = "not allowed"; }],
+    ["unknown record kind", (transport) => { transport.records[0].kind = "unsupported_fact_bucket"; }],
+    ["missing required slot", (transport) => { delete transport.records[0].key; }],
+  ];
+
+  for (const [name, mutate] of cases) {
+    const transport = canonicalAnalysisToAnthropicTransportFixture(validAnthropicAnalysisFixture);
+    mutate(transport);
+    let calls = 0;
+    const provider = createAnthropicProvider({
+      apiKey: "server-only-key",
+      fetchImpl: async () => {
+        calls += 1;
+        return new Response(JSON.stringify(anthropicMessageFixture(undefined, {
+          content: [{ type: "text", text: JSON.stringify(transport) }],
+        })), { status: 200 });
+      },
+    });
+
+    await assert.rejects(
+      provider.analyze({ claim: { id: `strict-${name}` }, evidence: multiDocumentEvidenceFixture, files: [] }),
+      /transport schema validation failed/i,
+      name,
+    );
+    assert.equal(calls, 1, `${name} must fail after one response without retrying`);
+  }
 });
 
 test("anthropic rejects malformed commas and quotes locally", async () => {
@@ -690,17 +928,19 @@ test("anthropic completes missing optional claim fields locally as null after va
   });
 });
 
-test("anthropic rejects a mocked response missing required material fields", async () => {
-  const missingFields = structuredClone(validAnthropicAnalysisFixture);
-  delete missingFields.evidence_findings;
+test("anthropic rejects a mocked response missing a required transport collection", async () => {
+  const missingRecords = toAnthropicTransport(validAnthropicAnalysisFixture);
+  delete missingRecords.records;
   const provider = createAnthropicProvider({
     apiKey: "server-only-key",
-    fetchImpl: async () => new Response(JSON.stringify(anthropicMessageFixture(missingFields)), { status: 200 }),
+    fetchImpl: async () => new Response(JSON.stringify(anthropicMessageFixture(undefined, {
+      content: [{ type: "text", text: JSON.stringify(missingRecords) }],
+    })), { status: 200 }),
   });
 
   await assert.rejects(
     provider.analyze({ claim: { id: "missing-fields" }, evidence: [], files: [] }),
-    /structured output schema validation failed.*evidence_findings/is,
+    /transport schema validation failed.*records/is,
   );
 });
 

@@ -1,4 +1,5 @@
 import crypto from "node:crypto";
+import { z } from "zod";
 import {
   BUSINESS_LINES,
   CLAIM_FIELDS,
@@ -7,6 +8,7 @@ import {
   claimAnalysisSchema,
 } from "../claimAnalysisSchema.mjs";
 import { safeAiDebugLog, safeAiDiagnosticLog } from "../debugLog.mjs";
+import { sanitizeReferenceNarrative } from "../referenceLayer.mjs";
 import { SYSTEM_INSTRUCTIONS, promptText } from "./openaiProvider.mjs";
 import {
   prepareClaimContextForAnthropic,
@@ -16,14 +18,23 @@ import {
 const ANTHROPIC_MESSAGES_URL = "https://api.anthropic.com/v1/messages";
 const DEFAULT_MODEL = "claude-sonnet-4-6";
 const DEFAULT_MAX_OUTPUT_TOKENS = 64_000;
-const MAX_SONNET_4_6_OUTPUT_TOKENS = 128_000;
+const MAX_SONNET_4_6_OUTPUT_TOKENS = 64_000;
 const ANTHROPIC_JSON_CONTRACT = `The response is constrained by Anthropic JSON structured output. Return only the structured payload: no Markdown fences, preface, trailing commentary, or extra keys.
 All confidence values must be between 0 and 1. Use only these exact values:
 business_line=${JSON.stringify(BUSINESS_LINES)}
 document_type=${JSON.stringify(DOCUMENT_TYPES)}
 field=${JSON.stringify(CLAIM_FIELDS)}
 evidence_mode=${JSON.stringify(EVIDENCE_MODES)}
-Include every top-level key. In fields, return only evidence-supported non-null fields; the application adds unsupported fields locally as null. Never omit a material claim finding, conflict, causation issue, coverage issue, liability issue, quantum item, salvage issue, or recovery issue.
+The transport encoding rules below override the earlier canonical null/page wording; the application reconstructs canonical nulls locally. Return exactly two top-level arrays: sources and records. Register each distinct citation once in sources, then cite its zero-based array index in each record's source_refs. Use page=0 when the source page is unknown. Never use an invalid source index.
+Every record must include every key in the constrained schema. Use an empty string, false, 0, or [] for keys that do not apply to that record. Use only these record kinds and mappings:
+- classification: key=business_line, text=rationale, confidence and source_refs.
+- document_type: key=document_type, text=rationale, flag=sufficient_information, confidence and source_refs.
+- field: key=field, value=value, normalized_value=normalized value (empty if unavailable), flag=requires_confirmation, confidence and source_refs. Return only evidence-supported non-null field records; the application adds unsupported fields locally as null.
+- adjustment: text=description, quantity, unit_price, value=adjusted_value, currency, basis, confidence and source_refs.
+- missing_document: key=document_type, text=reason, details=missing_information.
+- finding: text=finding, confidence and source_refs.
+- summary, warning, review: put the complete item in text; all other record keys use their empty defaults.
+Return exactly one classification and one summary record. Records of every other kind may repeat without an artificial limit. Never omit a material claim finding, conflict, causation issue, coverage issue, liability issue, quantum item, salvage issue, or recovery issue.
 Be concise without losing evidence: do not repeat the same fact across sections; keep summary to at most 4 short sentences; keep each rationale, basis, warning, review item, and finding to one short sentence; include the strongest non-duplicate sources needed to support each item and both sides of every conflict; keep each supporting_text excerpt exact and normally at most 240 characters, using more only when needed to preserve meaning. Return only detected substantive document_types and only required missing_documents.`;
 const ANTHROPIC_SYSTEM_INSTRUCTIONS = `${SYSTEM_INSTRUCTIONS}
 
@@ -59,68 +70,331 @@ const closedObject = (properties) => ({
   additionalProperties: false,
 });
 const arrayOf = (items) => ({ type: "array", items });
-const nullable = (type) => ({ type: [type, "null"] });
 const sourceOutputSchema = () => closedObject({
   document_id: { type: "string" },
   document_name: { type: "string" },
-  page: nullable("integer"),
+  page: { type: "integer" },
   supporting_text: { type: "string" },
   confidence: { type: "number" },
   evidence_mode: { type: "string" },
 });
 
-// This deliberately constrains structure and primitive types only. The full
-// enums, numeric bounds, and evidence rules remain enforced by the canonical
-// Zod schema after parsing. Omitting large enums keeps Anthropic's compiled
-// grammar below its complexity ceiling without weakening local validation.
+const recordOutputSchema = () => closedObject({
+  kind: { type: "string" },
+  key: { type: "string" },
+  value: { type: "string" },
+  normalized_value: { type: "string" },
+  text: { type: "string" },
+  quantity: { type: "string" },
+  unit_price: { type: "string" },
+  currency: { type: "string" },
+  basis: { type: "string" },
+  confidence: { type: "number" },
+  flag: { type: "boolean" },
+  source_refs: arrayOf({ type: "integer" }),
+  details: arrayOf({ type: "string" }),
+});
+
+// Anthropic compiles this transport schema into a grammar. Keep only one copy
+// of the citation shape and one generic record shape here; the application
+// reconstructs and validates the unchanged canonical claim schema locally.
 function structuredOutputSchema() {
-  const sources = () => arrayOf(sourceOutputSchema());
   return closedObject({
-    classification: closedObject({
-      business_line: { type: "string" },
-      confidence: { type: "number" },
-      rationale: { type: "string" },
-      sources: sources(),
-    }),
-    document_types: arrayOf(closedObject({
-      document_type: { type: "string" },
-      confidence: { type: "number" },
-      sufficient_information: { type: "boolean" },
-      rationale: { type: "string" },
-      sources: sources(),
-    })),
-    fields: arrayOf(closedObject({
-      field: { type: "string" },
-      value: nullable("string"),
-      normalized_value: nullable("string"),
-      confidence: { type: "number" },
-      requires_confirmation: { type: "boolean" },
-      sources: sources(),
-    })),
-    adjustment_line_items: arrayOf(closedObject({
-      description: { type: "string" },
-      quantity: nullable("string"),
-      unit_price: nullable("string"),
-      adjusted_value: { type: "string" },
-      currency: nullable("string"),
-      basis: { type: "string" },
-      confidence: { type: "number" },
-      sources: sources(),
-    })),
-    missing_documents: arrayOf(closedObject({
-      document_type: { type: "string" },
-      reason: { type: "string" },
-      missing_information: arrayOf({ type: "string" }),
-    })),
-    evidence_findings: arrayOf(closedObject({
-      finding: { type: "string" },
-      confidence: { type: "number" },
-      sources: sources(),
-    })),
-    summary: { type: "string" },
-    warnings: arrayOf({ type: "string" }),
-    human_review_required: arrayOf({ type: "string" }),
+    sources: arrayOf(sourceOutputSchema()),
+    records: arrayOf(recordOutputSchema()),
   });
+}
+
+function measureJsonSchemaComplexity(schema) {
+  const metrics = {
+    serialized_bytes: Buffer.byteLength(JSON.stringify(schema)),
+    property_occurrences: 0,
+    object_nodes: 0,
+    array_nodes: 0,
+    union_nodes: 0,
+    union_branches: 0,
+  };
+  const visit = (node) => {
+    if (!node || typeof node !== "object" || Array.isArray(node)) return;
+    if (Array.isArray(node.type)) {
+      metrics.union_nodes += 1;
+      metrics.union_branches += node.type.length;
+    }
+    if (node.type === "object") {
+      metrics.object_nodes += 1;
+      metrics.property_occurrences += Object.keys(node.properties || {}).length;
+      Object.values(node.properties || {}).forEach(visit);
+    }
+    if (node.type === "array") {
+      metrics.array_nodes += 1;
+      visit(node.items);
+    }
+  };
+  visit(schema);
+  return metrics;
+}
+
+const TRANSPORT_RECORD_KINDS = [
+  "classification",
+  "document_type",
+  "field",
+  "adjustment",
+  "missing_document",
+  "finding",
+  "summary",
+  "warning",
+  "review",
+];
+
+const TRANSPORT_KIND_ALIASES = new Map([
+  ["classification", "classification"],
+  ["document_type", "document_type"],
+  ["document_types", "document_type"],
+  ["documenttype", "document_type"],
+  ["field", "field"],
+  ["fields", "field"],
+  ["adjustment", "adjustment"],
+  ["adjustment_item", "adjustment"],
+  ["adjustment_line_item", "adjustment"],
+  ["adjustment_line_items", "adjustment"],
+  ["missing_document", "missing_document"],
+  ["missing_documents", "missing_document"],
+  ["missingdocument", "missing_document"],
+  ["finding", "finding"],
+  ["evidence_finding", "finding"],
+  ["coverage_finding", "finding"],
+  ["liability_finding", "finding"],
+  ["quantum_finding", "finding"],
+  ["salvage_finding", "finding"],
+  ["recovery_finding", "finding"],
+  ["conflict", "finding"],
+  ["summary", "summary"],
+  ["warning", "warning"],
+  ["warnings", "warning"],
+  ["review", "review"],
+  ["human_review", "review"],
+  ["human_review_item", "review"],
+  ["human_review_required", "review"],
+]);
+
+const transportKindFingerprint = (value) => String(value || "")
+  .trim()
+  .toLowerCase()
+  .replace(/[^a-z0-9]+/g, "_")
+  .replace(/^_+|_+$/g, "");
+
+const normalizeTransportConfidence = (value) => Number.isInteger(value) && value >= 10 && value <= 100
+  ? value / 100
+  : value;
+
+const NULLABLE_TRANSPORT_STRING_SLOTS = [
+  "key",
+  "value",
+  "normalized_value",
+  "text",
+  "quantity",
+  "unit_price",
+  "currency",
+  "basis",
+];
+
+function normalizeTransportRecord(record) {
+  const normalized = { ...record };
+  for (const slot of NULLABLE_TRANSPORT_STRING_SLOTS) {
+    if (normalized[slot] === null) normalized[slot] = "";
+  }
+  if (normalized.confidence === null) normalized.confidence = 0;
+  else normalized.confidence = normalizeTransportConfidence(normalized.confidence);
+  if (normalized.flag === null) normalized.flag = false;
+  if (normalized.source_refs === null) normalized.source_refs = [];
+  if (normalized.details === null) normalized.details = [];
+  const fingerprint = transportKindFingerprint(normalized.kind);
+  normalized.kind = TRANSPORT_KIND_ALIASES.get(fingerprint) || normalized.kind;
+  return normalized;
+}
+
+function normalizeAnthropicTransportShape(value) {
+  if (!value || typeof value !== "object" || Array.isArray(value)) return value;
+  return {
+    ...value,
+    sources: Array.isArray(value.sources)
+      ? value.sources.map((source) => source && typeof source === "object" && !Array.isArray(source)
+        ? {
+            ...source,
+            page: source.page === null ? 0 : source.page,
+            confidence: source.confidence === null ? 0 : normalizeTransportConfidence(source.confidence),
+          }
+        : source)
+      : value.sources,
+    records: Array.isArray(value.records)
+      ? value.records.map((record) => {
+          if (!record || typeof record !== "object" || Array.isArray(record)) return record;
+          return normalizeTransportRecord(record);
+        })
+      : value.records,
+  };
+}
+
+const anthropicTransportSourceSchema = z.object({
+  document_id: z.string(),
+  document_name: z.string(),
+  page: z.number().int(),
+  supporting_text: z.string(),
+  confidence: z.number().min(0).max(1),
+  evidence_mode: z.string(),
+}).strict();
+
+const anthropicTransportRecordSchema = z.object({
+  kind: z.enum(TRANSPORT_RECORD_KINDS),
+  key: z.string(),
+  value: z.string(),
+  normalized_value: z.string(),
+  text: z.string(),
+  quantity: z.string(),
+  unit_price: z.string(),
+  currency: z.string(),
+  basis: z.string(),
+  confidence: z.number().min(0).max(1),
+  flag: z.boolean(),
+  source_refs: z.array(z.number().int().nonnegative()),
+  details: z.array(z.string()),
+}).strict();
+
+const anthropicTransportSchema = z.object({
+  sources: z.array(anthropicTransportSourceSchema),
+  records: z.array(anthropicTransportRecordSchema),
+}).strict();
+
+const emptyToNull = (value) => value === "" ? null : value;
+
+function reconstructCanonicalAnalysis(transport) {
+  const recordsOf = (kind) => transport.records.filter((record) => record.kind === kind);
+  const reconstructionWarnings = [];
+  const reconstructionReviews = [];
+  let discardedSourceRefs = 0;
+  const sourcesFor = (record) => record.source_refs.map((sourceIndex) => {
+    const source = transport.sources[sourceIndex];
+    if (!source) {
+      discardedSourceRefs += 1;
+      return null;
+    }
+    const evidenceMode = canonicalEnumValue(source.evidence_mode, EVIDENCE_MODES);
+    if (!EVIDENCE_MODES.includes(evidenceMode)) {
+      discardedSourceRefs += 1;
+      return null;
+    }
+    return {
+      ...source,
+      page: source.page <= 0 ? null : source.page,
+      evidence_mode: evidenceMode,
+    };
+  }).filter(Boolean).filter((source, index, sources) => sources.findIndex((candidate) =>
+    candidate.document_id === source.document_id
+      && candidate.page === source.page
+      && candidate.supporting_text === source.supporting_text) === index);
+
+  const canonicalRecordKey = (record, allowed) => canonicalEnumValue(record.key, allowed);
+  const knownRecords = (kind, allowed) => recordsOf(kind).flatMap((record) => {
+    const key = canonicalRecordKey(record, allowed);
+    if (!allowed.includes(key)) return [];
+    return [{ ...record, key }];
+  });
+  const classificationRecords = knownRecords("classification", BUSINESS_LINES);
+  const classificationCandidates = [...new Set(classificationRecords.map((record) => record.key))];
+  let classification;
+  if (classificationCandidates.length === 1) {
+    const matching = classificationRecords.filter((record) => record.key === classificationCandidates[0]);
+    classification = {
+      business_line: classificationCandidates[0],
+      confidence: Math.min(...matching.map((record) => record.confidence)),
+      rationale: [...new Set(matching.map((record) => record.text).filter(Boolean))].join(" "),
+      sources: matching.flatMap(sourcesFor),
+    };
+    if (matching.length > 1) {
+      reconstructionWarnings.push("Claude returned duplicate matching classification records; their rationales and citations were merged locally.");
+    }
+  } else {
+    const detail = classificationCandidates.length
+      ? `conflicting classification candidates (${classificationCandidates.join(", ")})`
+      : "no recognized classification record";
+    classification = {
+      business_line: "Other / Requires Review",
+      confidence: 0,
+      rationale: `Claude returned ${detail}; classification requires human review.`,
+      sources: classificationRecords.flatMap(sourcesFor),
+    };
+    reconstructionWarnings.push(`Claude returned ${detail}; no business line was selected locally.`);
+    reconstructionReviews.push("Confirm the claim business line from the cited evidence before report issue.");
+  }
+
+  const summaryRecords = recordsOf("summary").map((record) => record.text.trim()).filter(Boolean);
+  const summary = [...new Set(summaryRecords)].join(" ")
+    || "Claude returned no claim summary; review the structured findings and source evidence.";
+  if (summaryRecords.length !== 1) {
+    reconstructionWarnings.push(summaryRecords.length
+      ? "Claude returned multiple summary records; their distinct text was combined locally."
+      : "Claude returned no non-empty summary record.");
+  }
+
+  const documentTypeRecords = knownRecords("document_type", DOCUMENT_TYPES);
+  const fieldRecords = knownRecords("field", CLAIM_FIELDS);
+  const missingDocumentRecords = knownRecords("missing_document", DOCUMENT_TYPES);
+  const adjustmentRecords = recordsOf("adjustment").filter((record) => record.text.trim() && record.value.trim());
+  const findingRecords = recordsOf("finding").filter((record) => record.text.trim());
+  const discardedKnownKeyRecords = recordsOf("document_type").length - documentTypeRecords.length
+    + recordsOf("field").length - fieldRecords.length
+    + recordsOf("missing_document").length - missingDocumentRecords.length
+    + recordsOf("adjustment").length - adjustmentRecords.length
+    + recordsOf("finding").length - findingRecords.length;
+  if (discardedKnownKeyRecords) {
+    reconstructionWarnings.push(`${discardedKnownKeyRecords} transport record(s) with unrecognized canonical keys were ignored locally.`);
+  }
+
+  const reconstructed = {
+    classification,
+    document_types: documentTypeRecords.map((record) => ({
+      document_type: record.key,
+      confidence: record.confidence,
+      sufficient_information: record.flag,
+      rationale: record.text,
+      sources: sourcesFor(record),
+    })),
+    fields: fieldRecords.map((record) => ({
+      field: record.key,
+      value: emptyToNull(record.value),
+      normalized_value: emptyToNull(record.normalized_value),
+      confidence: record.confidence,
+      requires_confirmation: record.flag,
+      sources: sourcesFor(record),
+    })),
+    adjustment_line_items: adjustmentRecords.map((record) => ({
+      description: record.text,
+      quantity: emptyToNull(record.quantity),
+      unit_price: emptyToNull(record.unit_price),
+      adjusted_value: record.value,
+      currency: emptyToNull(record.currency),
+      basis: record.basis,
+      confidence: record.confidence,
+      sources: sourcesFor(record),
+    })),
+    missing_documents: missingDocumentRecords.map((record) => ({
+      document_type: record.key,
+      reason: record.text,
+      missing_information: record.details,
+    })),
+    evidence_findings: findingRecords.map((record) => ({
+      finding: record.text,
+      confidence: record.confidence,
+      sources: sourcesFor(record),
+    })),
+    summary,
+    warnings: [...recordsOf("warning").map((record) => record.text).filter(Boolean), ...reconstructionWarnings],
+    human_review_required: [...recordsOf("review").map((record) => record.text).filter(Boolean), ...reconstructionReviews],
+  };
+  if (discardedSourceRefs) {
+    reconstructed.warnings.push(`${discardedSourceRefs} invalid citation reference(s) were discarded locally; unsupported facts were withheld.`);
+  }
+  return reconstructed;
 }
 
 function resolveMaxOutputTokens(value, model = DEFAULT_MODEL) {
@@ -449,9 +723,16 @@ function parseAnthropicResponseBody(responseText, contentType = "") {
   return isEventStream ? parseAnthropicEventStream(responseText) : JSON.parse(responseText || "{}");
 }
 
+const enumFingerprint = (value) => String(value || "")
+  .normalize("NFKD")
+  .replace(/\p{M}/gu, "")
+  .toLocaleLowerCase()
+  .replace(/[^a-z0-9]+/g, "");
+
 const canonicalEnumValue = (value, allowed) => {
   if (typeof value !== "string") return value;
-  return allowed.find((candidate) => candidate.toLocaleLowerCase() === value.toLocaleLowerCase()) || value;
+  const fingerprint = enumFingerprint(value);
+  return allowed.find((candidate) => enumFingerprint(candidate) === fingerprint) || value;
 };
 
 function normalizeAnthropicEnumCasing(value) {
@@ -473,6 +754,7 @@ function normalizeAnthropicEnumCasing(value) {
     parsed?.classification?.sources,
     ...(parsed?.document_types || []).map((item) => item.sources),
     ...(parsed?.fields || []).map((item) => item.sources),
+    ...(parsed?.adjustment_line_items || []).map((item) => item.sources),
     ...(parsed?.evidence_findings || []).map((item) => item.sources),
   ];
   for (const sources of sourceGroups) {
@@ -539,7 +821,20 @@ function parseAnthropicStructuredResponse(body, status, requestId) {
       type: "invalid_structured_json",
     }, requestId);
   }
-  const validation = claimAnalysisSchema.safeParse(normalizeAnthropicEnumCasing(decoded));
+  const transportValidation = anthropicTransportSchema.safeParse(normalizeAnthropicTransportShape(decoded));
+  if (!transportValidation.success) {
+    const issues = transportValidation.error.issues.slice(0, 12).map((issue) => {
+      const path = issue.path.length ? issue.path.join(".") : "root";
+      return `${path}: ${issue.message}`;
+    });
+    throw providerError(status, {
+      message: `Claude transport schema validation failed: ${issues.join("; ")}`,
+      type: "invalid_transport_schema",
+    }, requestId);
+  }
+
+  const reconstructed = reconstructCanonicalAnalysis(transportValidation.data);
+  const validation = claimAnalysisSchema.safeParse(normalizeAnthropicEnumCasing(reconstructed));
   if (!validation.success) {
     const issues = validation.error.issues.slice(0, 12).map((issue) => {
       const path = issue.path.length ? issue.path.join(".") : "root";
@@ -550,7 +845,7 @@ function parseAnthropicStructuredResponse(body, status, requestId) {
       type: "invalid_structured_schema",
     }, requestId);
   }
-  return completeUnsupportedClaimFields(validation.data);
+  return claimAnalysisSchema.parse(completeUnsupportedClaimFields(validation.data));
 }
 
 function contentBlocks(claim, evidence, files, styleReferences) {
@@ -713,17 +1008,19 @@ export function createAnthropicProvider({
         response_id: body.id || requestId,
         provider_api_status: response.status,
         analyzed_at: new Date().toISOString(),
-        analysis: enforceAnthropicGrounding(parsed, evidence),
+        analysis: enforceAnthropicGrounding(sanitizeReferenceNarrative(parsed, styleReferences), evidence),
       };
     },
   };
 }
 
 export const anthropicProviderInternals = {
+  anthropicTransportSchema,
   completeUnsupportedClaimFields,
   defaultMaxOutputTokens: DEFAULT_MAX_OUTPUT_TOKENS,
   jsonContract: ANTHROPIC_JSON_CONTRACT,
   maxSonnet46OutputTokens: MAX_SONNET_4_6_OUTPUT_TOKENS,
+  measureJsonSchemaComplexity,
   resolveMaxOutputTokens,
   systemInstructions: ANTHROPIC_SYSTEM_INSTRUCTIONS,
   contentBlocks,
@@ -737,6 +1034,7 @@ export const anthropicProviderInternals = {
   parseAnthropicResponseBody,
   parseAnthropicStructuredResponse,
   providerError,
+  reconstructCanonicalAnalysis,
   repairedExtractedTextSource,
   transportErrorMetadata,
   successfulResponseError,

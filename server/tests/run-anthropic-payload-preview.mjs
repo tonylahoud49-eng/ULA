@@ -3,7 +3,7 @@ import fs from "node:fs/promises";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { validateAnthropicClaimLocally } from "../ai/anthropicPreflight.mjs";
-import { loadApprovedStyleReferences } from "../ai/referenceLayer.mjs";
+import { defaultLegalReferenceIndexPath, loadApprovedStyleReferences } from "../ai/referenceLayer.mjs";
 
 const inputPaths = process.argv.slice(2);
 if (!inputPaths.length) {
@@ -49,6 +49,7 @@ const preview = await validateAnthropicClaimLocally({
   manifest,
   files,
   styleReferences,
+  legalReferenceIndexPath: process.env.ULA_LEGAL_REFERENCE_INDEX || defaultLegalReferenceIndexPath(),
 });
 
 console.log(JSON.stringify({
@@ -65,6 +66,11 @@ console.log(JSON.stringify({
   estimated_input_tokens: preview.stats.estimated_input_tokens,
   max_output_tokens: preview.stats.max_output_tokens,
   configured_limits: preview.stats.limits,
+  legal_references: {
+    count: preview.stats.legal_reference_count,
+    characters: preview.stats.legal_reference_characters,
+    sources: preview.stats.legal_reference_sources,
+  },
   local_reduction: preview.stats.local_reduction,
   payload_summary: preview.stats.payload_summary,
 }, null, 2));

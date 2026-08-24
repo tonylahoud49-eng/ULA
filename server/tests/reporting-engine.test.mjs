@@ -59,7 +59,12 @@ test("approved air report structure uses only the new claim evidence and validat
   assert.ok(draft.normalizedRecord.chronology.length >= 2);
   assert.ok(draft.normalizedRecord.validation_checks.some((check) => check.id === "cross-document-policy_number" && check.status === "validated"));
   assert.equal(draft.normalizedRecord.cause_assessment.status, "requires_professional_determination");
+  assert.ok(draft.normalizedRecord.cause_assessment.hypotheses.length >= 1);
   assert.ok(draft.normalizedRecord.policy_analysis.entries.some((entry) => entry.topic === "Temperature condition"));
+  assert.equal(draft.normalizedRecord.quantum_analysis.status, "arithmetically_validated_requires_coverage_review");
+  assert.equal(draft.normalizedRecord.report_quality.professional_review_required, true);
+  assert.equal(draft.normalizedRecord.report_quality.approval_required_before_issue, true);
+  assert.deepEqual(draft.normalizedRecord.professional_reasoning.quantum, draft.normalizedRecord.quantum_analysis);
   assert.ok(draft.content.indexOf("## Report Summary") < draft.content.indexOf("## Report and adjustment note"));
   assert.ok(draft.content.indexOf("## SURVEYOR NOTES") < draft.content.indexOf("## CAUSE OF LOSS"));
   assert.ok(draft.content.indexOf("## ADEQUACY OF THE INSURED VALUE") < draft.content.indexOf("## APPOINTMENT OF ASSESSORS"));
@@ -285,7 +290,7 @@ All these operations took place in the presence of the parties below.`,
   assert.match(draft.content, /31\/05\/2026: Cargo arrived/);
   assert.match(draft.content, /FOB, freight, and insurance total USD 70206\.45, matching the commercial invoice total/);
   assert.match(draft.content, /The recorded policy inception \(16\/Apr\/2026\) follows the recorded departure/);
-  assert.match(draft.content, /does not establish a definitive proximate cause/);
+  assert.match(draft.content, /The proximate cause of loss is not established from the available evidence/);
   assert.doesNotMatch(draft.content, /Victoire|Judi Lebanon|MC\/0002606|MSNU7244246|MEDULB209962|13,552\.80/i);
 });
 
@@ -693,9 +698,18 @@ Subject: Elite Ref: 113/2026
   assert.ok(record.validation_checks.some((check) => check.id === "insured-valuation-basis" && check.status === "validated"));
   assert.ok(record.policy_analysis.entries.some((entry) => entry.topic === "Intact-seal shortage extension"));
   assert.ok(record.policy_analysis.entries.some((entry) => entry.topic === "Mysterious / unexplained disappearance exclusion"));
+  assert.ok(record.policy_analysis.entries.every((entry) => entry.review_question || entry.topic === "Transit attachment / duration"));
   assert.match(record.cause_assessment.evidence_gap, /pre-shipment quantity discrepancy/i);
   assert.match(record.cause_assessment.evidence_gap, /not every container count was witnessed/i);
+  assert.ok(record.cause_assessment.hypotheses.some((item) => item.hypothesis === "Loss or removal during the evidenced sealed transit" && item.status === "weakened_by_available_evidence"));
+  assert.ok(record.cause_assessment.hypotheses.some((item) => item.hypothesis === "Pre-shipment quantity, packing, containerisation, or counting discrepancy" && item.status === "comparatively_more_plausible"));
+  assert.ok(record.liability_analysis.issues.some((item) => item.issue === "Potential carrier or contractual recovery"));
+  assert.equal(record.quantum_analysis.status, "provisional");
+  assert.ok(record.evidence_gaps.some((gap) => gap.category === "quantum_input" && /unsupported value/i.test(gap.impact)));
+  assert.equal(record.report_quality.professional_review_required, true);
+  assert.ok(record.report_quality.checks.some((check) => check.id === "causation" && check.status === "passed_with_professional_review"));
   assert.match(draft.content, /provisional amount of USD 8,127\.38/i);
+  assert.match(draft.content, /Competing explanations remain subject to review/i);
   assert.match(draft.content, /Two Trade Solutions and Sister Companies/);
   assert.doesNotMatch(draft.content, /insured interest is New AI Claim/i);
   assert.doesNotMatch(draft.content, /Conflicting evidence values were found for insured: Arabia Insurance/i);

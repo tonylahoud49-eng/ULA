@@ -120,6 +120,7 @@ export const CLAIM_FIELDS = [
   "affected_quantity",
   "shortage_breakdown",
   "survey_attendance_scope",
+  "report_introduction",
   "salvage_quantity",
   "total_loss_quantity",
   "temperature_requirement",

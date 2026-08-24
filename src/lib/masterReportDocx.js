@@ -2,6 +2,8 @@ import JSZip from "jszip";
 
 export const MASTER_TEMPLATE_NAME = "260536 - CR - Victoire - UTA - 1v1.docx";
 export const UNKNOWN_REPORT_VALUE = "Not established from the reviewed evidence";
+export const DIRECTOR_ASSESSOR_WORDING = "To date, it is understood that the Assured had not appointed a loss assessor to act on their behalf.";
+export const DIRECTOR_CONCLUSION_CLOSING = "We confirm having sighted the originals of all documents customarily submitted in support of a claim of this nature and remain at Insurers disposal for further instructions.";
 
 const isPresent = (value) => value !== undefined && value !== null && String(value).trim() !== "" && !/^(?:requires confirmation|unknown|not established(?: from (?:the )?reviewed evidence)?|null|undefined)$/i.test(String(value).trim());
 const unique = (items) => [...new Set(items.filter(Boolean))];
@@ -11,8 +13,34 @@ const numberValue = (value) => {
   const number = Number(String(value).replace(/[^0-9.-]/g, ""));
   return Number.isFinite(number) ? number : null;
 };
-const cleanText = (value) => String(value || "").replace(/\s+/g, " ").trim();
-const valueOrUnknown = (value) => isPresent(value) ? cleanText(value) : UNKNOWN_REPORT_VALUE;
+const OCR_GARBAGE_PATTERNS = [
+  /Place\s+of\s+Del\s*iv\s*ery/i,
+  /Appl\s*icable\s+only\s+when\s+document\s+used/i,
+  /Mul\s*timodal\s+T\s*r\s*ansport/i,
+  /page\s+intentionally\s+left\s+blank/i,
+  /(?:terms?|conditions?)\s+continued\s+on\s+(?:the\s+)?(?:next|reverse)\s+(?:page|side)/i,
+];
+
+const cleanText = (value) => String(value || "")
+  .replace(/[\u0000-\u0008\u000B\u000C\u000E-\u001F\u007F]/g, "")
+  .replace(/\s+/g, " ")
+  .trim();
+
+export function sanitizeReportValue(value, fieldName = "") {
+  if (!isPresent(value)) return null;
+  let text = cleanText(value);
+  if (!text || OCR_GARBAGE_PATTERNS.some((pattern) => pattern.test(text))) return null;
+  if ((text.match(/\b[A-Za-z]\b/g) || []).length >= 5) return null;
+  if (/\uFFFD|Ã¢â‚¬|Ãƒ|â€[™œ“”]/.test(text)) return null;
+
+  if (["applicant", "insured", "insurer", "reassured", "reinsurer", "broker", "shipper", "consignee", "carrier", "surveyor"].includes(fieldName)) {
+    text = text.split(/\s+(?=(?:Invoice|Policy|B\/?L|Bill of Lading|AWB|Container|Tel(?:ephone)?|E-?mail|Address)\s*(?:No\.?|Number|:|#))/i)[0].trim();
+    if (!text || /^(?:Invoice|Policy|Bill of Lading|AWB|Container)\b/i.test(text)) return null;
+  }
+  return text.length > 2_000 ? null : text;
+}
+
+const valueOrUnknown = (value, fieldName = "") => sanitizeReportValue(value, fieldName) || UNKNOWN_REPORT_VALUE;
 const assignmentOrUnassigned = (value) => isPresent(value) ? cleanText(value) : "Not assigned";
 
 const escapeXml = (value) => String(value ?? "")
@@ -59,9 +87,27 @@ function replaceParagraphMarker(xml, marker, values) {
   const items = (Array.isArray(values) ? values : [values]).filter((value) => value !== undefined && value !== null && String(value).trim() !== "");
   return xml.replace(/<w:p\b[\s\S]*?<\/w:p>/g, (paragraph) => {
     if (!paragraph.includes(token)) return paragraph;
+    if (!items.length && ["report_summary_findings", "document_sighting"].includes(marker)) return "";
     const prototype = cleanPrototype(paragraph);
     const resolved = items.length ? items : [UNKNOWN_REPORT_VALUE];
     return resolved.map((value) => replaceBlockText(prototype, value)).join("");
+  });
+}
+
+const decodeXmlText = (value) => String(value || "")
+  .replaceAll("&amp;", "&")
+  .replaceAll("&lt;", "<")
+  .replaceAll("&gt;", ">")
+  .replaceAll("&quot;", '"')
+  .replaceAll("&apos;", "'");
+
+function removeParagraphContainingText(xml, requiredText) {
+  const normalizedRequired = cleanText(requiredText).toLowerCase();
+  return xml.replace(/<w:p\b[\s\S]*?<\/w:p>/g, (paragraph) => {
+    const text = decodeXmlText([...paragraph.matchAll(/<w:t(?:\s[^>]*)?>([\s\S]*?)<\/w:t>/g)]
+      .map((match) => match[1])
+      .join(""));
+    return cleanText(text).toLowerCase().includes(normalizedRequired) ? "" : paragraph;
   });
 }
 
@@ -115,9 +161,12 @@ const sourceLabel = (sources = []) => {
   return labels.length ? ` (Source: ${labels.join("; ")})` : "";
 };
 
-const fact = (record, name) => record?.facts?.[name] || { value: null, sources: [] };
-const factValue = (record, name) => valueOrUnknown(fact(record, name).value);
-const factWithSource = (record, name) => `${factValue(record, name)}${sourceLabel(fact(record, name).sources)}`;
+const fact = (record, name) => {
+  const resolved = record?.facts?.[name] || { value: null, sources: [] };
+  return { ...resolved, value: sanitizeReportValue(resolved.value, name) };
+};
+const factValue = (record, name) => valueOrUnknown(fact(record, name).value, name);
+const factWithSource = (record, name) => factValue(record, name);
 const amount = (value, currency) => {
   const number = numberValue(value);
   return number === null ? UNKNOWN_REPORT_VALUE : `${currency || ""} ${number.toLocaleString("en-US", { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`.trim();
@@ -128,12 +177,119 @@ function evidenceUnit(record, name) {
   return text.match(/\b(cartons?|boxes?|packages?|crates?|units?|pieces?)\b/i)?.[1] || "units";
 }
 
-function chronologySentences(record) {
-  return (record?.chronology || []).map((event) => `${event.date}: ${event.label}.${sourceLabel(event.sources)}`);
+function findingSentences(record) {
+  return unique((record?.evidence_findings || []).flatMap((item) => {
+    const finding = sanitizeReportValue(item.finding);
+    if (!finding) return [];
+    return [finding
+      .replace(/^(?:the\s+)?(?:uploaded\s+)?(?:document|evidence|claim file)\s+(?:states|records|reports|shows|notes|identifies)\s+(?:that\s+)?/i, "")
+      .replace(/^according to (?:the )?(?:uploaded )?(?:document|evidence|claim file),?\s*/i, "")];
+  }));
 }
 
-function findingSentences(record) {
-  return (record?.evidence_findings || []).map((item) => `${cleanText(item.finding)}${sourceLabel(item.sources)}`);
+function chronologySentences(record) {
+  return (record?.chronology || []).map((event) => `${event.date}: ${event.label}`);
+}
+
+const asSentence = (value) => {
+  const text = cleanText(value);
+  return !text || /[.!?]$/.test(text) ? text : `${text}.`;
+};
+
+const joinSentences = (values, limit = 4) => unique(values.filter(Boolean)).slice(0, limit).map(asSentence).join(" ");
+
+const MATERIAL_CONFLICT_FIELDS = new Set([
+  "insured", "consignee", "policy_number", "date_of_loss", "departure_date", "arrival_date", "delivery_date",
+  "quantity", "affected_quantity", "shortage_breakdown", "claim_amount", "gross_claim_amount", "adjusted_amount",
+  "deductible", "salvage_amount", "recovery_amount", "valuation_basis", "cause_of_loss",
+]);
+
+function professionalConflict(record, conflict) {
+  const field = String(conflict?.field || "");
+  if (!MATERIAL_CONFLICT_FIELDS.has(field)) return null;
+  if (["quantity", "affected_quantity", "shortage_breakdown"].includes(field)) {
+    return "There remains a discrepancy between the quantity claimed and the quantity recorded during the survey or supporting records; this should be reconciled before the adjustment is finalised.";
+  }
+  if (["claim_amount", "gross_claim_amount", "adjusted_amount", "deductible", "salvage_amount", "recovery_amount", "valuation_basis"].includes(field)) {
+    return `The available records do not present a consistent ${field.replaceAll("_", " ")}; the applicable figure should be agreed before the adjustment is finalised.`;
+  }
+  if (["date_of_loss", "departure_date", "arrival_date", "delivery_date"].includes(field)) {
+    return `The recorded ${field.replaceAll("_", " ")} is not consistent across the claim file and should be confirmed where it affects the policy period or loss chronology.`;
+  }
+  if (["insured", "consignee"].includes(field)) {
+    return `The identity of the ${field} is not presented consistently and should be confirmed before the report is issued.`;
+  }
+  if (field === "policy_number") return "The applicable policy reference is not presented consistently and should be confirmed against the operative policy wording.";
+  if (field === "cause_of_loss") return "The records contain differing descriptions of the cause; the physical and circumstantial findings set out above should govern the final causal assessment.";
+  return null;
+}
+
+function surveyorNarrative(record) {
+  const findings = findingSentences(record);
+  const categories = [
+    ["Shipment and transit", /shipment|transit|vessel|voyage|arrival|delivery|unload|discharg|warehouse|container/i],
+    ["Container and seal condition", /seal|tamper|forced entry|container condition|door|roof|side panel|corrosion/i],
+    ["Survey observations and extent of loss", /damage|broken|crack|deteriorat|wet|shortage|missing|quantity|survey|inspection|carton|cargo/i],
+    ["Packing and protection", /pack|carton|foam|pallet|dunnage|cushion|protect|secur|stow/i],
+    ["Carrier, recovery and adjustment considerations", /carrier|attendance|certificate|salvage|recovery|discrep|claimed|invoice|count/i],
+  ];
+  const used = new Set();
+  const paragraphs = [];
+  const chronology = chronologySentences(record);
+  if (chronology.length) paragraphs.push(`Material chronology. ${joinSentences(chronology, 6)}`);
+  for (const [heading, pattern] of categories) {
+    const matching = findings.filter((item) => pattern.test(item) && !used.has(item)).slice(0, 4);
+    matching.forEach((item) => used.add(item));
+    if (matching.length) paragraphs.push(`${heading}. ${joinSentences(matching)}`);
+  }
+  const remaining = findings.filter((item) => !used.has(item)).slice(0, 3);
+  if (remaining.length) paragraphs.push(`Additional material observations. ${joinSentences(remaining, 3)}`);
+  if (!paragraphs.length) paragraphs.push("No reliable survey observation was established from the available information.");
+  return paragraphs;
+}
+
+function causeNarrative(record) {
+  const assessment = record?.cause_assessment || {};
+  const hypotheses = assessment.hypotheses || [];
+  const allFindings = findingSentences(record);
+  const opinions = allFindings.filter((item) => /in our opinion|on balance|appear(?:s)? consistent|likely attributable|most probable|available circumstances suggest|we consider|cannot be excluded|plausible (?:cause|mechanism|explanation)/i.test(item));
+  const observations = unique((assessment.observations || []).map((item) => sanitizeReportValue(item.finding)).filter((item) => item && !opinions.includes(item)));
+  const indicators = unique((assessment.indicators || []).map((item) => sanitizeReportValue(item.finding)).filter((item) => item && !opinions.includes(item) && !observations.includes(item)));
+  const limitations = allFindings.filter((item) => /not (?:witnessed|verified|established)|unable to|cannot determine|did not attend|abstained|discrep|only .*count|discovered|became visible|no (?:contemporaneous|carrier|independent)/i.test(item));
+  const paragraphs = [];
+  const leading = hypotheses.find((hypothesis) => ["supported_by_available_evidence", "comparatively_more_plausible"].includes(hypothesis.status));
+
+  if (assessment.explicit_cause?.value) {
+    paragraphs.push(`The proximate cause of loss is ${cleanText(assessment.explicit_cause.value)}.`);
+  } else if (opinions.length || assessment.reasoned_inference || leading) {
+    paragraphs.push("The proximate cause of loss is not expressly established as a source fact; the available evidence supports the qualified professional assessment set out below.");
+  } else {
+    paragraphs.push("The proximate cause of loss is not established from the available evidence.");
+  }
+
+  if (observations.length) {
+    paragraphs.push(`The material physical and survey circumstances are as follows: ${joinSentences(observations, 4)}`);
+  }
+  if (indicators.length) {
+    paragraphs.push(`The causal significance of those circumstances lies principally in the following indicators: ${joinSentences(indicators, 4)}`);
+  }
+  if (opinions.length) {
+    paragraphs.push(joinSentences(opinions, 3));
+  } else if (assessment.explicit_cause?.value) {
+    paragraphs.push("This cause conclusion is confined to the circumstances established in the claim file and remains subject to professional policy review.");
+  } else if (assessment.reasoned_inference) {
+    paragraphs.push(`In our opinion, ${asSentence(assessment.reasoned_inference).replace(/^The\s+/, "the ")}`);
+  } else {
+    if (leading) paragraphs.push(`On the available evidence, ${cleanText(leading.hypothesis).toLowerCase()} is ${leading.status === "comparatively_more_plausible" ? "comparatively more plausible than the tested alternatives" : "supported as a provisional causal hypothesis"}. ${cleanText(leading.assessment)}`);
+  }
+  const competing = hypotheses.filter((hypothesis) => !["evidence_stated", "reasoned_professional_opinion", "supported_by_available_evidence", "comparatively_more_plausible"].includes(hypothesis.status));
+  if (competing.length) paragraphs.push(`Competing explanations remain subject to review: ${competing.slice(0, 3).map((hypothesis) => `${cleanText(hypothesis.hypothesis)} (${hypothesis.status.replaceAll("_", " ")})`).join("; ")}.`);
+  if (limitations.length) {
+    paragraphs.push(`The strength of that opinion is limited by the following material considerations: ${joinSentences(limitations, 3)}`);
+  } else if (!assessment.explicit_cause && assessment.evidence_gap && !assessment.reasoned_inference) {
+    paragraphs.push("The available information does not establish a definitive proximate cause; a stronger opinion would require unsupported assumptions and alternative mechanisms remain open.");
+  }
+  return paragraphs.slice(0, 5);
 }
 
 function damageRows(record) {
@@ -210,25 +366,48 @@ function adjustmentTotal(record) {
 function policyParagraphs(record) {
   const paragraphs = [];
   const terms = fact(record, "warranties_conditions").value || fact(record, "policy_terms").value;
-  if (isPresent(terms)) paragraphs.push(`The policy evidence records the following relevant terms and conditions: ${cleanText(terms)}${sourceLabel([...(fact(record, "warranties_conditions").sources || []), ...(fact(record, "policy_terms").sources || [])])}`);
-  for (const entry of record?.policy_analysis?.entries || []) paragraphs.push(`${entry.topic}: ${entry.assessment}${sourceLabel(entry.sources)}`);
+  if (isPresent(terms)) paragraphs.push(`The relevant policy terms and conditions include: ${cleanText(terms)}${sourceLabel([...(fact(record, "warranties_conditions").sources || []), ...(fact(record, "policy_terms").sources || [])])}`);
+  for (const entry of record?.policy_analysis?.entries || []) {
+    paragraphs.push(`${entry.topic}: ${entry.assessment}${entry.review_question ? ` Review question: ${entry.review_question}` : ""}`);
+  }
+  const timing = (record?.validation_checks || []).find((check) => check.id === "policy-timing");
+  if (timing && !paragraphs.some((paragraph) => paragraph.includes(timing.statement))) paragraphs.push(timing.statement);
   if (!paragraphs.length) paragraphs.push("The available evidence does not contain substantive policy wording sufficient for a warranties or conditions assessment.");
   paragraphs.push("No breach, exclusion, coverage, or liability conclusion is made unless it is directly supported by the cited policy wording and claim evidence.");
   return paragraphs;
 }
 
+function liabilityParagraphs(record) {
+  const issues = record?.liability_analysis?.issues || [];
+  if (!issues.length) return ["No specific liability or recovery route is established from the reviewed evidence; this remains subject to professional review if further contractual or third-party material becomes available."];
+  return issues.map((issue) => `${issue.issue}: ${issue.assessment}${issue.material_gaps?.length ? ` Material evidence still required: ${issue.material_gaps.join("; ")}.` : ""}`);
+}
+
 function conclusionParagraphs(record) {
   const financials = record?.financials || {};
-  const items = [];
-  if (numberValue(financials.concluded_indemnity) !== null && financials.arithmetic_valid) items.push(`The evidence-supported adjustment reconciles arithmetically to ${amount(financials.concluded_indemnity, financials.currency)}.`);
-  else if (numberValue(financials.concluded_indemnity) !== null) items.push(`The evidence states a concluded amount of ${amount(financials.concluded_indemnity, financials.currency)}, but the available components do not fully reproduce it; the amount requires professional reconciliation.`);
-  else if (numberValue(financials.provisional_indemnity) !== null) items.push(`The supported arithmetic produces a provisional amount of ${amount(financials.provisional_indemnity, financials.currency)} after the evidenced valuation uplift and deductions. This is not a concluded indemnity; remaining adjustment inputs and coverage require professional confirmation.`);
-  else items.push("The evidence does not establish every component required to calculate a concluded indemnity without assumptions.");
-  if (record?.cause_assessment?.explicit_cause) items.push(`The evidence-stated cause is ${cleanText(record.cause_assessment.explicit_cause.value)}. No broader proximate-cause conclusion is inferred.${sourceLabel(record.cause_assessment.explicit_cause.sources)}`);
-  else items.push(`${record?.cause_assessment?.evidence_gap || "A definitive proximate cause is not established by the available evidence."}${sourceLabel(record?.cause_assessment?.inference_sources || [])}`);
-  if (record?.policy_analysis?.has_wording) items.push(`${record.policy_analysis.entries.length} relevant policy topic(s) were identified and linked to the evidence; their legal effect, compliance, and coverage response remain subject to professional review.`);
-  for (const conflict of record?.conflicts || []) items.push(`Human review required: ${conflict.message}`);
-  return items;
+  const cause = causeNarrative(record);
+  const adjustedAmount = numberValue(financials.adjusted_claim_amount);
+  const currency = String(financials.currency || "").toUpperCase();
+  const scheduleCheck = (record?.validation_checks || []).find((check) => check.id === "claim-schedule-total");
+  const adjustedFactSupported = fact(record, "adjusted_amount").status === "supported";
+  const scheduleSupported = (record?.adjustment?.line_items || []).length > 0 && scheduleCheck?.status === "validated";
+  const amountSupported = adjustedAmount !== null && currency === "USD" && (adjustedFactSupported || scheduleSupported) && (financials.arithmetic_valid || scheduleSupported);
+  const amountPoint = amountSupported
+    ? `The above adjusted claim amount USD ${amount(adjustedAmount, "USD").replace(/^USD\s+/, "")} is considered fair & reasonable.`
+    : "The above adjusted claim amount in USD cannot be stated as fair & reasonable because a fully supported and reconciled USD adjusted amount is not established from the reviewed evidence.";
+  const causeOpinion = cause.find((paragraph) => /in our opinion|on balance|likely|most probable|reported cause|proximate cause of loss is/i.test(paragraph)) || cause[0];
+  const causePoint = causeOpinion || "The proximate cause of loss is not established from the available evidence.";
+  const coverageFinding = (record?.evidence_findings || []).find((finding) => /\bcover(?:age|ed)?\b|policy (?:responds|applies)|warranty|exclusion/i.test(finding.finding || "") && (finding.sources || []).length);
+  const coverPoint = coverageFinding
+    ? `Cover advice: ${cleanText(coverageFinding.finding)} This remains subject to the operative policy wording and professional approval.`
+    : record?.policy_analysis?.has_wording
+      ? "Cover advice: The identified policy warranties, exclusions, valuation provisions, and other operative terms must be applied to the established facts before cover is confirmed; final cover remains subject to professional review and approval."
+      : "Cover advice: The operative policy wording is not established from the reviewed evidence, so cover cannot be advised without inventing terms and remains subject to professional review.";
+  const recoveryIssue = (record?.liability_analysis?.issues || []).find((issue) => issue.issue === "Potential carrier or contractual recovery" && issue.status === "evidence_available_for_review");
+  const liabilityPoint = recoveryIssue
+    ? `Liable-party position: ${recoveryIssue.assessment} No liable party is held automatically without the supporting contract, notice, causation, and liability evidence.`
+    : "Liable-party position: No liable party is established from the reviewed evidence; no recovery allegation is made, and any potential rights remain subject to further evidence and professional review.";
+  return [amountPoint, causePoint, coverPoint, liabilityPoint, DIRECTOR_CONCLUSION_CLOSING];
 }
 
 export function buildMasterReportData({ report = {}, claim = {}, issueDate } = {}) {
@@ -248,13 +427,16 @@ export function buildMasterReportData({ report = {}, claim = {}, issueDate } = {
   const transportLabel = isPresent(fact(record, "bill_of_lading").value) ? "Bill of Lading" : "Air Waybill";
   const policyValue = fact(record, "insured_value").value || fact(record, "policy_limit").value;
   const policyTerms = fact(record, "policy_terms").value || fact(record, "warranties_conditions").value;
-  const chronology = chronologySentences(record);
-  const findings = findingSentences(record);
-  const validationFindings = (record.validation_checks || []).map((check) => `${check.statement}${sourceLabel(check.sources)}`);
+  const surveyorNotes = surveyorNarrative(record);
+  const causeSection = causeNarrative(record);
   const conclusions = conclusionParagraphs(record);
   const documentRegister = record.document_register || [];
   const receivedDocuments = documentRegister.map((document) => `${document.document_name} - ${document.categories?.join(", ") || "document type not established"}`);
-  const appendices = (record.appendices || []).map((document, index) => ({
+  const selectedPhotoDocuments = new Set((record.selected_photographs || []).map((item) => item.document_id));
+  const appendixDocuments = selectedPhotoDocuments.size
+    ? (record.appendices || []).filter((document) => selectedPhotoDocuments.has(document.document_id))
+    : (record.appendices || []);
+  const appendices = appendixDocuments.map((document, index) => ({
     document_id: document.document_id,
     document_name: document.document_name,
     heading: `Appendix ${String.fromCharCode(65 + index)} - ${document.categories?.includes("Photographs") ? "Photographs / Visual Evidence" : "Supporting Evidence"}`,
@@ -270,14 +452,47 @@ export function buildMasterReportData({ report = {}, claim = {}, issueDate } = {
   ].filter(Boolean).join("\n");
   const cargoParts = [fact(record, "container_numbers").value, fact(record, "quantity").value, commodity, fact(record, "gross_weight").value].filter(isPresent);
   const arrivalParts = [fact(record, "discharge_date").value && `Discharged ${fact(record, "discharge_date").value}`, fact(record, "arrival_date").value && `Arrived ${fact(record, "arrival_date").value}`, fact(record, "delivery_date").value && `Delivered ${fact(record, "delivery_date").value}`].filter(Boolean);
-  const causeSection = record.cause_assessment?.explicit_cause
-    ? [`The evidence records the cause as ${cleanText(record.cause_assessment.explicit_cause.value)}.${sourceLabel(record.cause_assessment.explicit_cause.sources)}`, "No broader proximate-cause or liability conclusion is inferred beyond the cited evidence."]
-    : [`${record.cause_assessment?.evidence_gap || "The available evidence records loss condition but does not establish a definitive proximate cause."}${sourceLabel(record.cause_assessment?.inference_sources || [])}`];
-  const adequacy = financials.insured_value !== null && financials.invoice_value !== null
-    ? `The documented insured value / limit is ${amount(financials.insured_value, currency)} and the documented invoice value is ${amount(financials.invoice_value, currency)}. The difference is ${amount(financials.insured_value - financials.invoice_value, currency)}; the invoice represents ${(financials.invoice_value / financials.insured_value * 100).toFixed(2)}% of the insured value / limit. The applicable valuation basis remains subject to policy review.`
-    : "The available evidence does not establish both a comparable insured value and invoice value; no underinsurance conclusion is made.";
-  const summaryIntro = `At the request of ${valueOrUnknown(applicant)} (the Applicant), ULA was requested to investigate a ${valueOrUnknown(record.business_line || report.business_line || claim.business_line)} claim for ${valueOrUnknown(insured)} (the Assured), establish the evidence-supported circumstances and extent of loss, and validate the claim presented under the policy. The insured interest is ${valueOrUnknown(commodity)}. Table 1 summarises the salient claim details.`;
-  const noteIntro = `${summaryIntro} The following report and adjustment note is based on all uploaded evidence listed in the enclosure section. No historical template fact has been used as claim evidence.`;
+  const documentedInsuredValue = numberValue(fact(record, "insured_value").value);
+  const invoiceValueForAdequacy = numberValue(financials.invoice_value);
+  const valuationUpliftPercent = numberValue(financials.valuation_uplift_percent);
+  const valuationBasisKnown = isPresent(financials.valuation_basis) || valuationUpliftPercent !== null;
+  const valuationBasisSupported = fact(record, "valuation_basis").status === "supported"
+    || fact(record, "valuation_uplift_percent").status === "supported";
+  const adequacyComparable = documentedInsuredValue !== null
+    && fact(record, "insured_value").status === "supported"
+    && invoiceValueForAdequacy !== null
+    && fact(record, "invoice_total").status === "supported"
+    && isPresent(currency)
+    && fact(record, "currency").status === "supported"
+    && valuationBasisKnown
+    && valuationBasisSupported;
+  const requiredInsuredValue = adequacyComparable
+    ? invoiceValueForAdequacy * (1 + (valuationUpliftPercent || 0) / 100)
+    : null;
+  const adequatelyInsured = adequacyComparable && documentedInsuredValue + 0.01 >= requiredInsuredValue;
+  const adequacySource = sourceLabel([
+    ...(fact(record, "invoice_total").sources || []),
+    ...(fact(record, "insured_value").sources || []),
+    ...(fact(record, "valuation_basis").sources || []),
+    ...(fact(record, "valuation_uplift_percent").sources || []),
+  ]);
+  const adequacy = adequacyComparable
+    ? adequatelyInsured
+      ? `The documented invoice value is ${amount(invoiceValueForAdequacy, currency)}${valuationUpliftPercent !== null ? ` and the evidenced valuation basis requires a ${valuationUpliftPercent}% uplift, producing a value at risk of ${amount(requiredInsuredValue, currency)}` : ""}. The documented insured value is ${amount(documentedInsuredValue, currency)}. Accordingly, the invoice values are adequately insured and there is no underinsurance on the evidenced valuation basis.${adequacySource}`
+      : `The documented invoice value is ${amount(invoiceValueForAdequacy, currency)}${valuationUpliftPercent !== null ? ` and the evidenced valuation basis requires a ${valuationUpliftPercent}% uplift, producing a value at risk of ${amount(requiredInsuredValue, currency)}` : ""}. The documented insured value is ${amount(documentedInsuredValue, currency)}. Accordingly, the invoice values are not adequately insured and there is underinsurance of ${amount(requiredInsuredValue - documentedInsuredValue, currency)} on the evidenced valuation basis.${adequacySource}`
+    : "Whether the invoice values are adequately insured and whether there is underinsurance cannot be established from the available evidence because a comparable invoice value, insured value, currency, and evidenced valuation basis are not all available.";
+  const preservedIntroduction = sanitizeReportValue(fact(record, "report_introduction").value, "report_introduction");
+  const summaryIntro = preservedIntroduction || `At the request of ${valueOrUnknown(applicant)} (the Applicant), ULA was requested to investigate a ${valueOrUnknown(record.business_line || report.business_line || claim.business_line)} claim for ${valueOrUnknown(insured)} (the Assured), establish the circumstances and extent of loss, and adjust the claim presented under the policy. The insured interest is ${valueOrUnknown(commodity)}.`;
+  const table1BriefParts = [
+    isPresent(insured) ? `${cleanText(insured)} as the Assured` : null,
+    isPresent(commodity) ? `${cleanText(commodity)} as the insured interest` : null,
+    isPresent(from) && isPresent(to) ? `movement from ${cleanText(from)} to ${cleanText(to)}` : null,
+    isPresent(policyNumber) ? `Policy No. ${cleanText(policyNumber)}` : null,
+  ].filter(Boolean);
+  const table1Brief = table1BriefParts.length
+    ? `In brief, Table 1 records ${table1BriefParts.join(", ")}.`
+    : "In brief, Table 1 records the material claim details established from the reviewed evidence.";
+  const noteIntro = `${summaryIntro} This report and adjustment note sets out our findings, causal assessment and adjustment position; the records reviewed are listed in the enclosure section.`;
   const invoiceComponents = [
     financials.fob_value !== null ? `FOB ${amount(financials.fob_value, currency)}` : null,
     financials.freight_amount !== null ? `freight ${amount(financials.freight_amount, currency)}` : null,
@@ -287,7 +502,7 @@ export function buildMasterReportData({ report = {}, claim = {}, issueDate } = {
     ? `Commercial invoice ${valueOrUnknown(fact(record, "invoice_number").value)} records ${invoiceComponents.length ? `${invoiceComponents.join(", ")}, and ` : ""}a total value of ${amount(financials.invoice_value, currency)}. These source valuations are not substituted for an absent presented claim.`
     : "The available evidence does not establish a commercial-invoice value suitable for reproduction in the adjustment.";
   const presentedClaimNarrative = financials.presented_claim !== null
-    ? `The evidence presents a gross claim of ${amount(financials.presented_claim, currency)}${sourceLabel([...(fact(record, "claim_amount").sources || []), ...(fact(record, "gross_claim_amount").sources || [])])}.`
+    ? `The gross claim of ${amount(financials.presented_claim, currency)} was presented${sourceLabel([...(fact(record, "claim_amount").sources || []), ...(fact(record, "gross_claim_amount").sources || [])])}.`
     : "The reviewed evidence does not state a gross presented claim quantum.";
   const adjustedClaimNarrative = financials.adjusted_claim_amount !== null && financials.presented_claim !== null
     && numberValue(financials.adjusted_claim_amount) !== numberValue(financials.presented_claim)
@@ -299,7 +514,9 @@ export function buildMasterReportData({ report = {}, claim = {}, issueDate } = {
   const freightInvoiceNarrative = financials.freight_invoice_value !== null
     ? `Separate freight invoice ${valueOrUnknown(fact(record, "freight_invoice_number").value)} records ${amount(financials.freight_invoice_value, currency)} and is retained as a source valuation, not automatically treated as a claim item.`
     : null;
-
+  const calculationFindings = (record.validation_checks || [])
+    .filter((check) => ["invoice-components", "insured-valuation-basis", "affected-quantity", "shipment-quantity"].includes(check.id))
+    .map((check) => check.statement);
   return {
     scalars: {
       cover_title: `${valueOrUnknown(applicant)} - ${valueOrUnknown(insured)} - ${valueOrUnknown(claim.title || commodity)}`,
@@ -323,7 +540,7 @@ export function buildMasterReportData({ report = {}, claim = {}, issueDate } = {
       summary_policy: policyDetails,
       policy_details: policyDetails,
       incoterm: factWithSource(record, "incoterm"),
-      transport_document: `${transportLabel}: ${valueOrUnknown(transportReference)}${sourceLabel([...(fact(record, "bill_of_lading").sources || []), ...(fact(record, "air_waybill").sources || [])])}`,
+      transport_document: `${transportLabel}: ${valueOrUnknown(transportReference)}`,
       shipper: factWithSource(record, "shipper"),
       consignee: factWithSource(record, "consignee"),
       cargo_details: valueOrUnknown(cargoParts.join("; ")),
@@ -339,27 +556,31 @@ export function buildMasterReportData({ report = {}, claim = {}, issueDate } = {
       contact_details: `United Kingdom: 71-75 Shelton Street, Covent Garden | London, England - WC2H 9JQ\nMiddle East: Mina Tower, Ain Warda Street | Beirut, Lebanon - WG2G+5CX`,
     },
     paragraphs: {
-      report_summary_intro: [summaryIntro],
-      report_summary_findings: [...chronology.slice(0, 8), ...findings.slice(0, 8), ...validationFindings.filter((_, index) => index < 4)],
+      report_summary_intro: [summaryIntro, table1Brief],
+      report_summary_findings: [],
       report_summary_opinion: conclusions,
-      document_sighting: [`We confirm review of the ${documentRegister.length} uploaded document(s) listed in "Enclosure to this report". Receipt of a file is not treated as proof that every substantive document requirement is complete.`],
+      document_sighting: [],
       report_note_intro: [noteIntro],
-      interest_insured: [`${valueOrUnknown(commodity)} was documented for transit from ${valueOrUnknown(from)} to ${valueOrUnknown(to)} under Policy No. ${valueOrUnknown(policyNumber)}.${sourceLabel([...(fact(record, "commodity").sources || []), ...(fact(record, "policy_number").sources || [])])}`],
-      surveyor_notes: [...chronology, ...findings, ...validationFindings],
+      interest_insured: [`${valueOrUnknown(commodity)} was documented for transit from ${valueOrUnknown(from)} to ${valueOrUnknown(to)} under Policy No. ${valueOrUnknown(policyNumber)}.`],
+      surveyor_notes: surveyorNotes,
       cause_of_loss_section: causeSection,
       policy_conditions_section: policyParagraphs(record),
+      liability_section: liabilityParagraphs(record),
       adequacy_section: [adequacy],
-      assessors_section: [isPresent(fact(record, "surveyor").value) ? `The evidence identifies ${factWithSource(record, "surveyor")} as surveyor / assessor.` : "The available evidence does not identify an assessor appointed on behalf of the Assured."],
+      assessors_section: [DIRECTOR_ASSESSOR_WORDING],
       adjustment_intro: [
         `${presentedClaimNarrative} Source valuations are not substituted for an absent claim quantum, and unknown deductions are not treated as zero.`,
         adjustedClaimNarrative,
         valuationUpliftNarrative,
         valuationNarrative,
         freightInvoiceNarrative,
+        ...calculationFindings,
       ].filter(Boolean),
       conclusion_items: conclusions,
       enclosure_items: receivedDocuments,
-      outstanding_items: record.outstanding_documents || [],
+      outstanding_items: record.evidence_gaps?.length
+        ? record.evidence_gaps.map((gap) => `${gap.gap} — ${gap.impact}`)
+        : record.outstanding_documents || [],
     },
     damage_rows: damageRows(record),
     adjustment_rows: adjustmentRows(record),
@@ -413,7 +634,11 @@ function replaceAppendixArea(xml, appendices, images) {
     const pageHeading = replaceBlockText(entryIndex ? withPageBreakBefore(headingPrototype) : headingPrototype, entry.heading);
     const matchingImages = images.filter((item) => item.document_id === entry.document_id || item.document_name === entry.document_name);
     if (!matchingImages.length) return `${pageHeading}${replaceBlockText(normalPrototype, entry.description)}`;
-    return `${pageHeading}${matchingImages.map((item) => replaceBlockText(imagePrototype.replaceAll("rId20", item.relationship_id), "")).join("")}`;
+    return `${pageHeading}${matchingImages.map((item) => {
+      const imageBlock = replaceBlockText(imagePrototype.replaceAll("rId20", item.relationship_id), "");
+      const caption = replaceBlockText(normalPrototype, valueOrUnknown(item.caption));
+      return `${imageBlock}${caption}`;
+    }).join("")}`;
   }).join("");
   return `${xml.slice(0, heading.index)}${generated}${xml.slice(image.index + image[0].length)}`;
 }
@@ -426,6 +651,8 @@ export async function populateMasterReportDocx(templateData, context, { appendix
   if (!documentEntry) throw new Error("The ULA master template has no document body.");
   let documentXml = await documentEntry.async("string");
   for (const [marker, paragraphs] of Object.entries(data.paragraphs)) documentXml = replaceParagraphMarker(documentXml, marker, paragraphs);
+  documentXml = removeParagraphContainingText(documentXml, "The following was concluded:");
+  documentXml = removeParagraphContainingText(documentXml, "End of adjustment note.");
   documentXml = replaceDynamicTableRows(documentXml, "damage_description", data.damage_rows, ["damage_description", "damage_quantity", "damage_packing"]);
   documentXml = replaceDynamicTableRows(documentXml, "adjustment_description", data.adjustment_rows, ["adjustment_description", "adjustment_quantity", "adjustment_unit_price", "adjustment_value"]);
   documentXml = replaceAppendixArea(documentXml, data.appendices, resolvedImages);

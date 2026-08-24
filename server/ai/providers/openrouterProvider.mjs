@@ -285,7 +285,7 @@ export function createOpenRouterProvider({
         model: response.model || responseModel,
         response_id: response.id || null,
         analyzed_at: new Date().toISOString(),
-        analysis: enforceGrounding(parsed, evidence),
+        analysis: enforceGrounding(parsed, evidence, styleReferences),
       };
     },
   };
