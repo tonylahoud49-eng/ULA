@@ -73,6 +73,19 @@ test("approval deducts the correct balance exactly once and TOIL stays separate"
   const toilApproved = transitionLeave(toilPending.database, "leave-toil", "Approved");
   assert.equal(toilApproved.employee.annual_leave_used, 3);
   assert.equal(toilApproved.employee.toil_balance, 2);
+
+  // TOIL Claim (+ recharge)
+  const claimPending = createPendingLeave(database(), requestInput({ leave_type: "TOIL Claim", start_date: "2026-08-17", end_date: "2026-08-19", client_request_id: "claim-1" }), { id: "leave-claim" });
+  const claimApproved = transitionLeave(claimPending.database, "leave-claim", "Approved");
+  assert.equal(claimApproved.employee.annual_leave_used, 3); // Annual untouched
+  assert.equal(claimApproved.employee.toil_balance, 7); // 4 + 3 days recharged!
+  assert.equal(claimApproved.leave.balance_credit_applied, true);
+
+  // Unpaid Leave (0 balance impact)
+  const unpaidPending = createPendingLeave(database(), requestInput({ leave_type: "Unpaid Leave", start_date: "2026-08-17", end_date: "2026-08-18", client_request_id: "unpaid-1" }), { id: "leave-unpaid" });
+  const unpaidApproved = transitionLeave(unpaidPending.database, "leave-unpaid", "Approved");
+  assert.equal(unpaidApproved.employee.annual_leave_used, 3);
+  assert.equal(unpaidApproved.employee.toil_balance, 4);
 });
 
 test("rejection does not deduct and cannot later be approved", () => {
@@ -195,7 +208,7 @@ test("approval and rejection notifications go to the employee with the correct d
   assert.match(sentMessages[0].message.subject, /approved/i);
   assert.match(sentMessages[0].message.body.content, /9 days/);
   assert.match(sentMessages[1].message.subject, /rejected/i);
-  assert.match(sentMessages[1].message.body.content, /No leave balance was deducted/i);
+  assert.match(sentMessages[1].message.body.content, /No leave balance/i);
 });
 
 test("Graph retries an explicit throttling response without duplicating a successful event", async (context) => {

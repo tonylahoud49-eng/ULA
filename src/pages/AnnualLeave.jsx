@@ -204,7 +204,7 @@ function CalendarGrid({ viewDate, leaves }) {
   const month = viewDate.getMonth();
   const first = new Date(year, month, 1).getDay();
   const days = new Date(year, month + 1, 0).getDate();
-  const approved = leaves.filter((l) => l.status === "Approved");
+  const approved = leaves.filter((l) => l.status === "Approved" && l.leave_type !== "TOIL Claim");
 
   const cells = [];
   for (let i = 0; i < first; i++) cells.push(null);
@@ -333,8 +333,9 @@ function LeaveRequestDialog({ employees, currentUser, onCreated }) {
   const days = form.start_date && form.end_date ? calculateWorkingDays(form.start_date, form.end_date) : 0;
   const annualLeft = emp ? Math.max(0, (emp.annual_leave_total ?? 15) - (emp.annual_leave_used ?? 0)) : 0;
   const toilLeft = emp ? emp.toil_balance ?? 0 : 0;
-  const balance = form.leave_type === "Annual Leave" ? annualLeft : toilLeft;
-  const insufficient = days > balance;
+  const insufficient =
+    (form.leave_type === "Annual Leave" && days > annualLeft) ||
+    (form.leave_type === "TOIL" && days > toilLeft);
 
   const validEmpEmail = Boolean(emp?.email && /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(emp.email.trim()));
   const validDraftEmail = /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(employeeEmail.trim());
@@ -360,14 +361,16 @@ function LeaveRequestDialog({ employees, currentUser, onCreated }) {
       setEmployeeEmail("");
       if (result.data?.email_error) {
         toast({
-          title: "Leave Saved (Email Degraded)",
+          title: form.leave_type === "TOIL Claim" ? "TOIL Claim Saved (Email Degraded)" : "Leave Saved (Email Degraded)",
           description: `Request saved with Pending status, but notification email could not be sent: ${result.data.email_error}`,
           variant: "destructive",
         });
       } else {
         toast({
-          title: "Leave Request Submitted & Dispatched",
-          description: "Request saved as Pending and review notification email dispatched to administrator.",
+          title: form.leave_type === "TOIL Claim" ? "TOIL Claim Submitted" : "Leave Request Submitted & Dispatched",
+          description: form.leave_type === "TOIL Claim"
+            ? "Overtime claim submitted and review notification dispatched to administrator."
+            : "Request saved as Pending and review notification email dispatched to administrator.",
         });
       }
     } catch (error) {
@@ -423,28 +426,72 @@ function LeaveRequestDialog({ employees, currentUser, onCreated }) {
         )}
 
         <div>
-          <Label>Leave Type</Label>
+          <Label>Category / Leave Type</Label>
           <Select value={form.leave_type} onValueChange={(v) => setForm({ ...form, leave_type: v })}>
             <SelectTrigger className="mt-1"><SelectValue /></SelectTrigger>
-            <SelectContent><SelectItem value="Annual Leave">Annual Leave</SelectItem><SelectItem value="TOIL">TOIL</SelectItem></SelectContent>
+            <SelectContent>
+              <SelectItem value="Annual Leave">Annual Leave (Deduct from 15-day allowance)</SelectItem>
+              <SelectItem value="TOIL">TOIL (Take earned time off)</SelectItem>
+              <SelectItem value="TOIL Claim">TOIL Claim (Overtime/Weekend worked &bull; +Recharge)</SelectItem>
+              <SelectItem value="Unpaid Leave">Unpaid Leave (No balance deducted)</SelectItem>
+              <SelectItem value="Other Leave">Other Leave (Sick, compassionate, etc.)</SelectItem>
+            </SelectContent>
           </Select>
         </div>
         <div className="grid grid-cols-2 gap-3">
-          <div><Label>Start Date</Label><Input type="date" value={form.start_date} onChange={(e) => setForm({ ...form, start_date: e.target.value })} className="mt-1" /></div>
-          <div><Label>End Date</Label><Input type="date" value={form.end_date} onChange={(e) => setForm({ ...form, end_date: e.target.value })} className="mt-1" /></div>
+          <div>
+            <Label>{form.leave_type === "TOIL Claim" ? "Worked Start Date" : "Start Date"}</Label>
+            <Input type="date" value={form.start_date} onChange={(e) => setForm({ ...form, start_date: e.target.value })} className="mt-1" />
+          </div>
+          <div>
+            <Label>{form.leave_type === "TOIL Claim" ? "Worked End Date" : "End Date"}</Label>
+            <Input type="date" value={form.end_date} onChange={(e) => setForm({ ...form, end_date: e.target.value })} className="mt-1" />
+          </div>
         </div>
-        <div><Label>Note / reason</Label><Textarea value={form.note} onChange={(e) => setForm({ ...form, note: e.target.value })} rows={3} maxLength={4000} className="mt-1" /></div>
+        <div>
+          <Label>{form.leave_type === "TOIL Claim" ? "Work description / reason *" : "Note / reason"}</Label>
+          <Textarea
+            value={form.note}
+            onChange={(e) => setForm({ ...form, note: e.target.value })}
+            placeholder={form.leave_type === "TOIL Claim" ? "e.g. Worked emergency vessel inspection on weekend" : "Optional comments..."}
+            rows={3}
+            maxLength={4000}
+            className="mt-1"
+          />
+        </div>
         {emp && (
-          <div className="p-3 rounded-lg bg-muted text-sm flex justify-between">
-            <span className="text-muted-foreground">{form.leave_type} balance: <span className="font-medium text-foreground">{balance} days</span></span>
-            <span className="text-muted-foreground">This request: <span className={`font-medium ${insufficient ? "text-red-600" : "text-foreground"}`}>{days} day(s)</span></span>
+          <div className="p-3 rounded-lg bg-muted text-xs space-y-1">
+            {form.leave_type === "Annual Leave" && (
+              <div className="flex justify-between items-center">
+                <span className="text-muted-foreground">Annual allowance: <span className="font-semibold text-foreground">{annualLeft} days</span></span>
+                <span className="text-muted-foreground">Deduction: <span className={`font-semibold ${insufficient ? "text-red-600" : "text-foreground"}`}>-{days} day(s)</span></span>
+              </div>
+            )}
+            {form.leave_type === "TOIL" && (
+              <div className="flex justify-between items-center">
+                <span className="text-muted-foreground">TOIL bank: <span className="font-semibold text-foreground">{toilLeft} days</span></span>
+                <span className="text-muted-foreground">Deduction: <span className={`font-semibold ${insufficient ? "text-red-600" : "text-foreground"}`}>-{days} day(s)</span></span>
+              </div>
+            )}
+            {form.leave_type === "TOIL Claim" && (
+              <div className="flex justify-between items-center">
+                <span className="text-muted-foreground">Current TOIL: <span className="font-semibold text-foreground">{toilLeft} days</span></span>
+                <span className="text-emerald-700 font-semibold">Upon approval: +{days} day(s) credited</span>
+              </div>
+            )}
+            {(form.leave_type === "Unpaid Leave" || form.leave_type === "Other Leave") && (
+              <div className="flex justify-between items-center">
+                <span className="text-muted-foreground">Category: <span className="font-semibold text-foreground">{form.leave_type}</span></span>
+                <span className="text-muted-foreground">Absence: <span className="font-semibold text-foreground">{days} day(s) (No balance impact)</span></span>
+              </div>
+            )}
           </div>
         )}
         {insufficient && <p className="text-xs text-red-600">Insufficient balance for this request.</p>}
       </div>
       <DialogFooter>
         <Button onClick={submit} disabled={saving || !form.employee_id || days < 1 || insufficient || !emailResolved} className="ula-gradient text-white hover:opacity-90">
-          {saving ? "Submitting…" : "Submit Request"}
+          {saving ? "Submitting…" : (form.leave_type === "TOIL Claim" ? "Submit TOIL Claim" : "Submit Request")}
         </Button>
       </DialogFooter>
     </DialogContent>

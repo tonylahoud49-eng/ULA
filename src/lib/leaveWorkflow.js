@@ -1,4 +1,4 @@
-export const LEAVE_TYPES = ["Annual Leave", "TOIL"];
+export const LEAVE_TYPES = ["Annual Leave", "TOIL", "TOIL Claim", "Unpaid Leave", "Other Leave"];
 export const LEAVE_STATUSES = ["Pending", "Approved", "Rejected"];
 
 const clone = (value) => JSON.parse(JSON.stringify(value));
@@ -52,8 +52,12 @@ function validateLeaveInput(input, employee) {
   const days = calculateWorkingDays(input.start_date, input.end_date);
   if (days < 1) throw workflowError("Select a valid date range containing at least one working day.", "invalid-leave-dates");
   const balances = leaveBalances(employee);
-  const available = input.leave_type === "Annual Leave" ? balances.annual_leave : balances.toil;
-  if (days > available) throw workflowError(`Insufficient ${input.leave_type} balance for this request.`, "insufficient-leave-balance", 409);
+  if (input.leave_type === "Annual Leave" && days > balances.annual_leave) {
+    throw workflowError(`Insufficient Annual Leave balance for this request.`, "insufficient-leave-balance", 409);
+  }
+  if (input.leave_type === "TOIL" && days > balances.toil) {
+    throw workflowError(`Insufficient TOIL balance for this request.`, "insufficient-leave-balance", 409);
+  }
   return { days, balances };
 }
 
@@ -110,20 +114,31 @@ export function transitionLeave(database, requestId, decision, { now = new Date(
   leave.submission_balance_snapshot = leave.submission_balance_snapshot || leaveBalances(employee);
 
   if (leave.status === decision) {
-    const alreadyApplied = decision === "Rejected" || leave.balance_deduction_applied === true;
+    const alreadyApplied = decision === "Rejected" || leave.balance_deduction_applied === true || leave.balance_credit_applied === true;
     if (alreadyApplied) return { database: next, leave, employee, changed: false };
   }
   if (leave.status !== "Pending") throw workflowError(`This request is already ${leave.status.toLowerCase()} and cannot be changed.`, "leave-already-decided", 409);
 
   if (decision === "Approved") {
     const balances = leaveBalances(employee);
-    const available = leave.leave_type === "Annual Leave" ? balances.annual_leave : balances.toil;
-    if (leave.days > available) throw workflowError(`Insufficient ${leave.leave_type} balance to approve this request.`, "insufficient-leave-balance", 409);
-    if (leave.leave_type === "Annual Leave") employee.annual_leave_used = finiteDays(employee.annual_leave_used) + leave.days;
-    else employee.toil_balance = Math.max(0, finiteDays(employee.toil_balance) - leave.days);
-    leave.balance_deduction_applied = true;
-    leave.balance_deduction_id = `leave:${leave.id}:balance`;
-    leave.balance_deducted_at = now;
+    if (leave.leave_type === "Annual Leave") {
+      if (leave.days > balances.annual_leave) {
+        throw workflowError(`Insufficient Annual Leave balance to approve this request.`, "insufficient-leave-balance", 409);
+      }
+      employee.annual_leave_used = finiteDays(employee.annual_leave_used) + leave.days;
+      leave.balance_deduction_applied = true;
+    } else if (leave.leave_type === "TOIL") {
+      if (leave.days > balances.toil) {
+        throw workflowError(`Insufficient TOIL balance to approve this request.`, "insufficient-leave-balance", 409);
+      }
+      employee.toil_balance = Math.max(0, finiteDays(employee.toil_balance) - leave.days);
+      leave.balance_deduction_applied = true;
+    } else if (leave.leave_type === "TOIL Claim") {
+      employee.toil_balance = finiteDays(employee.toil_balance) + leave.days;
+      leave.balance_credit_applied = true;
+    }
+    leave.balance_action_id = `leave:${leave.id}:balance`;
+    leave.balance_action_at = now;
   }
 
   leave.status = decision;

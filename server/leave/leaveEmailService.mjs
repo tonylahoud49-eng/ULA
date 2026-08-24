@@ -9,7 +9,7 @@ const leaveSchema = z.object({
   id: z.string().min(1),
   employee_name: z.string().min(1),
   employee_email: emailSchema,
-  leave_type: z.enum(["Annual Leave", "TOIL"]),
+  leave_type: z.enum(["Annual Leave", "TOIL", "TOIL Claim", "Unpaid Leave", "Other Leave", "Other"]),
   start_date: z.string().regex(/^\d{4}-\d{2}-\d{2}$/),
   end_date: z.string().regex(/^\d{4}-\d{2}-\d{2}$/),
   days: z.number().int().positive(),
@@ -146,19 +146,50 @@ export function createLeaveEmailService({
       decision: eventType === "submitted" ? "Pending" : (eventType === "approved" ? "Approved" : "Rejected"),
     };
 
-    if (eventType === "submitted") return {
-      to: String(env.LEAVE_ADMIN_EMAIL).trim(),
-      toName: "Leave Administrator",
-      subject: `[ULA Leave] Review required: ${leave.employee_name} — ${leave.leave_type}`,
-      html: shell("Leave request awaiting review", "A new leave request has been saved with Pending status.", detailTable(rows), link),
-      templateParams,
-    };
+    if (eventType === "submitted") {
+      const isClaim = leave.leave_type === "TOIL Claim";
+      const subTitle = isClaim ? `[ULA TOIL] Overtime Claim: ${leave.employee_name} (+${leave.days}d)` : `[ULA Leave] Review required: ${leave.employee_name} — ${leave.leave_type}`;
+      const intro = isClaim
+        ? `A new TOIL overtime claim (+${leave.days} day(s)) has been submitted by ${leave.employee_name} for manager review.`
+        : `A new leave request (${leave.leave_type}) has been saved with Pending status.`;
+      return {
+        to: String(env.LEAVE_ADMIN_EMAIL).trim(),
+        toName: "Leave Administrator",
+        subject: subTitle,
+        html: shell(isClaim ? "TOIL overtime claim awaiting review" : "Leave request awaiting review", intro, detailTable(rows), link),
+        templateParams,
+      };
+    }
+
     const approved = eventType === "approved";
+    let outcomeSubject = `[ULA Leave] Request ${approved ? "approved" : "rejected"}: ${leave.leave_type}`;
+    let outcomeIntro = "";
+
+    if (approved) {
+      if (leave.leave_type === "TOIL Claim") {
+        outcomeSubject = `[ULA TOIL] Overtime Claim Approved (+${leave.days} days credited)`;
+        outcomeIntro = `Your TOIL claim was approved and +${leave.days} day(s) have been credited to your TOIL balance.`;
+      } else if (leave.leave_type === "Annual Leave") {
+        outcomeIntro = `Your Annual Leave request was approved and ${leave.days} day(s) were deducted from your allowance.`;
+      } else if (leave.leave_type === "TOIL") {
+        outcomeIntro = `Your TOIL request was approved and ${leave.days} day(s) were deducted from your TOIL balance.`;
+      } else {
+        outcomeIntro = `Your ${leave.leave_type} request was approved and scheduled on the company calendar without balance deduction.`;
+      }
+    } else {
+      outcomeIntro = "Your request was rejected. No leave balances were modified.";
+    }
+
     return {
       to: employee.email,
       toName: employee.name || leave.employee_name,
-      subject: `[ULA Leave] Request ${approved ? "approved" : "rejected"}: ${leave.leave_type}`,
-      html: shell(`Leave request ${approved ? "approved" : "rejected"}`, approved ? "Your request was approved and the applicable balance was updated." : "Your request was rejected. No leave balance was deducted.", detailTable(rows), link),
+      subject: outcomeSubject,
+      html: shell(
+        approved ? `Request Approved: ${leave.leave_type}` : `Request Rejected: ${leave.leave_type}`,
+        outcomeIntro,
+        detailTable(rows),
+        link,
+      ),
       templateParams,
     };
   };

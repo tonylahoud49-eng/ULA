@@ -193,7 +193,7 @@ test("leaveEmailService sends decision email to employee via EmailJS", async () 
   assert.equal(delivery.status, "sent");
   assert.equal(sentPayload.template_params.to_email, "sarah@company.com");
   assert.equal(sentPayload.template_params.decision, "Approved");
-  assert.match(sentPayload.template_params.message_html, /Leave request approved/);
+  assert.match(sentPayload.template_params.message_html, /Request Approved/i);
 
   await fs.rm(temporaryDirectory, { recursive: true, force: true });
 });
