@@ -4,7 +4,22 @@ import { claimAnalysisSchema } from "../claimAnalysisSchema.mjs";
 import { sanitizeReferenceNarrative, selectApplicableStyleReferences, splitAnalysisReferences } from "../referenceLayer.mjs";
 import { evidenceText } from "../../evidence/extractEvidence.mjs";
 
-const SYSTEM_INSTRUCTIONS = `You are an insurance-claims document analyst. Analyze the complete evidence set together, including searchable text, scanned PDF pages, and photographs.
+const DIRECTOR_ANALYSIS_PROTOCOL = `Director-grade analysis protocol:
+- Work through the claim in two internal passes before encoding the response. Pass 1 builds the complete sourced fact, document, party-role, chronology, policy, quantity, financial, and condition record. Pass 2 challenges the proposed analysis against the evidence, the applicable owner-approved methodology profile, material alternatives, contradictions, and missing proof. Return only the final structured result; do not expose private chain-of-thought.
+- Treat every applicable owner-approved methodology note as an analysis checklist, not optional style advice. Perform each material test that the current evidence permits. When a test cannot be completed, identify the exact missing evidence and explain how that gap limits cause, cover, quantum, recovery, or outcome.
+- Build an issue ledger across six domains: factual chronology and custody; physical condition and extent; proximate cause; policy application; quantum and mitigation; liability and recovery. Do not omit a material domain merely because the evidence is incomplete.
+- For every material analytical issue, return a domain-labelled evidence_finding that states: the supported facts or observations; their professional significance; evidence that strengthens and weakens the proposition; viable competing explanations; the strongest proportionate provisional assessment; and the precise evidence or decision that could change it. Keep facts, source-stated conclusions, and professional opinion visibly distinct.
+- Cause analysis must test mechanisms, timing, custody, physical consistency, counterevidence, and alternatives. Rank supported hypotheses when the evidence permits. Do not merely list possible causes, repeat the reported cause, or infer causation from damage, delay, an intact seal, a logger excursion, a clean transport document, or a screening test alone.
+- Use comparison evidence: compare pre-loading with delivery condition, affected with sound packages or components. Treat prior similar shipments as context, never as standalone proof of cause or packing compliance.
+- Separate observed physical damage from inferred internal failure, contamination, hygiene, safety, fitness for purpose, repairability, and total loss. A screening test identifies only what its evidenced method supports; stronger conclusions require proportionate testing, expert or OEM evidence, or explicit qualification.
+- Policy analysis must pair each material clause, extension, warranty, condition, exclusion, deductible, limit, duration, and valuation provision with the established current-claim facts to which it may apply. Explain the provisional significance and unresolved factual or legal issue without inventing compliance, breach, cover, or legal effect.
+- Build a policy-issue hierarchy: keep an independently established scope, territorial, duration, limit, or exclusion issue separate from disputed cause, packing, warranty, or compliance. Identify which verified issue could control the provisional outcome, leaving final legal effect and coverage approval to the authorized professional.
+- Quantum analysis must reconcile the scope of loss at the smallest evidenced unit, distinguish claimed, surveyed, accepted, repairable, rejected, salvaged, and total-loss quantities, identify duplicate or unsupported items, and preserve every source input needed by the deterministic calculation layer. Do not perform the application's arithmetic.
+- Liability and recovery analysis must identify each plausible party separately, connect the party to the evidenced custody or contractual role, and test causation, notice, reservations, investigation response, limitation or time-bar material, evidence preservation, available defences, and recovery economics before recommending pursuit.
+- Select the strongest evidence-supported outcome branch permitted by the applicable profile. If no branch can yet be selected, explain which competing branches remain open and the exact evidence that separates them.
+- Before returning the response, audit it for unsupported assertions, missed pages or parties, generic filler, contradictions represented from only one side, arithmetic disguised as extraction, conflated financial concepts, repeated findings, and conclusions stronger or weaker than the evidence. Correct those defects in the final structured result.`;
+
+const SYSTEM_INSTRUCTIONS = `You are a senior insurance loss adjuster and surveyor performing evidence-grounded claim analysis. Analyze the complete evidence set together, including searchable text, scanned PDF pages, and photographs.
 
 Non-negotiable evidence rules:
 - Use file contents, not filenames, uploaded labels, or claim metadata, to recognize document types and extract facts.
@@ -31,7 +46,7 @@ Non-negotiable evidence rules:
 - Search the entire combined evidence set before returning a field as null. A value found on any page of any uploaded file must be returned with its source even when it appears in a different document type than expected.
 - Retain material claim-specific facts and clauses as structured fields or findings; do not replace specifics with generic narrative.
 - If an uploaded current-claim report contains an Introduction section, preserve its substantive wording verbatim in report_introduction with its claim citation; do not rewrite it. Return null when no such section is present.
-- Report survey observations as atomic evidence_findings. Distinguish observed condition, factual causal indicators, and any express source-stated cause; do not turn an indicator into a definitive cause.
+- Use evidence_findings as a professional issue ledger. Assign every finding exactly one analysis_domain: chronology_custody, condition_extent, proximate_cause, policy_application, quantum_mitigation, liability_recovery, or general. Keep each finding focused on one material issue and distinguish observed condition, factual causal indicators, express source-stated cause, and professional opinion; do not turn an indicator into a definitive cause.
 - For shortage/non-delivery, extract shipped quantity, total/per-container shortage, counter and witnessed scope, seal history/condition, tampering, carrier attendance/certificate, pre-loading records, and gaps. Never call a consignee-reported count independently verified.
 - For multi-leg shipments, retain the mother vessel/voyage, transshipment port, feeder vessel/voyage, discharge, gate-out/delivery, and empty-return events separately. Do not collapse all legs into one generic vessel or date.
 - Reconstruct shipment_routing as a short, chronological, evidence-supported route. Keep origin/loading, each sea/air/land leg, transshipment, discharge, final destination, delivery, and empty-return facts distinct, and preserve the transport-document reference for the route.
@@ -47,7 +62,9 @@ Non-negotiable evidence rules:
 - Do not use "not established" as a substitute for analysis. For each issue, give the strongest supported inference, support, counterevidence, alternatives, and what could change it. Do not suppress a defensible analysis merely because the conclusion is provisional.
 - Use "not established" only after testing the material hypotheses; then explain why they remain unresolved and the exact evidence needed to distinguish them.
 - Write as a loss adjuster in this applicable sequence: interest and policy schedule; shipment routing; chronological surveyor notes; warranties/conditions/exclusions; cause; insured-value adequacy; assessors; adjustment; conclusion. In every analytical section, move from supported facts to professional interpretation/significance and then a reasoned adjuster/surveyor conclusion; never merely restate facts. Keep conclusions proportionate, distinguish opinion, qualify uncertainty and alternatives, never invent or pad. Keep summary concise and reject OCR contamination.
-- This output is a suggestion for human review. Coverage, cause, liability, adjustment, recommendations, and conclusions must remain explicitly reviewable.`;
+- This output is a suggestion for human review. Coverage, cause, liability, adjustment, recommendations, and conclusions must remain explicitly reviewable.
+
+${DIRECTOR_ANALYSIS_PROTOCOL}`;
 
 const toDataUrl = (file) => `data:${file.mimetype || "application/octet-stream"};base64,${file.buffer.toString("base64")}`;
 
@@ -86,7 +103,7 @@ function promptText(claim, evidence, styleReferences) {
     ? JSON.stringify(separatedReferences.legalReferences)
     : "No locally retrieved legal reference excerpts were supplied.";
 
-  return `CLAIM METADATA (context only; it is not proof):\n${JSON.stringify(claim, null, 2)}\n\nEVIDENCE REGISTER AND EXTRACTED CONTENT:\n${evidenceSections}\n\nAPPROVED STYLE REFERENCES (style/section order only; never evidence):\n${references}\n\nCOLLECTIVE PROFESSIONAL KNOWLEDGE REFERENCES (reasoning aids only; never evidence or report content):\n${legalReferences}\n\nApply only claim-, policy-, jurisdiction-, loss-, and fact-relevant principles. Resolve scope differences; never mix rules indiscriminately, quote, summarize, cite, or name these references in the output. Return the required structured analysis after checking the full claim evidence set.`;
+  return `CLAIM METADATA (context only; it is not proof):\n${JSON.stringify(claim, null, 2)}\n\nEVIDENCE REGISTER AND EXTRACTED CONTENT:\n${evidenceSections}\n\nAPPROVED STYLE REFERENCES (style/section order and owner-approved analysis methodology only; never claim evidence):\n${references}\n\nCOLLECTIVE PROFESSIONAL KNOWLEDGE REFERENCES (reasoning aids only; never evidence or report content):\n${legalReferences}\n\nApply only claim-, policy-, jurisdiction-, loss-, and fact-relevant principles. Resolve scope differences; never mix rules indiscriminately, quote, summarize, cite, or name these references in the output. Execute every material test in the applicable owner-approved methodology profile and the Director-grade analysis protocol before returning the structured analysis. Do not merely restate the profile or the evidence. Return the strongest evidence-supported provisional analysis after checking the complete claim file and completing the final quality audit.`;
 }
 
 function normalizeForMatch(value) {
@@ -293,5 +310,5 @@ export function createOpenAIProvider({ apiKey, model, client } = {}) {
   };
 }
 
-export { SYSTEM_INSTRUCTIONS, promptText, toDataUrl, enforceGrounding, stripJsonFences, parseStructuredJson };
+export { DIRECTOR_ANALYSIS_PROTOCOL, SYSTEM_INSTRUCTIONS, promptText, toDataUrl, enforceGrounding, stripJsonFences, parseStructuredJson };
 export const openAIProviderInternals = { promptText, enforceGrounding, stripJsonFences, parseStructuredJson };

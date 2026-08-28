@@ -182,6 +182,32 @@ const textOf = (xml) => [...String(xml || "").matchAll(/<w:t(?:\s[^>]*)?>([\s\S]
   .replaceAll("&lt;", "<")
   .replaceAll("&gt;", ">");
 
+test("application mapping recognizes both normalized and already-percent confidence values", () => {
+  const normalized = currentClaimMockAnalysis();
+  normalized.classification.confidence = 0.98;
+  normalized.classification.sources[0].confidence = 0.92;
+  const normalizedMapped = mapAnalysis({
+    provider: "anthropic",
+    model: "claude-sonnet-4-6",
+    analysis: normalized,
+  });
+  assert.equal(normalizedMapped.confidence, 98);
+  assert.equal(normalizedMapped.evidence_sources[0].confidence, "92% AI confidence");
+  assert.ok(normalizedMapped.evidence_sources.some((item) => item.field.startsWith("Analysis: ")));
+  assert.ok(normalizedMapped.evidence_sources.some((item) => item.field.startsWith("Adjustment item ")));
+
+  const percent = structuredClone(normalized);
+  percent.classification.confidence = "98%";
+  percent.classification.sources[0].confidence = 92;
+  const percentMapped = mapAnalysis({
+    provider: "anthropic",
+    model: "claude-sonnet-4-6",
+    analysis: percent,
+  });
+  assert.equal(percentMapped.confidence, 98);
+  assert.equal(percentMapped.evidence_sources[0].confidence, "92% AI confidence");
+});
+
 test("current six-document claim completes mocked Anthropic-to-DOCX production pipeline with one provider request", async () => {
   let providerCalls = 0;
   let requestUrl;

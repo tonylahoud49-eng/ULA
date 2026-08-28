@@ -7,6 +7,10 @@ import { simpleParser } from "mailparser";
 
 const TEXT_EXTENSIONS = new Set([".txt", ".csv", ".json", ".xml", ".html", ".htm", ".md", ".rtf"]);
 const IMAGE_EXTENSIONS = new Set([".png", ".jpg", ".jpeg", ".webp", ".gif"]);
+const MAX_SEARCHABLE_VISUAL_PAGES = 24;
+const MATERIAL_RASTER_MIN_WIDTH = 180;
+const MATERIAL_RASTER_MIN_HEIGHT = 180;
+const MATERIAL_RASTER_MIN_AREA = 80_000;
 const normalizeWhitespace = (value) => String(value || "").replace(/\u0000/g, "").replace(/[ \t]+/g, " ").replace(/\n{3,}/g, "\n\n").trim();
 
 const pdfPageText = (items = []) => {
@@ -76,6 +80,42 @@ async function renderPdfPageForVision(page, pageNumber) {
   };
 }
 
+const rasterDimensions = (value) => {
+  if (!value) return [];
+  if (Array.isArray(value)) {
+    const direct = [];
+    for (let index = 0; index < value.length - 1; index += 1) {
+      const width = Number(value[index]);
+      const height = Number(value[index + 1]);
+      if (Number.isFinite(width) && Number.isFinite(height)) direct.push({ width, height });
+    }
+    return [...direct, ...value.flatMap(rasterDimensions)];
+  }
+  if (typeof value !== "object") return [];
+  const width = Number(value.width);
+  const height = Number(value.height);
+  const current = Number.isFinite(width) && Number.isFinite(height) ? [{ width, height }] : [];
+  return [...current, ...Object.values(value).flatMap(rasterDimensions)];
+};
+
+async function pdfPageHasMaterialRaster(page, operations) {
+  const operatorList = await page.getOperatorList();
+  const imageOperators = new Set([
+    operations.paintImageXObject,
+    operations.paintInlineImageXObject,
+    operations.paintImageMaskXObject,
+    operations.paintSolidColorImageMask,
+  ].filter(Number.isFinite));
+  for (let index = 0; index < operatorList.fnArray.length; index += 1) {
+    if (!imageOperators.has(operatorList.fnArray[index])) continue;
+    const dimensions = rasterDimensions(operatorList.argsArray[index]);
+    if (dimensions.some(({ width, height }) => width >= MATERIAL_RASTER_MIN_WIDTH
+      && height >= MATERIAL_RASTER_MIN_HEIGHT
+      && width * height >= MATERIAL_RASTER_MIN_AREA)) return true;
+  }
+  return false;
+}
+
 async function extractPdf(buffer) {
   const pdfjs = await import("pdfjs-dist/legacy/build/pdf.mjs");
   const standardFontDataUrl = fileURLToPath(
@@ -88,15 +128,25 @@ async function extractPdf(buffer) {
   const pdf = await task.promise;
   const pages = [];
   const visionImages = [];
+  let searchableVisualPages = 0;
   for (let pageNumber = 1; pageNumber <= pdf.numPages; pageNumber += 1) {
     const page = await pdf.getPage(pageNumber);
     const content = await page.getTextContent();
     const extracted = { page: pageNumber, ...pdfPageText(content.items) };
     pages.push(extracted);
-    if (!extracted.text) {
+    const imageOnly = !extracted.text;
+    const materialSearchableVisual = !imageOnly
+      && searchableVisualPages < MAX_SEARCHABLE_VISUAL_PAGES
+      && await pdfPageHasMaterialRaster(page, pdfjs.OPS);
+    if (materialSearchableVisual) searchableVisualPages += 1;
+    if (imageOnly || materialSearchableVisual) {
       const rendered = await renderPdfPageForVision(page, pageNumber);
-      if (rendered) visionImages.push(rendered);
+      if (rendered) visionImages.push({
+        ...rendered,
+        vision_reason: imageOnly ? "image-only" : "material-raster-with-searchable-text",
+      });
     }
+    page.cleanup();
   }
   return { pages, visionImages };
 }

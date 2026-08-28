@@ -1,6 +1,7 @@
 import crypto from "node:crypto";
 import { z } from "zod";
 import {
+  ANALYSIS_DOMAINS,
   BUSINESS_LINES,
   CLAIM_FIELDS,
   DOCUMENT_TYPES,
@@ -25,6 +26,7 @@ business_line=${JSON.stringify(BUSINESS_LINES)}
 document_type=${JSON.stringify(DOCUMENT_TYPES)}
 field=${JSON.stringify(CLAIM_FIELDS)}
 evidence_mode=${JSON.stringify(EVIDENCE_MODES)}
+analysis_domain=${JSON.stringify(ANALYSIS_DOMAINS)}
 The transport encoding rules below override the earlier canonical null/page wording; the application reconstructs canonical nulls locally. Return exactly two top-level arrays: sources and records. Register each distinct citation once in sources, then cite its zero-based array index in each record's source_refs. Use page=0 when the source page is unknown. Never use an invalid source index.
 Every record must include every key in the constrained schema. Use an empty string, false, 0, or [] for keys that do not apply to that record. Use only these record kinds and mappings:
 - classification: key=business_line, text=rationale, confidence and source_refs.
@@ -32,10 +34,10 @@ Every record must include every key in the constrained schema. Use an empty stri
 - field: key=field, value=value, normalized_value=normalized value (empty if unavailable), flag=requires_confirmation, confidence and source_refs. Return only evidence-supported non-null field records; the application adds unsupported fields locally as null.
 - adjustment: text=description, quantity, unit_price, value=adjusted_value, currency, basis, confidence and source_refs.
 - missing_document: key=document_type, text=reason, details=missing_information.
-- finding: text=finding, confidence and source_refs.
+- finding: key=analysis_domain, text=finding, confidence and source_refs. Use general only when none of the six professional domains applies.
 - summary, warning, review: put the complete item in text; all other record keys use their empty defaults.
 Return exactly one classification and one summary record. Records of every other kind may repeat without an artificial limit. Never omit a material claim finding, conflict, causation issue, coverage issue, liability issue, quantum item, salvage issue, or recovery issue.
-Be concise without losing evidence: do not repeat the same fact across sections; keep summary to at most 4 short sentences; keep each rationale, basis, warning, review item, and finding to one short sentence; include the strongest non-duplicate sources needed to support each item and both sides of every conflict; keep each supporting_text excerpt exact and normally at most 240 characters, using more only when needed to preserve meaning. Return only detected substantive document_types and only required missing_documents.`;
+Be concise without losing analysis: do not repeat the same fact across sections; keep summary to at most 4 short sentences; keep each rationale, basis, warning, and review item to one short sentence. A material finding may use a compact analytical paragraph of up to 4 sentences and normally no more than 700 characters when needed to connect fact, significance, counterevidence or alternatives, and a proportionate provisional assessment. Split genuinely distinct issues into separate finding records. Include the strongest non-duplicate sources needed to support each item and both sides of every conflict; keep each supporting_text excerpt exact and normally at most 240 characters, using more only when needed to preserve meaning. Return only detected substantive document_types and only required missing_documents.`;
 const ANTHROPIC_SYSTEM_INSTRUCTIONS = `${SYSTEM_INSTRUCTIONS}
 
 Cost and calculation boundary:
@@ -341,7 +343,7 @@ function reconstructCanonicalAnalysis(transport) {
   const fieldRecords = knownRecords("field", CLAIM_FIELDS);
   const missingDocumentRecords = knownRecords("missing_document", DOCUMENT_TYPES);
   const adjustmentRecords = recordsOf("adjustment").filter((record) => record.text.trim() && record.value.trim());
-  const findingRecords = recordsOf("finding").filter((record) => record.text.trim());
+  const findingRecords = knownRecords("finding", ANALYSIS_DOMAINS).filter((record) => record.text.trim());
   const discardedKnownKeyRecords = recordsOf("document_type").length - documentTypeRecords.length
     + recordsOf("field").length - fieldRecords.length
     + recordsOf("missing_document").length - missingDocumentRecords.length
@@ -384,6 +386,7 @@ function reconstructCanonicalAnalysis(transport) {
       missing_information: record.details,
     })),
     evidence_findings: findingRecords.map((record) => ({
+      analysis_domain: record.key,
       finding: record.text,
       confidence: record.confidence,
       sources: sourcesFor(record),
@@ -689,7 +692,26 @@ function deterministicBusinessLine(evidence) {
   } : null;
 }
 
-function enforceAnthropicGrounding(parsed, evidence) {
+function classificationFromVerifiedDocumentTypes(parsedClassification, documentTypes) {
+  const requiredDocumentType = new Map([
+    ["Air Shipment (NET)", "Air Waybill"],
+    ["Land Shipment", "Truck Waybill"],
+    ["Marine Cargo (Non-Reefer)", "Bill of Lading"],
+  ]).get(parsedClassification.business_line);
+  if (!requiredDocumentType) return null;
+  const supportingType = documentTypes.find((item) => item.document_type === requiredDocumentType
+    && item.sufficient_information
+    && item.sources.length);
+  if (!supportingType) return null;
+  return {
+    ...parsedClassification,
+    confidence: Math.min(parsedClassification.confidence, supportingType.confidence),
+    rationale: `${parsedClassification.rationale} The proposed transport mode is independently supported by the verified ${requiredDocumentType} classification.`,
+    sources: supportingType.sources,
+  };
+}
+
+function enforceAnthropicGrounding(parsed, evidence, { verifiedClassificationRecovery = true } = {}) {
   const warnings = [...parsed.warnings];
   const verifySources = (sources) => (sources || []).map((source) => verifiedSource(source, evidence)).filter(Boolean);
 
@@ -738,10 +760,19 @@ function enforceAnthropicGrounding(parsed, evidence) {
     && !/conflicting classification candidates/i.test(parsed.classification.rationale || "")
     ? deterministicBusinessLine(evidence)
     : null;
+  const verifiedDocumentTypeClassification = !directClassificationSources.length
+    && !deterministicClassification
+    && verifiedClassificationRecovery
+    && parsed.classification.business_line !== "Other / Requires Review"
+    && !/conflicting classification candidates/i.test(parsed.classification.rationale || "")
+    ? classificationFromVerifiedDocumentTypes(parsed.classification, documentTypes)
+    : null;
   const classification = directClassificationSources.length
     ? { ...parsed.classification, sources: directClassificationSources }
     : deterministicClassification
       ? deterministicClassification
+      : verifiedDocumentTypeClassification
+        ? verifiedDocumentTypeClassification
       : {
         business_line: "Other / Requires Review",
         confidence: 0,
@@ -750,6 +781,8 @@ function enforceAnthropicGrounding(parsed, evidence) {
       };
   if (deterministicClassification) {
     warnings.push("Claude omitted a usable classification record; the business line was recovered deterministically from verifiable uploaded evidence.");
+  } else if (verifiedDocumentTypeClassification) {
+    warnings.push("Claude's classification citation was unusable; the proposed business line and bounded confidence were retained from a separately verified transport-document classification.");
   } else if (!directClassificationSources.length) {
     warnings.push("The proposed classification was withheld because it had no verifiable source.");
   }
@@ -1029,7 +1062,7 @@ function parseAnthropicStructuredResponse(body, status, requestId) {
 function contentBlocks(claim, evidence, files, styleReferences) {
   const content = [{
     type: "text",
-    text: `${promptText(claim, evidence, styleReferences)}\n\nReturn only evidence-supported non-null fields; missing fields are completed locally. Preserve every material distinct finding and conflict, but do not duplicate narrative or citations.`,
+    text: `${promptText(claim, evidence, styleReferences)}\n\nReturn only evidence-supported non-null fields; missing fields are completed locally. Preserve every material distinct finding and conflict, but do not duplicate narrative or citations. Use the available finding records to carry the completed professional issue analysis, not only extracted observations. Before encoding the response, confirm that cause, policy application, quantum, mitigation, liability/recovery, alternatives, and material evidence gaps have each been addressed where relevant.`,
   }];
   const sentImageHashes = new Set();
   const includeImage = (buffer) => {
@@ -1089,6 +1122,7 @@ export function createAnthropicProvider({
   maxOutputTokens,
   fetchImpl = globalThis.fetch,
   endpoint = ANTHROPIC_MESSAGES_URL,
+  verifiedClassificationRecovery = true,
 } = {}) {
   const resolvedModel = model || DEFAULT_MODEL;
   const resolvedMaxOutputTokens = resolveMaxOutputTokens(maxOutputTokens, resolvedModel);
@@ -1186,7 +1220,11 @@ export function createAnthropicProvider({
         response_id: body.id || requestId,
         provider_api_status: response.status,
         analyzed_at: new Date().toISOString(),
-        analysis: enforceAnthropicGrounding(sanitizeReferenceNarrative(parsed, styleReferences), evidence),
+        analysis: enforceAnthropicGrounding(
+          sanitizeReferenceNarrative(parsed, styleReferences),
+          evidence,
+          { verifiedClassificationRecovery },
+        ),
       };
     },
   };

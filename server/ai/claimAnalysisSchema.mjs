@@ -151,6 +151,16 @@ export const CLAIM_FIELDS = [
 
 export const EVIDENCE_MODES = ["extracted_text", "document_vision", "image_vision"];
 
+export const ANALYSIS_DOMAINS = [
+  "chronology_custody",
+  "condition_extent",
+  "proximate_cause",
+  "policy_application",
+  "quantum_mitigation",
+  "liability_recovery",
+  "general",
+];
+
 const sourceSchema = z.object({
   document_id: z.string(),
   document_name: z.string(),
@@ -204,11 +214,17 @@ export const claimAnalysisSchema = z.object({
     reason: z.string(),
     missing_information: z.array(z.string()),
   })),
-  evidence_findings: z.array(z.object({
-    finding: z.string(),
-    confidence: z.number().min(0).max(1),
-    sources: z.array(sourceSchema),
-  })),
+  evidence_findings: z.array(z.preprocess(
+    (value) => value && typeof value === "object" && !Array.isArray(value)
+      ? { analysis_domain: "general", ...value }
+      : value,
+    z.object({
+      analysis_domain: z.enum(ANALYSIS_DOMAINS),
+      finding: z.string(),
+      confidence: z.number().min(0).max(1),
+      sources: z.array(sourceSchema),
+    }),
+  )),
   summary: z.string(),
   warnings: z.array(z.string()),
   human_review_required: z.array(z.string()),

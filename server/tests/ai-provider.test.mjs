@@ -135,7 +135,9 @@ test("anthropic sends uploaded content to Messages API and retains only grounded
   assert.match(body.system, /no Markdown fences, preface, trailing commentary, or extra keys/i);
   assert.match(body.system, /return only evidence-supported non-null field records/i);
   assert.match(body.system, /Never omit a material claim finding/i);
-  assert.ok(body.system.length < 15_000, "The Claude instructions and plain-text contract must stay compact");
+  assert.match(body.system, /compact analytical paragraph of up to 4 sentences/i);
+  assert.match(body.messages[0].content[0].text, /cause, policy application, quantum, mitigation, liability\/recovery, alternatives, and material evidence gaps/i);
+  assert.ok(body.system.length < 20_000, "The Claude instructions and plain-text contract must stay compact");
   assert.match(body.messages[0].content[0].text, /Claimant: Example Trading SAL/);
   assert.equal(body.messages[0].content.filter((item) => item.type === "document").length, 0);
   assert.equal(body.messages[0].content.filter((item) => item.type === "image").length, 2);
@@ -553,6 +555,76 @@ test("anthropic citation repair still rejects fabricated evidence", async () => 
   assert.doesNotMatch(JSON.stringify(result.analysis), /Invented orbital reactor loss reference/);
 });
 
+test("anthropic retains a valid classification from a separately verified transport document type", async () => {
+  const evidenceText = "MAWB 020-12345678 Shipper: Example Exporter Consignee: Example Receiver Flight: AB123";
+  const verifiedSource = {
+    document_id: "mawb-1",
+    document_name: "mawb.pdf",
+    page: 1,
+    supporting_text: evidenceText,
+    confidence: 0.92,
+    evidence_mode: "extracted_text",
+  };
+  const fixture = {
+    ...structuredAnalysis,
+    classification: {
+      business_line: "Air Shipment (NET)",
+      confidence: 0.88,
+      rationale: "The claim concerns carriage under a master air waybill.",
+      sources: [{ ...verifiedSource, supporting_text: "Fabricated classification excerpt" }],
+    },
+    document_types: [{
+      document_type: "Air Waybill",
+      confidence: 0.92,
+      sufficient_information: true,
+      rationale: "The document contains the master air waybill and flight details.",
+      sources: [verifiedSource],
+    }],
+    fields: [],
+  };
+  const provider = createAnthropicProvider({
+    apiKey: "server-only-key",
+    fetchImpl: async () => new Response(JSON.stringify(anthropicMessageFixture(fixture)), { status: 200 }),
+  });
+
+  const result = await provider.analyze({
+    claim: { id: "classification-evidence-channel" },
+    evidence: [{
+      document_id: "mawb-1",
+      document_name: "mawb.pdf",
+      mime_type: "application/pdf",
+      kind: "pdf",
+      pages: [{ page: 1, text: evidenceText }],
+    }],
+    files: [{ mimetype: "application/pdf", buffer: Buffer.from("pdf") }],
+  });
+
+  assert.equal(result.analysis.classification.business_line, "Air Shipment (NET)");
+  assert.equal(result.analysis.classification.confidence, 0.88);
+  assert.equal(result.analysis.classification.sources[0].supporting_text, evidenceText);
+  assert.match(result.analysis.warnings.join(" "), /separately verified transport-document classification/i);
+  assert.doesNotMatch(JSON.stringify(result.analysis), /Fabricated classification excerpt/);
+
+  const baselineProvider = createAnthropicProvider({
+    apiKey: "server-only-key",
+    verifiedClassificationRecovery: false,
+    fetchImpl: async () => new Response(JSON.stringify(anthropicMessageFixture(fixture)), { status: 200 }),
+  });
+  const baseline = await baselineProvider.analyze({
+    claim: { id: "classification-evidence-channel-before" },
+    evidence: [{
+      document_id: "mawb-1",
+      document_name: "mawb.pdf",
+      mime_type: "application/pdf",
+      kind: "pdf",
+      pages: [{ page: 1, text: evidenceText }],
+    }],
+    files: [{ mimetype: "application/pdf", buffer: Buffer.from("pdf") }],
+  });
+  assert.equal(baseline.analysis.classification.business_line, "Other / Requires Review");
+  assert.equal(baseline.analysis.classification.confidence, 0);
+});
+
 test("anthropic combines non-empty text blocks before parsing structured JSON", async () => {
   const output = JSON.stringify(toAnthropicTransport(validAnthropicAnalysisFixture));
   const splitAt = Math.floor(output.length / 2);
@@ -683,6 +755,7 @@ test("Anthropic transport round-trip preserves every material canonical report c
       missing_information: ["Dated carrier notice", "Proof of delivery"],
     }],
     evidence_findings: [{
+      analysis_domain: "proximate_cause",
       finding: "Twelve units showed impact damage; causation remains qualified.",
       confidence: 0.84,
       sources: [materialSource],

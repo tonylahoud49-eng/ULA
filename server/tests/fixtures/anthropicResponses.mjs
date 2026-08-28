@@ -188,6 +188,7 @@ export function canonicalAnalysisToAnthropicTransportFixture(analysis) {
     key: item.document_type, text: item.reason, details: item.missing_information,
   }));
   for (const item of analysis.evidence_findings || []) records.push(record("finding", {
+    key: item.analysis_domain || "general",
     text: item.finding, confidence: item.confidence, source_refs: refs(item.sources),
   }));
   if (typeof analysis.summary === "string") records.push(record("summary", { text: analysis.summary }));

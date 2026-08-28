@@ -272,6 +272,25 @@ Claude must analyze the complete current-claim evidence set together, including 
 13. Keep the executive summary concise and reject OCR contamination or irrelevant detail.
 14. Return a structured suggestion for human review. Cause, coverage, liability, quantum, recommendations, and conclusions remain reviewable and require professional approval before issue.
 
+PDF extraction must not assume that a page with searchable text is visually irrelevant. A searchable page containing a materially sized raster image may also be rendered for Claude vision so that captioned photographs, OCR overlays, logger screens, scans, and mixed text/photo survey pages are not omitted. Additional searchable visual pages are bounded locally; ordinary text pages, logos, and decorative marks must not flood the request. The extracted text remains the verification source for textual facts, while genuinely visual findings use visual provenance.
+
+Before returning the structured result, Claude performs a Director-grade internal review within the same provider request. This review does not expose chain-of-thought and does not create a second paid analysis request. It must:
+
+1. Complete the sourced fact, document, party-role, chronology, policy, quantity, financial, and condition record before assessing the claim.
+2. Apply every material test in the applicable owner-approved business-line methodology profile; the profile is an analysis checklist, not merely a writing-style reference.
+3. Challenge the draft analysis across chronology and custody, physical condition and extent, proximate cause, policy application, quantum and mitigation, and liability and recovery. Each returned material finding is assigned to one of those analysis domains so the issue ledger remains structured and auditable; `general` is reserved for a material issue that genuinely fits none of them.
+4. For each material issue, connect supported facts to professional significance, evidence for and against, viable alternatives, the strongest proportionate provisional assessment, and the exact evidence or decision that could change it.
+5. Test causal mechanisms, timing, custody, physical consistency, counterevidence, and alternatives rather than repeating a reported cause or inferring cause from one indicator.
+6. Use comparison evidence deliberately: pre-loading against delivery condition, affected against sound items, and differently exposed units or custody periods. Prior similar shipments, routine practice, handling labels, and unaffected comparators are context, not standalone proof of cause or packing compliance.
+7. Separate observed damage from inferred internal failure, contamination, hygiene, safety, fitness for purpose, repairability, and total loss. Screening tests support only the proposition established by their evidenced method; stronger technical conclusions require proportionate testing, competent expert or OEM evidence, or explicit qualification and the missing verification.
+8. Map each material policy term to the matching current-claim facts and explain the provisional significance without inventing compliance, breach, cover, or legal effect. Keep independently established scope, territory, duration, limit, and exclusion issues separate from disputed cause, packing, warranty, and compliance issues; identify the provisional issue hierarchy while leaving legal effect and approval to the authorized professional.
+9. Reconcile the scope of loss at the smallest evidenced unit, preserve every source-stated calculation input, and leave arithmetic to the deterministic application layer.
+10. Distinguish every plausible liable or recovery party and test custody, contract, causation, notice, evidence preservation, defences, limitation or time bar, and recovery economics before recommending pursuit.
+11. Select the strongest supported outcome branch permitted by the applicable profile, or state which branches remain open and what evidence separates them.
+12. Audit the final structured result for unsupported assertions, missed evidence, generic filler, one-sided conflicts, repeated findings, conflated financial concepts, and conclusions that are stronger or weaker than the evidence.
+
+Material findings may use a compact analytical paragraph of up to four sentences when needed to connect fact, significance, counterevidence or alternatives, and a proportionate provisional assessment. Concision must not reduce a material issue to a bare observation or generic review warning.
+
 ## No fabrication
 
 - Never fabricate a party, policy term, number, date, route, quantity, amount, cause, coverage position, liability position, document, photograph, citation, or conclusion.
@@ -319,6 +338,8 @@ Previous owner-approved reports are style and methodology references only. They 
 They must never supply or influence a new claim's parties, policy number, policy wording, shipment details, dates, amounts, findings, photographs, cause, coverage decision, liability conclusion, or adjustment result.
 
 Only explicitly approved JSON style manifests are loaded. Raw historical reports are not automatically loaded. Historical references must never be named, quoted, summarized, or cited in the report. Uploaded current-claim evidence is the only source of claim facts.
+
+Historical regression uses each approved report only as an evaluation target paired with that claim's own source-document bundle. The approved report is never included in the model request or normalized claim evidence. A production rule may change only when a consistent cross-case pattern supports it or when the regression exposes a source-verification, calculation, classification, export, or rendering defect. Claim-specific parties, wording, dates, quantities, amounts, causes, allocations, and outcomes must never be copied into prompts, schemas, templates, code, or reusable style profiles. Legacy examples that conflict with this specification remain recorded regression differences; they do not silently override the current rule.
 
 Legal and technical references may improve professional reasoning only when relevant to the claim, wording, jurisdiction, date, loss type, and established facts. They are never claim evidence and cannot populate facts, amounts, citations, or report content.
 
@@ -480,6 +501,8 @@ Every non-null AI field, substantive document-type classification, business-line
 Use `extracted_text` only when the excerpt can be verified in extracted text. Use a vision mode only for a genuinely visual fact not established by extracted text.
 
 The server verifies source identities and extracted excerpts. Invalid citation indexes are discarded. Unsupported fields, findings, and adjustment rows are withheld. Claude citations may be repaired only by matching the claimed excerpt to the actual uploaded document text; they are not repaired from historical or legal references.
+
+A business-line classification whose direct citation cannot be verified may be retained only when a separately verified, sufficient, line-specific transport document establishes the same mode: an Air Waybill for `Air Shipment (NET)`, a Truck Waybill for `Land Shipment`, or a Bill of Lading for `Marine Cargo (Non-Reefer)`. The retained confidence is capped at the lower of Claude's classification confidence and the verified document-type confidence. This recovery does not apply to conflicting classifications or to business lines lacking the specified independent support; those cases remain `Other / Requires Review`. Application mapping accepts confidence represented as either a normalized 0-through-1 value or an already-percent 0-through-100 value and displays one bounded percentage.
 
 Both sides of a material conflict require supporting provenance. Do not silently choose one source.
 

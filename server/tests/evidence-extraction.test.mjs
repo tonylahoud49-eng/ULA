@@ -85,3 +85,26 @@ test("image-only pages inside a mixed PDF are rendered and retained for provider
   assert.equal(evidence.vision_images[0].mime_type, "image/jpeg");
   assert.ok(evidence.vision_images[0].buffer.length > 1_000);
 });
+
+test("searchable PDF pages with material photographs are also retained for provider vision", async () => {
+  const photograph = createCanvas(640, 480);
+  const photographContext = photograph.getContext("2d");
+  photographContext.fillStyle = "#744f3a";
+  photographContext.fillRect(0, 0, photograph.width, photograph.height);
+  photographContext.fillStyle = "#d9c3a5";
+  photographContext.fillRect(90, 80, 460, 310);
+
+  const pdf = new jsPDF({ unit: "px", format: [900, 1200] });
+  pdf.text("SURVEY PHOTOGRAPHS - damaged packing at delivery", 50, 70);
+  pdf.addImage(photograph.toDataURL("image/jpeg", 0.82), "JPEG", 120, 140, 640, 480);
+  const evidence = await extractEvidenceFile(
+    file("survey-with-captioned-photo.pdf", "application/pdf", Buffer.from(pdf.output("arraybuffer"))),
+    { id: "captioned-photo" },
+  );
+
+  assert.equal(evidence.searchable_page_count, 1);
+  assert.equal(evidence.image_only_page_count, 0);
+  assert.equal(evidence.vision_image_count, 1);
+  assert.equal(evidence.vision_images[0].page, 1);
+  assert.equal(evidence.vision_images[0].vision_reason, "material-raster-with-searchable-text");
+});

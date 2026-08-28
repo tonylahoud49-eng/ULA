@@ -12,7 +12,7 @@ import {
   populateMasterReportDocx,
 } from "../../src/lib/masterReportDocx.js";
 import { MAX_REPORT_PHOTOGRAPHS, selectReportPhotographs } from "../../src/lib/reportPhotoSelection.js";
-import { SYSTEM_INSTRUCTIONS } from "../ai/providers/openaiProvider.mjs";
+import { DIRECTOR_ANALYSIS_PROTOCOL, SYSTEM_INSTRUCTIONS, promptText } from "../ai/providers/openaiProvider.mjs";
 
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "../..");
 const source = (page, supportingText, evidenceMode = "extracted_text") => ({
@@ -102,6 +102,50 @@ test("production prompt requires concise fact-to-interpretation-to-conclusion re
   assert.match(SYSTEM_INSTRUCTIONS, /Separately extract the exact policy or cover-note number/i);
   assert.match(SYSTEM_INSTRUCTIONS, /Never add the full shipment value to the value of damaged items/i);
   assert.match(SYSTEM_INSTRUCTIONS, /interest and policy schedule; shipment routing; chronological surveyor notes/i);
+});
+
+test("production analysis performs a Director-grade evidence challenge before structured output", () => {
+  assert.match(SYSTEM_INSTRUCTIONS, /senior insurance loss adjuster and surveyor/i);
+  assert.match(DIRECTOR_ANALYSIS_PROTOCOL, /two internal passes before encoding the response/i);
+  assert.match(DIRECTOR_ANALYSIS_PROTOCOL, /owner-approved methodology note as an analysis checklist/i);
+  assert.match(DIRECTOR_ANALYSIS_PROTOCOL, /factual chronology and custody; physical condition and extent; proximate cause; policy application; quantum and mitigation; liability and recovery/i);
+  assert.match(DIRECTOR_ANALYSIS_PROTOCOL, /domain-labelled evidence_finding/i);
+  assert.match(SYSTEM_INSTRUCTIONS, /chronology_custody.*condition_extent.*proximate_cause.*policy_application.*quantum_mitigation.*liability_recovery/i);
+  assert.match(DIRECTOR_ANALYSIS_PROTOCOL, /evidence that strengthens and weakens the proposition; viable competing explanations/i);
+  assert.match(DIRECTOR_ANALYSIS_PROTOCOL, /Cause analysis must test mechanisms, timing, custody, physical consistency, counterevidence, and alternatives/i);
+  assert.match(DIRECTOR_ANALYSIS_PROTOCOL, /compare pre-loading with delivery condition, affected with sound packages or components/i);
+  assert.match(DIRECTOR_ANALYSIS_PROTOCOL, /prior similar shipments.*never as standalone proof of cause or packing compliance/is);
+  assert.match(DIRECTOR_ANALYSIS_PROTOCOL, /Separate observed physical damage from inferred internal failure, contamination, hygiene, safety, fitness for purpose, repairability, and total loss/i);
+  assert.match(DIRECTOR_ANALYSIS_PROTOCOL, /screening test identifies only what its evidenced method supports/i);
+  assert.match(DIRECTOR_ANALYSIS_PROTOCOL, /Policy analysis must pair each material clause.*with the established current-claim facts/is);
+  assert.match(DIRECTOR_ANALYSIS_PROTOCOL, /policy-issue hierarchy.*independently established scope, territorial, duration, limit, or exclusion issue/is);
+  assert.match(DIRECTOR_ANALYSIS_PROTOCOL, /which verified issue could control the provisional outcome.*leaving final legal effect and coverage approval/is);
+  assert.match(DIRECTOR_ANALYSIS_PROTOCOL, /Quantum analysis must reconcile the scope of loss at the smallest evidenced unit/i);
+  assert.match(DIRECTOR_ANALYSIS_PROTOCOL, /Liability and recovery analysis must identify each plausible party separately/i);
+  assert.match(DIRECTOR_ANALYSIS_PROTOCOL, /audit it for unsupported assertions, missed pages or parties, generic filler/i);
+
+  const prompt = promptText(
+    { id: "director-review", business_line: "Marine Cargo (Non-Reefer)" },
+    [{
+      document_id: "doc-1",
+      document_name: "claim.pdf",
+      mime_type: "application/pdf",
+      extraction_status: "complete",
+      pages: [{ page: 1, text: "Bill of Lading and dry container evidence." }],
+    }],
+    [{
+      profile_id: "non-reefer-cargo",
+      title: "Approved methodology",
+      section_order: [],
+      style_notes: ["Test packing, custody, causation and recovery."],
+      applies_to: { evidence_terms_any: ["dry container"], business_lines: ["Marine Cargo (Non-Reefer)"] },
+      source_role: "style_reference_only",
+    }],
+  );
+  assert.match(prompt, /owner-approved analysis methodology/i);
+  assert.match(prompt, /Execute every material test in the applicable owner-approved methodology profile/i);
+  assert.match(prompt, /Do not merely restate the profile or the evidence/i);
+  assert.match(prompt, /completing the final quality audit/i);
 });
 
 test("professional report narrative remains grounded, analytical, concise, and deterministic", async () => {

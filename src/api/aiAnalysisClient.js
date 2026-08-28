@@ -38,6 +38,14 @@ const usableValue = (field) => {
   return Number.isFinite(number) ? number : undefined;
 };
 
+const confidencePercent = (value) => {
+  const numeric = Number(String(value ?? "").replace(/%$/, "").trim());
+  if (!Number.isFinite(numeric) || numeric < 0) return 0;
+  if (numeric <= 1) return Math.round(numeric * 100);
+  if (numeric <= 100) return Math.round(numeric);
+  return 0;
+};
+
 export function mapAnalysis(result) {
   const raw = result.analysis;
   const suggestedBusinessLine = raw.classification.business_line === "Other / Requires Review"
@@ -60,7 +68,7 @@ export function mapAnalysis(result) {
       document_id: source.document_id,
       page: source.page,
       matched_text: source.supporting_text,
-      confidence: `${Math.round(source.confidence * 100)}% AI confidence`,
+      confidence: `${confidencePercent(source.confidence)}% AI confidence`,
       review_state: source.page ? `Page ${source.page}` : "Source location recorded",
       evidence_mode: source.evidence_mode,
     });
@@ -68,6 +76,14 @@ export function mapAnalysis(result) {
   appendSources(`Business line: ${suggestedBusinessLine}`, raw.classification.sources);
   raw.document_types.forEach((type) => appendSources(`Document type: ${type.document_type}`, type.sources));
   raw.fields.filter((field) => field.value !== null).forEach((field) => appendSources(`Field: ${field.field.replaceAll("_", " ")}`, field.sources));
+  raw.evidence_findings.forEach((finding, index) => appendSources(
+    `Analysis: ${(finding.analysis_domain || "general").replaceAll("_", " ")} ${index + 1}`,
+    finding.sources,
+  ));
+  (raw.adjustment_line_items || []).forEach((item, index) => appendSources(
+    `Adjustment item ${index + 1}: ${item.description}`,
+    item.sources,
+  ));
 
   return {
     status: "completed",
@@ -79,7 +95,7 @@ export function mapAnalysis(result) {
     business_line: suggestedBusinessLine,
     template_id: reportTemplate.id,
     template_name: reportTemplate.name,
-    confidence: Math.round(raw.classification.confidence * 100),
+    confidence: confidencePercent(raw.classification.confidence),
     summary: raw.summary,
     missing_documents: raw.missing_documents.map((item) => item.document_type),
     missing_document_details: raw.missing_documents,
