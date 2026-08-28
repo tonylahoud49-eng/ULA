@@ -26,8 +26,8 @@ const UserNotRegisteredError = () => {
             <p className="font-semibold">Local Testing Instructions:</p>
             <ul className="list-disc list-inside mt-2 space-y-1">
               <li>Click the button below to sign out.</li>
-              <li>Sign in as <code className="bg-slate-100 px-1 py-0.5 rounded text-primary">admin@ula.com</code> (Google SSO or password: <code className="bg-slate-100 px-1 py-0.5 rounded">admin123</code>).</li>
-              <li>Go to the **Users** tab in the sidebar and approve your pending account.</li>
+              <li>Sign in as <code className="bg-slate-100 px-1 py-0.5 rounded text-primary">admin@unitedlossadjusters.com</code> with the local administrator password.</li>
+              <li>Open the Users page from the sidebar and approve your pending account.</li>
             </ul>
           </div>
           <Button onClick={handleLogout} className="w-full h-11 ula-gradient text-white">

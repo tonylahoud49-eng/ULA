@@ -23,7 +23,7 @@ export const AuthProvider = ({ children }) => {
     } catch (error) {
       setUser(null);
       setIsAuthenticated(false);
-      if (error.status !== 401) {
+      if (error.status !== 401 && error.status !== 403) {
         setAuthError({ type: "unknown", message: error.message || "Unable to check authentication" });
       }
       return null;

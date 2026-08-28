@@ -4,6 +4,10 @@ export const MASTER_TEMPLATE_NAME = "260536 - CR - Victoire - UTA - 1v1.docx";
 export const UNKNOWN_REPORT_VALUE = "Not established from the reviewed evidence";
 export const DIRECTOR_ASSESSOR_WORDING = "To date, it is understood that the Assured had not appointed a loss assessor to act on their behalf.";
 export const DIRECTOR_CONCLUSION_CLOSING = "We confirm having sighted the originals of all documents customarily submitted in support of a claim of this nature and remain at Insurers disposal for further instructions.";
+const APPENDIX_PHOTOS_PER_PAGE = 4;
+const APPENDIX_MAX_PAGES = 3;
+const APPENDIX_MAX_PHOTOS = APPENDIX_PHOTOS_PER_PAGE * APPENDIX_MAX_PAGES;
+const APPENDIX_PHOTO_DESCRIPTION = "Photographs show the insured interest before loading and during inspection, including its packaging, identification markings, and observed condition.";
 
 const isPresent = (value) => value !== undefined && value !== null && String(value).trim() !== "" && !/^(?:requires confirmation|unknown|not established(?: from (?:the )?reviewed evidence)?|null|undefined)$/i.test(String(value).trim());
 const unique = (items) => [...new Set(items.filter(Boolean))];
@@ -34,8 +38,9 @@ export function sanitizeReportValue(value, fieldName = "") {
   if (/\uFFFD|Ã¢â‚¬|Ãƒ|â€[™œ“”]/.test(text)) return null;
 
   if (["applicant", "insured", "insurer", "reassured", "reinsurer", "broker", "shipper", "consignee", "carrier", "surveyor"].includes(fieldName)) {
-    text = text.split(/\s+(?=(?:Invoice|Policy|B\/?L|Bill of Lading|AWB|Container|Tel(?:ephone)?|E-?mail|Address)\s*(?:No\.?|Number|:|#))/i)[0].trim();
+    text = text.split(/\s+(?=(?:Invoice|Policy|B\/?L|Bill of Lading|AWB|Container|Tel(?:ephone)?|E-?mail|Address|Warrant(?:ed|y|ies)?|Exclud(?:ed|ing|sion)|Terms? and Conditions?|Carrier'?s? Agents? Endorsements?|Received for Shipment|Copy Non-Negotiable)\b)/i)[0].trim();
     if (!text || /^(?:Invoice|Policy|Bill of Lading|AWB|Container)\b/i.test(text)) return null;
+    if (text.length > 180 || /^(?:Warrant(?:ed|y|ies)?|Exclud(?:ed|ing|sion)|Terms? and Conditions?|Carrier'?s? Agents? Endorsements?|Received for Shipment|Copy Non-Negotiable)\b/i.test(text)) return null;
   }
   return text.length > 2_000 ? null : text;
 }
@@ -79,6 +84,7 @@ function withPageBreakBefore(xml) {
 function asNormalParagraph(xml) {
   return xml
     .replace(/<w:pStyle\b[^>]*\/>/, '<w:pStyle w:val="Normal"/>')
+    .replace(/<w:(?:b|bCs|sz|szCs)\b[^>]*\/>/g, "")
     .replace(/<w:drawing>[\s\S]*?<\/w:drawing>/g, "");
 }
 
@@ -87,11 +93,33 @@ function replaceParagraphMarker(xml, marker, values) {
   const items = (Array.isArray(values) ? values : [values]).filter((value) => value !== undefined && value !== null && String(value).trim() !== "");
   return xml.replace(/<w:p\b[\s\S]*?<\/w:p>/g, (paragraph) => {
     if (!paragraph.includes(token)) return paragraph;
-    if (!items.length && ["report_summary_findings", "document_sighting"].includes(marker)) return "";
+    if (!items.length && ["report_summary_findings", "document_sighting", "enclosure_items", "outstanding_items"].includes(marker)) {
+      return /<w:sectPr\b/.test(paragraph) ? replaceBlockText(cleanPrototype(paragraph), "") : "";
+    }
     const prototype = cleanPrototype(paragraph);
     const resolved = items.length ? items : [UNKNOWN_REPORT_VALUE];
     return resolved.map((value) => replaceBlockText(prototype, value)).join("");
   });
+}
+
+function paragraphText(xml) {
+  return cleanText(decodeXmlText([...String(xml || "").matchAll(/<w:t(?:\s[^>]*)?>([\s\S]*?)<\/w:t>/g)]
+    .map((match) => match[1])
+    .join("")));
+}
+
+function startHeadingOnNextPage(xml, headingText) {
+  const paragraphs = [...xml.matchAll(/<w:p\b[\s\S]*?<\/w:p>/g)];
+  const headingIndex = paragraphs.findIndex((match) => paragraphText(match[0]) === headingText);
+  if (headingIndex < 0) return xml;
+  const heading = paragraphs[headingIndex];
+  const previous = paragraphs[headingIndex - 1];
+  const removePrevious = previous
+    && !paragraphText(previous[0])
+    && /<w:br\b[^>]*w:type="page"[^>]*\/>/.test(previous[0]);
+  const start = removePrevious ? previous.index : heading.index;
+  const replacement = withPageBreakBefore(cleanPrototype(heading[0]));
+  return `${xml.slice(0, start)}${replacement}${xml.slice(heading.index + heading[0].length)}`;
 }
 
 const decodeXmlText = (value) => String(value || "")
@@ -365,8 +393,30 @@ function adjustmentTotal(record) {
 
 function policyParagraphs(record) {
   const paragraphs = [];
-  const terms = fact(record, "warranties_conditions").value || fact(record, "policy_terms").value;
-  if (isPresent(terms)) paragraphs.push(`The relevant policy terms and conditions include: ${cleanText(terms)}${sourceLabel([...(fact(record, "warranties_conditions").sources || []), ...(fact(record, "policy_terms").sources || [])])}`);
+  const attendance = [
+    isPresent(fact(record, "representative_parties").value) ? `Representatives / attendance: ${cleanText(fact(record, "representative_parties").value)}` : null,
+    isPresent(fact(record, "survey_attendance_scope").value) ? `Scope of attendance: ${cleanText(fact(record, "survey_attendance_scope").value)}` : null,
+  ].filter(Boolean);
+  if (attendance.length) paragraphs.push(joinSentences(attendance, 2));
+  const categories = [
+    ["Clauses / basis of cover", ["policy_terms"]],
+    ["Transit scope", ["policy_transit_scope"]],
+    ["Conveyance limits", ["policy_conveyance_limits"]],
+    ["Extensions / inclusions", ["policy_extensions"]],
+    ["Warranties", ["policy_warranties", "warranties_conditions"]],
+    ["Conditions", ["policy_conditions"]],
+    ["Exclusions", ["policy_exclusions"]],
+  ];
+  const retained = new Set();
+  for (const [label, fields] of categories) {
+    const values = unique(fields.map((fieldName) => fact(record, fieldName).value).filter(isPresent).map(cleanText));
+    for (const value of values) {
+      const comparable = value.toLowerCase().replace(/[^a-z0-9]+/g, " ").trim();
+      if (!comparable || retained.has(comparable)) continue;
+      retained.add(comparable);
+      paragraphs.push(`${label}: ${value}`);
+    }
+  }
   for (const entry of record?.policy_analysis?.entries || []) {
     paragraphs.push(`${entry.topic}: ${entry.assessment}${entry.review_question ? ` Review question: ${entry.review_question}` : ""}`);
   }
@@ -375,6 +425,34 @@ function policyParagraphs(record) {
   if (!paragraphs.length) paragraphs.push("The available evidence does not contain substantive policy wording sufficient for a warranties or conditions assessment.");
   paragraphs.push("No breach, exclusion, coverage, or liability conclusion is made unless it is directly supported by the cited policy wording and claim evidence.");
   return paragraphs;
+}
+
+function shipmentRoutingParagraphs(record) {
+  const explicit = fact(record, "shipment_routing").value;
+  if (isPresent(explicit)) return [cleanText(explicit)];
+  const origin = fact(record, "voyage_from").value || fact(record, "port_of_loading").value || fact(record, "country_of_origin").value;
+  const destination = fact(record, "voyage_to").value || fact(record, "port_of_discharge").value || fact(record, "destination_country").value;
+  const transportReference = fact(record, "bill_of_lading").value || fact(record, "air_waybill").value;
+  const mainLeg = [
+    isPresent(origin) && isPresent(destination) ? `The insured cargo moved from ${cleanText(origin)} to ${cleanText(destination)}` : null,
+    isPresent(fact(record, "vessel_name").value) ? `on board ${cleanText(fact(record, "vessel_name").value)}${isPresent(fact(record, "voyage_number").value) ? `, voyage ${cleanText(fact(record, "voyage_number").value)}` : ""}` : null,
+    isPresent(transportReference) ? `under ${isPresent(fact(record, "bill_of_lading").value) ? "Bill of Lading" : "Air Waybill"} No. ${cleanText(transportReference)}` : null,
+  ].filter(Boolean);
+  const transshipment = [
+    isPresent(fact(record, "transshipment_port").value) ? `transshipment at ${cleanText(fact(record, "transshipment_port").value)}` : null,
+    isPresent(fact(record, "feeder_vessel").value) ? `on feeder vessel ${cleanText(fact(record, "feeder_vessel").value)}${isPresent(fact(record, "feeder_voyage").value) ? `, voyage ${cleanText(fact(record, "feeder_voyage").value)}` : ""}` : null,
+  ].filter(Boolean);
+  const events = [
+    isPresent(fact(record, "shipment_date").value) ? `shipped ${cleanText(fact(record, "shipment_date").value)}` : null,
+    isPresent(fact(record, "discharge_date").value) ? `discharged ${cleanText(fact(record, "discharge_date").value)}` : null,
+    isPresent(fact(record, "delivery_date").value) ? `delivered ${cleanText(fact(record, "delivery_date").value)}` : null,
+    isPresent(fact(record, "empty_return_date").value) ? `empty container returned ${cleanText(fact(record, "empty_return_date").value)}` : null,
+  ].filter(Boolean);
+  const paragraphs = [];
+  if (mainLeg.length) paragraphs.push(`${mainLeg.join(" ")}.`);
+  if (transshipment.length) paragraphs.push(`The documented onward movement records ${transshipment.join(" ")}.`);
+  if (events.length) paragraphs.push(`The evidenced transit chronology records the cargo as ${events.join(", then ")}.`);
+  return paragraphs.length ? paragraphs : ["The shipment routing cannot be reconstructed from the reviewed evidence without assumptions."];
 }
 
 function liabilityParagraphs(record) {
@@ -426,32 +504,31 @@ export function buildMasterReportData({ report = {}, claim = {}, issueDate } = {
   const transportReference = fact(record, "bill_of_lading").value || fact(record, "air_waybill").value;
   const transportLabel = isPresent(fact(record, "bill_of_lading").value) ? "Bill of Lading" : "Air Waybill";
   const policyValue = fact(record, "insured_value").value || fact(record, "policy_limit").value;
-  const policyTerms = fact(record, "policy_terms").value || fact(record, "warranties_conditions").value;
   const surveyorNotes = surveyorNarrative(record);
   const causeSection = causeNarrative(record);
   const conclusions = conclusionParagraphs(record);
-  const documentRegister = record.document_register || [];
-  const receivedDocuments = documentRegister.map((document) => `${document.document_name} - ${document.categories?.join(", ") || "document type not established"}`);
-  const selectedPhotoDocuments = new Set((record.selected_photographs || []).map((item) => item.document_id));
-  const appendixDocuments = selectedPhotoDocuments.size
-    ? (record.appendices || []).filter((document) => selectedPhotoDocuments.has(document.document_id))
-    : (record.appendices || []);
-  const appendices = appendixDocuments.map((document, index) => ({
-    document_id: document.document_id,
-    document_name: document.document_name,
-    heading: `Appendix ${String.fromCharCode(65 + index)} - ${document.categories?.includes("Photographs") ? "Photographs / Visual Evidence" : "Supporting Evidence"}`,
-    description: `${document.document_name}; ${document.image_only_pages || 0} image-only page(s) and ${document.searchable_pages || 0} searchable page(s) registered.`,
-  }));
+  const appendices = [{
+    heading: "Appendix A - Photographs",
+    description: APPENDIX_PHOTO_DESCRIPTION,
+  }];
   const assignments = Object.fromEntries((report.assignments || []).map((assignment) => [assignment.role, assignment]));
-  const policyDetails = [
+  const policyDetails = unique([
     `No. ${valueOrUnknown(policyNumber)}`,
+    isPresent(fact(record, "policy_period").value) ? `Insured Period: ${cleanText(fact(record, "policy_period").value)}` : null,
     `Insured Value / Limit: ${amount(policyValue, currency)}`,
-    isPresent(policyTerms) ? cleanText(policyTerms) : "Policy wording was not established in the reviewed evidence",
+    isPresent(fact(record, "policy_conveyance_limits").value) ? `Conveyance / Shipment Limits: ${cleanText(fact(record, "policy_conveyance_limits").value)}` : null,
+    isPresent(fact(record, "policy_transit_scope").value) ? `Transit Scope: ${cleanText(fact(record, "policy_transit_scope").value)}` : null,
     isPresent(fact(record, "valuation_basis").value) ? `Basis of Valuation: ${cleanText(fact(record, "valuation_basis").value)}` : null,
+    isPresent(fact(record, "policy_terms").value) ? `Clauses / Basis of Cover: ${cleanText(fact(record, "policy_terms").value)}` : null,
+    isPresent(fact(record, "policy_extensions").value) ? `Extensions / Inclusions: ${cleanText(fact(record, "policy_extensions").value)}` : null,
+    isPresent(fact(record, "policy_warranties").value) ? `Warranties: ${cleanText(fact(record, "policy_warranties").value)}` : null,
+    isPresent(fact(record, "policy_conditions").value) ? `Conditions: ${cleanText(fact(record, "policy_conditions").value)}` : null,
+    isPresent(fact(record, "policy_exclusions").value) ? `Exclusions: ${cleanText(fact(record, "policy_exclusions").value)}` : null,
+    !["policy_terms", "policy_extensions", "policy_warranties", "policy_conditions", "policy_exclusions", "warranties_conditions"].some((name) => isPresent(fact(record, name).value)) ? "Policy wording was not established in the reviewed evidence" : null,
     `Deductible / Excess: ${amount(financials.deductible, currency)}`,
-  ].filter(Boolean).join("\n");
+  ].filter(Boolean)).join("\n");
   const cargoParts = [fact(record, "container_numbers").value, fact(record, "quantity").value, commodity, fact(record, "gross_weight").value].filter(isPresent);
-  const arrivalParts = [fact(record, "discharge_date").value && `Discharged ${fact(record, "discharge_date").value}`, fact(record, "arrival_date").value && `Arrived ${fact(record, "arrival_date").value}`, fact(record, "delivery_date").value && `Delivered ${fact(record, "delivery_date").value}`].filter(Boolean);
+  const arrivalParts = [fact(record, "discharge_date").value && `Discharged ${fact(record, "discharge_date").value}`, fact(record, "arrival_date").value && `Arrived ${fact(record, "arrival_date").value}`, fact(record, "delivery_date").value && `Delivered ${fact(record, "delivery_date").value}`, fact(record, "empty_return_date").value && `Empty container returned ${fact(record, "empty_return_date").value}`].filter(Boolean);
   const documentedInsuredValue = numberValue(fact(record, "insured_value").value);
   const invoiceValueForAdequacy = numberValue(financials.invoice_value);
   const valuationUpliftPercent = numberValue(financials.valuation_uplift_percent);
@@ -492,7 +569,7 @@ export function buildMasterReportData({ report = {}, claim = {}, issueDate } = {
   const table1Brief = table1BriefParts.length
     ? `In brief, Table 1 records ${table1BriefParts.join(", ")}.`
     : "In brief, Table 1 records the material claim details established from the reviewed evidence.";
-  const noteIntro = `${summaryIntro} This report and adjustment note sets out our findings, causal assessment and adjustment position; the records reviewed are listed in the enclosure section.`;
+  const noteIntro = `${summaryIntro} This report and adjustment note sets out our findings, causal assessment and adjustment position; supporting documents are retained and transmitted separately.`;
   const invoiceComponents = [
     financials.fob_value !== null ? `FOB ${amount(financials.fob_value, currency)}` : null,
     financials.freight_amount !== null ? `freight ${amount(financials.freight_amount, currency)}` : null,
@@ -539,7 +616,7 @@ export function buildMasterReportData({ report = {}, claim = {}, issueDate } = {
       summary_consignee: valueOrUnknown(consignee),
       summary_policy: policyDetails,
       policy_details: policyDetails,
-      incoterm: factWithSource(record, "incoterm"),
+      incoterm: valueOrUnknown(fact(record, "terms_of_sale").value || fact(record, "incoterm").value),
       transport_document: `${transportLabel}: ${valueOrUnknown(transportReference)}`,
       shipper: factWithSource(record, "shipper"),
       consignee: factWithSource(record, "consignee"),
@@ -562,6 +639,7 @@ export function buildMasterReportData({ report = {}, claim = {}, issueDate } = {
       document_sighting: [],
       report_note_intro: [noteIntro],
       interest_insured: [`${valueOrUnknown(commodity)} was documented for transit from ${valueOrUnknown(from)} to ${valueOrUnknown(to)} under Policy No. ${valueOrUnknown(policyNumber)}.`],
+      shipment_routing: shipmentRoutingParagraphs(record),
       surveyor_notes: surveyorNotes,
       cause_of_loss_section: causeSection,
       policy_conditions_section: policyParagraphs(record),
@@ -577,10 +655,8 @@ export function buildMasterReportData({ report = {}, claim = {}, issueDate } = {
         ...calculationFindings,
       ].filter(Boolean),
       conclusion_items: conclusions,
-      enclosure_items: receivedDocuments,
-      outstanding_items: record.evidence_gaps?.length
-        ? record.evidence_gaps.map((gap) => `${gap.gap} — ${gap.impact}`)
-        : record.outstanding_documents || [],
+      enclosure_items: [],
+      outstanding_items: [],
     },
     damage_rows: damageRows(record),
     adjustment_rows: adjustmentRows(record),
@@ -621,38 +697,95 @@ async function addAppendixImages(zip, images) {
   return resolved;
 }
 
+function fittedImageExtent(image) {
+  const maximumWidth = 2_850_000;
+  const maximumHeight = 2_550_000;
+  const width = Number(image.width) || 4;
+  const height = Number(image.height) || 3;
+  const scale = Math.min(maximumWidth / width, maximumHeight / height);
+  return {
+    cx: Math.max(1, Math.round(width * scale)),
+    cy: Math.max(1, Math.round(height * scale)),
+  };
+}
+
+function imageOnlyParagraphPrototype(xml) {
+  const drawing = [...String(xml || "").matchAll(/<w:drawing>[\s\S]*?<\/w:drawing>/g)]
+    .find((match) => match[0].includes("rId20"));
+  if (!drawing) return cleanPrototype(xml);
+  return `<w:p><w:pPr><w:jc w:val="center"/></w:pPr><w:r><w:rPr><w:noProof/></w:rPr>${drawing[0]}</w:r></w:p>`;
+}
+
+function preparedImageParagraph(prototype, image, index) {
+  const { cx, cy } = fittedImageExtent(image);
+  return replaceBlockText(prototype.replaceAll("rId20", image.relationship_id), "")
+    .replace(/<wp:extent\b[^>]*\/>/, `<wp:extent cx="${cx}" cy="${cy}"/>`)
+    .replace(/<a:ext\b[^>]*\/>/, `<a:ext cx="${cx}" cy="${cy}"/>`)
+    .replace(/<wp:docPr\b[^>]*id="\d+"/, (value) => value.replace(/id="\d+"/, `id="${2_000 + index}"`))
+    .replace(/<pic:cNvPr\b[^>]*id="\d+"/, (value) => value.replace(/id="\d+"/, `id="${2_000 + index}"`));
+}
+
+function photoTableXml(images, imagePrototype, pageIndex) {
+  const cells = Array.from({ length: APPENDIX_PHOTOS_PER_PAGE }, (_, index) => {
+    const image = images[index];
+    const content = image ? preparedImageParagraph(imagePrototype, image, pageIndex * APPENDIX_PHOTOS_PER_PAGE + index) : "<w:p/>";
+    return `<w:tc><w:tcPr><w:tcW w:w="4900" w:type="dxa"/><w:vAlign w:val="center"/><w:tcMar><w:top w:w="100" w:type="dxa"/><w:left w:w="100" w:type="dxa"/><w:bottom w:w="100" w:type="dxa"/><w:right w:w="100" w:type="dxa"/></w:tcMar></w:tcPr>${content}</w:tc>`;
+  });
+  const row = (offset) => `<w:tr><w:trPr><w:cantSplit/><w:trHeight w:val="3400" w:hRule="atLeast"/></w:trPr>${cells[offset]}${cells[offset + 1]}</w:tr>`;
+  return `<w:tbl><w:tblPr><w:tblW w:w="0" w:type="auto"/><w:tblLayout w:type="fixed"/><w:tblBorders><w:top w:val="nil"/><w:left w:val="nil"/><w:bottom w:val="nil"/><w:right w:val="nil"/><w:insideH w:val="nil"/><w:insideV w:val="nil"/></w:tblBorders></w:tblPr><w:tblGrid><w:gridCol w:w="4900"/><w:gridCol w:w="4900"/></w:tblGrid>${row(0)}${row(2)}</w:tbl>`;
+}
+
 function replaceAppendixArea(xml, appendices, images) {
   const paragraphMatches = [...xml.matchAll(/<w:p\b[\s\S]*?<\/w:p>/g)];
   const heading = paragraphMatches.find((match) => match[0].includes("{{appendices}}"));
   const image = paragraphMatches.find((match) => match[0].includes("{{appendix_image}}"));
   if (!heading || !image) return xml;
   const headingPrototype = cleanPrototype(heading[0]);
-  const imagePrototype = cleanPrototype(image[0]);
+  const imagePrototype = imageOnlyParagraphPrototype(cleanPrototype(image[0]));
   const normalPrototype = asNormalParagraph(headingPrototype);
-  const entries = appendices.length ? appendices : [{ heading: "Appendices / Photographs", description: "No photographic or appendix evidence was established in the uploaded file set." }];
-  const generated = entries.map((entry, entryIndex) => {
-    const pageHeading = replaceBlockText(entryIndex ? withPageBreakBefore(headingPrototype) : headingPrototype, entry.heading);
-    const matchingImages = images.filter((item) => item.document_id === entry.document_id || item.document_name === entry.document_name);
-    if (!matchingImages.length) return `${pageHeading}${replaceBlockText(normalPrototype, entry.description)}`;
-    return `${pageHeading}${matchingImages.map((item) => {
-      const imageBlock = replaceBlockText(imagePrototype.replaceAll("rId20", item.relationship_id), "");
-      const caption = replaceBlockText(normalPrototype, valueOrUnknown(item.caption));
-      return `${imageBlock}${caption}`;
-    }).join("")}`;
-  }).join("");
+  const entry = appendices[0] || { heading: "Appendix A - Photographs", description: APPENDIX_PHOTO_DESCRIPTION };
+  const selectedImages = images.slice(0, APPENDIX_MAX_PHOTOS);
+  const pageHeading = replaceBlockText(withPageBreakBefore(headingPrototype), entry.heading);
+  const description = replaceBlockText(
+    normalPrototype,
+    selectedImages.length ? entry.description : "No photographs were provided for inclusion in this report.",
+  );
+  const pages = [];
+  for (let index = 0; index < selectedImages.length; index += APPENDIX_PHOTOS_PER_PAGE) {
+    const pageImages = selectedImages.slice(index, index + APPENDIX_PHOTOS_PER_PAGE);
+    const pageBreak = index ? '<w:p><w:r><w:br w:type="page"/></w:r></w:p>' : "";
+    pages.push(`${pageBreak}${photoTableXml(pageImages, imagePrototype, index / APPENDIX_PHOTOS_PER_PAGE)}`);
+  }
+  const generated = `${pageHeading}${description}${pages.join("")}`;
   return `${xml.slice(0, heading.index)}${generated}${xml.slice(image.index + image[0].length)}`;
+}
+
+function insertNarrativeSectionBeforeHeading(xml, beforeHeading, sectionHeading, values = []) {
+  const paragraphs = [...String(xml || "").matchAll(/<w:p\b[\s\S]*?<\/w:p>/g)];
+  const target = paragraphs.find((match) => paragraphText(match[0]).toUpperCase() === beforeHeading.toUpperCase());
+  if (!target || !values.length || paragraphText(xml).includes(sectionHeading)) return xml;
+  const headingPrototype = cleanPrototype(target[0]);
+  const bodyPrototype = asNormalParagraph(headingPrototype);
+  const generated = [
+    replaceBlockText(headingPrototype, sectionHeading),
+    ...values.map((value) => replaceBlockText(bodyPrototype, value)),
+  ].join("");
+  return `${xml.slice(0, target.index)}${generated}${xml.slice(target.index)}`;
 }
 
 export async function populateMasterReportDocx(templateData, context, { appendixImages = [] } = {}) {
   const zip = await JSZip.loadAsync(templateData);
   const data = buildMasterReportData(context);
-  const resolvedImages = await addAppendixImages(zip, appendixImages);
+  const resolvedImages = await addAppendixImages(zip, appendixImages.slice(0, APPENDIX_MAX_PHOTOS));
   const documentEntry = zip.file("word/document.xml");
   if (!documentEntry) throw new Error("The ULA master template has no document body.");
   let documentXml = await documentEntry.async("string");
   for (const [marker, paragraphs] of Object.entries(data.paragraphs)) documentXml = replaceParagraphMarker(documentXml, marker, paragraphs);
+  documentXml = insertNarrativeSectionBeforeHeading(documentXml, "SURVEYOR NOTES", "SHIPMENT ROUTING", data.paragraphs.shipment_routing);
   documentXml = removeParagraphContainingText(documentXml, "The following was concluded:");
   documentXml = removeParagraphContainingText(documentXml, "End of adjustment note.");
+  documentXml = documentXml.replaceAll("Outstanding/ Not Available Documents", "Outstanding Documents");
+  documentXml = startHeadingOnNextPage(documentXml, "Enclosure to this report");
   documentXml = replaceDynamicTableRows(documentXml, "damage_description", data.damage_rows, ["damage_description", "damage_quantity", "damage_packing"]);
   documentXml = replaceDynamicTableRows(documentXml, "adjustment_description", data.adjustment_rows, ["adjustment_description", "adjustment_quantity", "adjustment_unit_price", "adjustment_value"]);
   documentXml = replaceAppendixArea(documentXml, data.appendices, resolvedImages);

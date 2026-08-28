@@ -67,7 +67,8 @@ test("DOCX export preserves the approved master structure and replaces only clai
   assert.match(text, /RELEVANT POLICY WARRANTIES & CONDITIONS/);
   assert.match(text, /CLAIM PRESENTED ON THE POLICY & ADJUSTMENT/);
   assert.match(text, /Enclosure to this report/);
-  assert.match(text, /Outstanding\/ Not Available Documents/);
+  assert.match(text, /Outstanding Documents/);
+  assert.doesNotMatch(text, /Outstanding\/ Not Available Documents/);
   assert.match(text, /POL-AIR-2026-8812/);
   assert.match(text, /774-9821-4402/);
   assert.match(text, /USD 39,700\.00/);
@@ -95,4 +96,41 @@ test("sanitized master contains no historical claim facts or claim photographs",
   assert.doesNotMatch(packageText, /Victoire|Judi Lebanon|DamasGate|MC\/0002606|MSNU7244246|MEDULB209962|13,552\.80|Best Air|Wazen Trading|Bechara|HO-MAP-0103552/i);
   assert.equal(media.length, 5);
   assert.ok(!media.some((name) => /image[4-7]\.(?:png|jpe?g)$/i.test(name)));
+});
+
+test("DOCX export keeps enclosure titles empty and lays out at most four photographs on each of three Appendix pages", async () => {
+  const { claim, draft } = await airFixture();
+  const template = await fs.readFile(path.join(root, "samples", "templates", "ULA-Master-Report.docx"));
+  const appendixImages = Array.from({ length: 14 }, (_, index) => ({
+    data: new Uint8Array([0xff, 0xd8, index + 1, 0xff, 0xd9]),
+    content_type: "image/jpeg",
+    extension: "jpg",
+    document_id: "survey-photos",
+    document_name: "survey-photos.pdf",
+    width: index % 2 ? 900 : 1_200,
+    height: index % 2 ? 1_200 : 900,
+    caption: `Photograph ${index + 1}`,
+  }));
+
+  const output = await populateMasterReportDocx(template, {
+    claim,
+    report: { normalized_claim_record: draft.normalizedRecord },
+    issueDate: "18 August 2026",
+  }, { appendixImages });
+  const archive = await JSZip.loadAsync(output);
+  const documentXml = await archive.file("word/document.xml").async("string");
+  const text = textOf(documentXml);
+  const appendixMedia = Object.keys(archive.files).filter((name) => /^word\/media\/ula-appendix-\d+\.jpg$/i.test(name));
+  const tables = [...documentXml.matchAll(/<w:tbl\b[\s\S]*?<\/w:tbl>/g)].map((match) => match[0]);
+  const photoTables = tables.slice(-3);
+
+  assert.equal(appendixMedia.length, 12);
+  assert.equal(photoTables.length, 3);
+  assert.ok(photoTables.every((table) => (table.match(/<w:gridCol\b/g) || []).length === 2));
+  assert.ok(photoTables.every((table) => (table.match(/<a:blip\b[^>]*r:embed=/g) || []).length === 4));
+  assert.match(text, /Enclosure to this report/);
+  assert.match(text, /Outstanding Documents/);
+  assert.match(text, /Appendix A - Photographs/);
+  assert.match(text, /Photographs show the insured interest before loading and during inspection/);
+  assert.doesNotMatch(text, /Photograph 1|survey-photos\.pdf|No photographs were provided/);
 });

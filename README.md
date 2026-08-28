@@ -84,7 +84,9 @@ Optional approved report-style manifests can be loaded through `ULA_REPORT_REFER
 
 ## Local data and authentication
 
-The application stores lightweight accounts, claim metadata, reports, employees, and leave records in browser localStorage. Uploaded file blobs are stored separately in IndexedDB. The Google sign-in button creates or opens a local demonstration account. Email/password registration and login are also supported locally.
+The application stores claim metadata, reports, employees, and leave records in browser localStorage. Uploaded file blobs are stored separately in IndexedDB. Authentication and User Administration are enforced by the backend using an HTTP-only session cookie and the server-side `.data/auth-state.json` approved-user directory.
+
+Public registration and Google sign-in are disabled. Only accounts created in User Administration and marked **Access granted** can sign in with their company email and ULA system password. Revocation invalidates active sessions immediately. Password hashes and session tokens are never returned to the browser.
 
 This persistence and authentication remain intended for development and demonstration. Production use still requires a secure server database, server-side authentication/authorization for application APIs, and durable document storage such as SharePoint or another backend. AI suggestions never silently replace claim fields; users review and save them through the existing workflow.
 
@@ -102,12 +104,14 @@ EMAILJS_TEMPLATE_ID=template_xxx
 EMAILJS_PUBLIC_KEY=your-public-key
 EMAILJS_PRIVATE_KEY=your-private-key
 LEAVE_ADMIN_EMAIL=leave-manager@company.example
+LEAVE_ADMIN_CC_EMAIL=second-leave-manager@company.example
 APP_BASE_URL=http://localhost:5173
 ```
 
 In your EmailJS template:
 - Subject: `{{subject}}`
 - To Email: `{{to_email}}`
+- CC: `{{cc_email}}`
 - Body: `{{{message_html}}}` (triple braces render formatted HTML directly).
 
 ### 2. Microsoft Graph Provider (Alternative)
@@ -120,6 +124,7 @@ MICROSOFT_CLIENT_ID=your-application-client-id
 MICROSOFT_CLIENT_SECRET=your-client-secret
 MICROSOFT_SENDER_EMAIL=leave-notifications@company.example
 LEAVE_ADMIN_EMAIL=leave-manager@company.example
+LEAVE_ADMIN_CC_EMAIL=second-leave-manager@company.example
 APP_BASE_URL=http://localhost:5173
 ```
 

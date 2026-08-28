@@ -95,6 +95,9 @@ export function createLeaveEmailService({
     const invalid = [...providerStatus.invalid];
     if (!String(env.LEAVE_ADMIN_EMAIL || "").trim()) missing.push("LEAVE_ADMIN_EMAIL");
     else if (!emailSchema.safeParse(String(env.LEAVE_ADMIN_EMAIL).trim()).success) invalid.push("LEAVE_ADMIN_EMAIL");
+    if (String(env.LEAVE_ADMIN_CC_EMAIL || "").trim() && !emailSchema.safeParse(String(env.LEAVE_ADMIN_CC_EMAIL).trim()).success) {
+      invalid.push("LEAVE_ADMIN_CC_EMAIL");
+    }
     if (!String(env.APP_BASE_URL || "").trim()) missing.push("APP_BASE_URL");
     else {
       try {
@@ -154,6 +157,7 @@ export function createLeaveEmailService({
         : `A new leave request (${leave.leave_type}) has been saved with Pending status.`;
       return {
         to: String(env.LEAVE_ADMIN_EMAIL).trim(),
+        cc: String(env.LEAVE_ADMIN_CC_EMAIL || "").trim() || null,
         toName: "Leave Administrator",
         subject: subTitle,
         html: shell(isClaim ? "TOIL overtime claim awaiting review" : "Leave request awaiting review", intro, detailTable(rows), link),

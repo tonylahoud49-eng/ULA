@@ -85,6 +85,84 @@ const canvasBlob = (canvas, type = "image/jpeg", quality = 0.84) => new Promise(
   canvas.toBlob((blob) => blob ? resolve(blob) : reject(new Error("The appendix page could not be rendered.")), type, quality);
 });
 
+const contentBands = (imageData, axis) => {
+  const { data, width, height } = imageData;
+  const length = axis === "x" ? width : height;
+  const crossLength = axis === "x" ? height : width;
+  const active = new Array(length).fill(false);
+  const step = Math.max(1, Math.floor(crossLength / 420));
+  const sampledCrossLength = Math.ceil(crossLength / step);
+
+  for (let primary = 0; primary < length; primary += 1) {
+    let contentPixels = 0;
+    for (let cross = 0; cross < crossLength; cross += step) {
+      const x = axis === "x" ? primary : cross;
+      const y = axis === "x" ? cross : primary;
+      const offset = (y * width + x) * 4;
+      if (data[offset + 3] > 12 && (data[offset] < 238 || data[offset + 1] < 238 || data[offset + 2] < 238)) contentPixels += 1;
+    }
+    active[primary] = contentPixels / sampledCrossLength >= 0.09;
+  }
+
+  const bands = [];
+  const mergeGap = Math.max(3, Math.round(length * 0.012));
+  let start = -1;
+  let lastActive = -1;
+  for (let index = 0; index <= length; index += 1) {
+    if (index < length && active[index]) {
+      if (start < 0) start = index;
+      lastActive = index;
+      continue;
+    }
+    if (start >= 0 && (index - lastActive > mergeGap || index === length)) {
+      bands.push([start, lastActive + 1]);
+      start = -1;
+      lastActive = -1;
+    }
+  }
+  return bands.filter(([from, to]) => to - from >= length * 0.13);
+};
+
+const splitContactSheetCanvas = (source) => {
+  const detectionScale = Math.min(1, 900 / source.width, 1_200 / source.height);
+  const detector = globalThis.document.createElement("canvas");
+  detector.width = Math.max(1, Math.round(source.width * detectionScale));
+  detector.height = Math.max(1, Math.round(source.height * detectionScale));
+  detector.getContext("2d").drawImage(source, 0, 0, detector.width, detector.height);
+  const pixels = detector.getContext("2d").getImageData(0, 0, detector.width, detector.height);
+  const columns = contentBands(pixels, "x");
+  const rows = contentBands(pixels, "y");
+  const photoCount = columns.length * rows.length;
+  if (columns.length < 2 || columns.length > 3 || rows.length < 2 || rows.length > 3 || photoCount < 4 || photoCount > 9) {
+    return [source];
+  }
+
+  return rows.flatMap(([top, bottom]) => columns.map(([left, right]) => {
+    const x = Math.max(0, Math.round(left / detectionScale));
+    const y = Math.max(0, Math.round(top / detectionScale));
+    const width = Math.min(source.width - x, Math.round((right - left) / detectionScale));
+    const height = Math.min(source.height - y, Math.round((bottom - top) / detectionScale));
+    const frame = globalThis.document.createElement("canvas");
+    frame.width = Math.max(1, width);
+    frame.height = Math.max(1, height);
+    frame.getContext("2d").drawImage(source, x, y, width, height, 0, 0, width, height);
+    return frame;
+  }));
+};
+
+const appendixImagesFromCanvas = async (canvas, metadata) => Promise.all(splitContactSheetCanvas(canvas).map(async (frame, index) => {
+  const rendered = await canvasBlob(frame);
+  return {
+    ...metadata,
+    data: new Uint8Array(await rendered.arrayBuffer()),
+    content_type: "image/jpeg",
+    extension: "jpg",
+    width: frame.width,
+    height: frame.height,
+    contact_sheet_index: index,
+  };
+}));
+
 const collectAppendixImages = async (documents, normalizedRecord) => {
   const appendixIds = new Set((normalizedRecord?.appendices || []).map((item) => item.document_id));
   const preferredPhotographs = normalizedRecord?.selected_photographs || [];
@@ -101,13 +179,16 @@ const collectAppendixImages = async (documents, normalizedRecord) => {
       const stored = await appClient.documentStorage.get(document.storage_key || document.file_url);
       const mimeType = String(document.file_mime_type || stored.mimeType || stored.blob.type || "").toLowerCase();
       if (mimeType.startsWith("image/")) {
-        images.push({
-          data: new Uint8Array(await stored.blob.arrayBuffer()),
-          content_type: mimeType,
-          extension: mimeType.includes("jpeg") ? "jpg" : mimeType.split("/")[1] || "png",
+        const bitmap = await globalThis.createImageBitmap(stored.blob);
+        const canvas = globalThis.document.createElement("canvas");
+        canvas.width = bitmap.width;
+        canvas.height = bitmap.height;
+        canvas.getContext("2d").drawImage(bitmap, 0, 0);
+        bitmap.close();
+        images.push(...await appendixImagesFromCanvas(canvas, {
           document_id: document.id,
           document_name: document.file_name,
-        });
+        }));
         continue;
       }
       if (mimeType === "application/pdf" || /\.pdf$/i.test(document.file_name || "")) {
@@ -131,15 +212,11 @@ const collectAppendixImages = async (documents, normalizedRecord) => {
           canvas.width = Math.ceil(viewport.width);
           canvas.height = Math.ceil(viewport.height);
           await page.render({ canvasContext: canvas.getContext("2d"), viewport }).promise;
-          const rendered = await canvasBlob(canvas);
-          images.push({
-            data: new Uint8Array(await rendered.arrayBuffer()),
-            content_type: "image/jpeg",
-            extension: "jpg",
+          images.push(...await appendixImagesFromCanvas(canvas, {
             document_id: document.id,
             document_name: document.file_name,
             page: pageNumber,
-          });
+          }));
           page.cleanup();
         }
         await pdf.destroy();
@@ -308,7 +385,7 @@ export default function ClaimDetail() {
                 <CheckCircle className="h-3.5 w-3.5" />
               </span>
               <h4 className="font-heading text-xs font-semibold uppercase tracking-wider text-foreground">
-                AI Classification Recorded · {analysis.confidence}% Confidence
+                {analysis.confidence > 0 ? "AI Classification Recorded" : "AI Classification Requires Review"} · {analysis.confidence}% Confidence
               </h4>
             </div>
             {(analysis.provider || analysis.model) && (
@@ -596,6 +673,8 @@ function ControlledReportPreview({ report, data }) {
 
 function ReportSection({ claimId, claim, documents, reports, onChanged }) {
   const [generating, setGenerating] = useState(false);
+  const [reportToApprove, setReportToApprove] = useState(null);
+  const [approvingReportId, setApprovingReportId] = useState(null);
   const [activeReport, setActiveReport] = useState(null);
   const [exportReport, setExportReport] = useState(null);
   const [reportToDelete, setReportToDelete] = useState(null);
@@ -1005,15 +1084,27 @@ function ReportSection({ claimId, claim, documents, reports, onChanged }) {
   };
 
   const approve = async (r) => {
-    const user = await appClient.auth.me();
-    await appClient.entities.ReportVersion.update(r.id, {
-      status: "Final",
-      issue_state: "Final",
-      approved_by: user.full_name || user.email,
-      approved_date: new Date().toISOString(),
-    });
-    await appClient.entities.Claim.update(claimId, { status: "Report Final" });
-    await onChanged();
+    if (!r || approvingReportId || r.status === "Final") return;
+    setApprovingReportId(r.id);
+    try {
+      const user = await appClient.auth.me();
+      if (user.role !== "admin") throw new Error("Only an administrator can approve and issue a final report.");
+      await appClient.entities.ReportVersion.update(r.id, {
+        status: "Final",
+        issue_state: "Final",
+        human_approval_required: false,
+        approved_by: user.full_name || user.email,
+        approved_date: new Date().toISOString(),
+      });
+      await appClient.entities.Claim.update(claimId, { status: "Report Final" });
+      setReportToApprove(null);
+      await onChanged();
+      toast({ title: "Report approved", description: `Version ${r.version_number} is now a controlled final report.` });
+    } catch (error) {
+      toast({ variant: "destructive", title: "Report could not be approved", description: error.response?.data?.error || error.message });
+    } finally {
+      setApprovingReportId(null);
+    }
   };
 
   const deleteReportVersion = async () => {
@@ -1090,6 +1181,7 @@ function ReportSection({ claimId, claim, documents, reports, onChanged }) {
         <div className="space-y-4">
           {reports.slice().reverse().map((r) => {
             const reportData = getReportData(r);
+            const isFinal = r.status === "Final" || r.issue_state === "Final";
             return (
             <article key={r.id} className="docket-surface overflow-hidden rounded-lg">
               <div className="flex flex-wrap items-center justify-between gap-3 border-b px-5 py-4">
@@ -1098,13 +1190,18 @@ function ReportSection({ claimId, claim, documents, reports, onChanged }) {
                   <div>
                     <div className="flex flex-wrap items-center gap-2">
                       <h4 className="font-heading text-lg font-semibold">Version {r.version_number}</h4>
-                      <span className="status-mark border-primary/30 bg-primary/5 text-primary">{r.issue_state || r.status || "Draft"}</span>
-                      {r.human_approval_required && <span className="status-mark border-amber-300 bg-amber-50 text-amber-800"><ShieldCheck className="h-3 w-3" /> Human review required</span>}
+                      <span className={`status-mark ${isFinal ? "border-emerald-300 bg-emerald-50 text-emerald-800" : "border-primary/30 bg-primary/5 text-primary"}`}>{r.issue_state || r.status || "Draft"}</span>
+                      {!isFinal && r.human_approval_required && <span className="status-mark border-amber-300 bg-amber-50 text-amber-800"><ShieldCheck className="h-3 w-3" /> Human review required</span>}
                     </div>
                     <p className="text-xs text-muted-foreground">{r.template_name} · {r.business_line || "Marine"} · {r.readiness?.overall_progress ?? 0}% completeness</p>
                   </div>
                 </div>
                 <div className="flex flex-wrap items-center gap-2">
+                  {isFinal ? (
+                    <span className="status-mark border-emerald-300 bg-emerald-50 text-emerald-800"><ShieldCheck className="h-3.5 w-3.5" /> Approved</span>
+                  ) : (
+                    <Button size="sm" onClick={() => setReportToApprove(r)} className="bg-primary text-primary-foreground hover:bg-primary/90"><ShieldCheck className="mr-1 h-4 w-4" /> Approve</Button>
+                  )}
                   <Button variant="outline" size="sm" onClick={() => setActiveReport(activeReport === r.id ? null : r.id)}>{activeReport === r.id ? "Hide preview" : "View preview"}</Button>
                   <Button variant="outline" size="sm" onClick={() => exportMarkdown(r)}><Download className="h-4 w-4 mr-1" /> MD</Button>
                   <Button variant="outline" size="sm" onClick={() => exportTxt(r)}><Download className="h-4 w-4 mr-1" /> TXT</Button>
@@ -1128,6 +1225,34 @@ function ReportSection({ claimId, claim, documents, reports, onChanged }) {
           );})}
         </div>
       )}
+
+      <AlertDialog
+        open={Boolean(reportToApprove)}
+        onOpenChange={(open) => {
+          if (!open && !approvingReportId) setReportToApprove(null);
+        }}
+      >
+        <AlertDialogContent>
+          <AlertDialogHeader>
+            <AlertDialogTitle>Approve report version {reportToApprove?.version_number}?</AlertDialogTitle>
+            <AlertDialogDescription>
+              This records you as the approver and issues this version as Final. Later corrections must be generated as a new report version.
+            </AlertDialogDescription>
+          </AlertDialogHeader>
+          <AlertDialogFooter>
+            <AlertDialogCancel disabled={Boolean(approvingReportId)}>Cancel</AlertDialogCancel>
+            <AlertDialogAction
+              disabled={Boolean(approvingReportId)}
+              onClick={(event) => {
+                event.preventDefault();
+                void approve(reportToApprove);
+              }}
+            >
+              {approvingReportId ? "Approving…" : "Approve & issue final"}
+            </AlertDialogAction>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
 
       <AlertDialog
         open={Boolean(reportToDelete)}

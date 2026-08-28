@@ -1,0 +1,70 @@
+{
+  "approved": true,
+  "profile_id": "land-shipments",
+  "title": "Land Shipments - Owner-Approved Methodology Profile",
+  "applies_to": {
+    "evidence_terms_any": [
+      "land transit",
+      "road transit",
+      "road freight",
+      "road shipment",
+      "truck waybill",
+      "international consignment note",
+      "cmr consignment note",
+      "mode of conveyance by land",
+      "marine insurance policy by land",
+      "institute cargo clauses (a) land"
+    ],
+    "business_lines": [
+      "Land Shipment"
+    ]
+  },
+  "section_order": [
+    "Cover Page",
+    "Document Control Page",
+    "Report Summary",
+    "Report and adjustment note",
+    "Table 1 - Summary and salient details",
+    "INTEREST INSURED & RELEVANT CONDITIONS OF INSURANCE POLICY",
+    "SHIPMENT ROUTING",
+    "SURVEYOR NOTES",
+    "ROAD CUSTODY, VEHICLE, SEAL OR TEMPERATURE REVIEW when material",
+    "CAUSE OF LOSS",
+    "RELEVANT POLICY WARRANTIES & CONDITIONS",
+    "ADEQUACY OF THE INSURED VALUE",
+    "APPOINTMENT OF ASSESSORS",
+    "CLAIM PRESENTED ON THE POLICY & ADJUSTMENT",
+    "CONCLUSION",
+    "Enclosure to this report",
+    "Outstanding Documents",
+    "Appendix A - Photographs",
+    "About ULA"
+  ],
+  "style_notes": [
+    "Use this profile only for a current land-shipment claim that satisfies the applicability scope; never infer a current claim fact from this profile or from a historical report.",
+    "Open with a concise appointment and scope statement identifying the instructing party, policyholder, Assured or claimant, insured interest, reported land-transit loss, investigation purpose, and whether the review was documentary, remote, or included physical attendance.",
+    "Resolve the applicant, insurer, policyholder, Assured, seller, shipper or consignor, consignee or receiver, buyer, freight forwarder, contracting carrier, successive carrier or subcontracted haulier, driver, vehicle and trailer owner, customs broker, border or customs authority, warehouse, cold-chain provider, surveyor, and other custodian before assigning responsibility or insurable interest.",
+    "Keep every CMR or international consignment note, truck waybill, consignment note, dispatch record, packing list, customs or border form, delivery note, proof of delivery, gate record, tracking or GPS record, and carrier condition separate. A transport document is not proof of every cargo fact merely because it accompanies the shipment.",
+    "Reconstruct the supported route and custody timeline from origin warehouse, loading and carrier acceptance through each vehicle or trailer, driver handover, border crossing, customs inspection, waiting or storage location, transloading or seal change, final arrival, unloading and delivery. Distinguish planned routing from evidenced actual movement and identify material time gaps.",
+    "Record each tractor and trailer registration, truck type, driver, carrier, pickup and delivery time, seal number and condition, temperature-control unit, border entry and exit, customs intervention, handover, stop, breakdown, accident, delay, and unloading event only where supported by current evidence.",
+    "Resolve warehouse-to-warehouse attachment and termination, terms of sale, risk transfer, declarations, territorial limits, approved route, temporary storage, customs delay, and who bore transit risk. Policyholder, forwarder, carrier, shipper, consignee, seller, buyer, and Assured are not interchangeable.",
+    "For shortage, theft, or non-delivery, reconcile the quantity and weight dispatched, loaded, carried, counted, delivered, damaged, missing, claimed and accepted. Identify who performed and witnessed each count, whether origin loading records exist, and whether carrier reservations were recorded.",
+    "Build a seal and access history. Test the origin seal, every border or customs opening, inspection, resealing and recorded number, trailer doors and locks, tarpaulin or box-body condition, forced entry or tampering, unattended stops, police or customs reports, GPS data, driver statement, carrier investigation and last supported custody. An intact seal does not by itself prove an origin shortage or exclude access through another route.",
+    "Do not call an unexplained shortage theft unless current evidence supports theft. Distinguish proven theft, probable removal during a supported custody interval, unexplained disappearance, origin short-loading, counting error, border or customs intervention, delivery error, and other viable explanations.",
+    "For impact, crushing, wetting, overturning, fire, collision, or rough-handling damage, test pre-loading condition, outer and inner packing, pallets, stacking, lashing and load distribution, vehicle or trailer suitability, weather and route conditions, accident or damage reports, delivery reservations, photographs, segregation, mitigation, salvage, and when damage was first observed.",
+    "Do not infer rough handling merely because cargo arrived damaged. Explain the observed mechanism-compatible damage, the supported custody period, counterevidence, and whether packing, lashing, inherent fragility, vehicle movement, impact, water entry, customs handling, unloading, or another cause remains viable.",
+    "Apply a professional-packing or adequate-lashing warranty only after identifying who packed and loaded, the actual materials and method, pallet and stack configuration, cargo properties, vehicle type, route rigours, handling instructions, pre-loading evidence, and the causal significance of any deficiency. Missing photographs prove neither compliance nor breach.",
+    "For refrigerated or temperature-sensitive road cargo, separate the required carriage range or set point, product stability limits, reefer-unit setting, supply or return-air readings, product readings, and each data logger's measured record. Do not report a required temperature as a measured temperature.",
+    "Review every logger separately by device and pallet or cargo identity, placement, time zone, start and stop time, interval, calibration or validation, coverage, minimum and maximum, excursion start, duration and recovery. Correlate logger events with border delay, customs inspection, door opening, reefer operation, power or fuel interruption, breakdown, transloading, storage and delivery, and keep data gaps visible.",
+    "A temperature excursion does not automatically establish deterioration or total loss. Test competent manufacturer, quality, stability, laboratory or regulatory assessment; product condition and intended use; quarantine, rejection or release; affected batch, pallet and quantity; mitigation, return, destruction and salvage. Treat unaffected loggers, pallets or products separately.",
+    "Read the current policy and endorsements in full. Apply only the evidenced land-transit wording, all-risks or named-peril clause, warehouse-to-warehouse duration, territorial and route limits, vehicle and carrier requirements, unattended-vehicle or forcible-entry theft terms, packing and lashing warranty, cold-chain or temperature warranty, survey requirement, customs and storage provisions, war or strikes exclusions on land, valuation, declaration, deductible, limit and other exclusions.",
+    "Map each material term to the established facts without inventing compliance, breach, cover or legal effect. The phrase all risks does not remove the need to establish physical loss or damage, attachment, an insured transit, and the relevance of exclusions and warranties.",
+    "Keep invoice value, insured value, policy or vehicle limit, freight and land-transport invoice, customs value, presented claim, itemized loss, deductible, uplift, salvage and recovery separate. A shipment value or debit note is not automatically the adjusted loss.",
+    "Calculate quantum locally from supported missing or damaged quantity and the evidenced invoice rate, then apply only the supported valuation uplift, exchange rate, recoverable freight or charges, deductible, salvage, depreciation and recovery. Preserve inconsistent counts, rates, currencies and totals for human review rather than silently selecting one.",
+    "For a claimed total loss, establish physical or functional unfitness, competent rejection or technical evidence, the affected scope, lack of residual utility and the salvage or disposal position. Quarantine or a single adverse logger does not automatically make the entire shipment a total loss.",
+    "Recovery analysis must distinguish the contracting carrier, subcontracted or successive haulier, driver, freight forwarder, warehouse, customs or border custodian, packer, shipper and other candidates. Test the CMR or carriage terms, custody, reservations, written notice, police and carrier investigation, causation, limitation, declared value, evidence preservation, time bar and recovery economics before recommending pursuit.",
+    "Select the strongest supported outcome branch: no established loss, partial shortage, proven or qualified theft, partial or repairable physical damage, evidenced total loss, temperature-related partial or total loss, non-delivery, an excluded or warranty-affected claim, or a covered loss below the deductible. Never import a historical outcome.",
+    "Use representative current-claim photographs of loading, packing, pallets, vehicle or trailer, registrations, seals and doors, border or customs handling, logger displays, damaged or missing-cargo context, unloading, segregation, salvage and disposal under the global Appendix limits.",
+    "The global ULA report specification, Director wording, no-fabrication rules, deterministic calculations, citation requirements, empty Enclosure and Outstanding sections, Appendix limits, and human approval gates override every unsupported theft allegation, custody allocation, policy conclusion, arithmetic issue, conclusion order, or legacy appendix practice in a historical Land Shipment report."
+  ]
+}

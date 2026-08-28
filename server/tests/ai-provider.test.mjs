@@ -408,7 +408,7 @@ test("anthropic retains content-grounded categories when citation metadata drift
   assert.equal(result.analysis.classification.sources[0].evidence_mode, "extracted_text");
   assert.deepEqual(
     new Set(result.analysis.document_types.map((item) => item.document_type)),
-    new Set(["Policy", "Claim Form", "Survey Report", "Supporting Evidence"]),
+    new Set(["Policy", "Claim Form", "Notice of Claim", "Survey Report", "Supporting Evidence"]),
   );
   assert.equal(result.analysis.missing_documents.some((item) => ["Policy", "Claim Form", "Supporting Evidence"].includes(item.document_type)), false);
   assert.equal(result.analysis.missing_documents.some((item) => item.document_type === "Bill of Lading"), false);
@@ -473,7 +473,7 @@ test("anthropic parses a complete mocked structured response with null fields an
   assert.equal(result.analysis.fields.find((field) => field.field === "claim_amount").value, null);
   assert.deepEqual(
     new Set(result.analysis.document_types.map((item) => item.document_type)),
-    new Set(["Policy", "Claim Form", "Survey Report", "Supporting Evidence"]),
+    new Set(["Policy", "Claim Form", "Notice of Claim", "Survey Report", "Supporting Evidence"]),
   );
   assert.equal(result.analysis.missing_documents.some((item) =>
     ["Policy", "Claim Form", "Supporting Evidence"].includes(item.document_type)), false);
@@ -506,10 +506,10 @@ test("regression: the last paid request fixture does not collapse grounded six-d
     assert.equal(prompt.includes(document.pages[0].text), true);
   }
   assert.equal(result.analysis.classification.business_line, "Air Shipment (NET)");
-  assert.equal(result.analysis.classification.confidence, 0.97);
+  assert.equal(result.analysis.classification.confidence, 0.94);
   assert.deepEqual(
     new Set(result.analysis.document_types.map((item) => item.document_type)),
-    new Set(["Air Waybill", "Commercial Invoice", "Packing List", "Survey Report", "Policy", "Claim Form", "Supporting Evidence"]),
+    new Set(["Air Waybill", "Commercial Invoice", "Packing List", "Survey Report", "Policy", "Claim Form", "Notice of Claim", "Supporting Evidence"]),
   );
   assert.equal(result.analysis.missing_documents.some((item) =>
     ["Policy", "Claim Form", "Supporting Evidence"].includes(item.document_type)), false);
@@ -543,10 +543,14 @@ test("anthropic citation repair still rejects fabricated evidence", async () => 
     files: paidRequestEvidenceFixture.map((item) => ({ mimetype: item.mime_type, buffer: Buffer.from(item.pages[0].text) })),
   });
 
-  assert.equal(result.analysis.classification.business_line, "Other / Requires Review");
-  assert.equal(result.analysis.classification.confidence, 0);
-  assert.equal(result.analysis.document_types.length, 0);
-  assert.equal(result.analysis.missing_documents.some((item) => item.document_type === "Policy"), true);
+  assert.equal(result.analysis.classification.business_line, "Air Shipment (NET)");
+  assert.equal(result.analysis.classification.confidence, 0.94);
+  assert.deepEqual(
+    new Set(result.analysis.document_types.map((item) => item.document_type)),
+    new Set(["Air Waybill", "Commercial Invoice", "Packing List", "Survey Report", "Policy", "Claim Form", "Notice of Claim", "Supporting Evidence"]),
+  );
+  assert.equal(result.analysis.missing_documents.some((item) => item.document_type === "Policy"), false);
+  assert.doesNotMatch(JSON.stringify(result.analysis), /Invented orbital reactor loss reference/);
 });
 
 test("anthropic combines non-empty text blocks before parsing structured JSON", async () => {
@@ -830,6 +834,156 @@ test("anthropic safely recovers missing envelope records and invalid citation in
   assert.match(result.analysis.warnings.join(" "), /invalid citation reference/i);
   assert.doesNotMatch(JSON.stringify(result.analysis), /MUST NOT ENTER THE CANONICAL CLAIM/);
   assert.equal(claimAnalysisSchema.safeParse(result.analysis).success, true);
+});
+
+test("anthropic deterministically recovers a missing marine classification from substantive current evidence", async () => {
+  const evidence = [
+    {
+      document_id: "marine-policy-1",
+      document_name: "uploaded-pack.pdf",
+      mime_type: "application/pdf",
+      kind: "pdf",
+      extraction_status: "extracted",
+      pages: [{
+        page: 1,
+        text: "MARINE CARGO INSURANCE POLICY\nSCHEDULE OF PARTICULAR CONDITIONS\nPolicy Number: CRG/1331149",
+      }],
+    },
+    {
+      document_id: "marine-bl-1",
+      document_name: "uploaded-pack.pdf",
+      mime_type: "application/pdf",
+      kind: "pdf",
+      extraction_status: "extracted",
+      pages: [{
+        page: 4,
+        text: "BILL OF LADING\nB/L Number: GFS-250745\nShipper: Austeel SAL\nConsignee: Austeel Cyprus LTD\nVessel: MSC RENAISSANCE III\nPort of Loading: Beirut\nPort of Discharge: Limassol\nContainer: CLTU7002343\nCarrier boilerplate: no responsibility for recording temperatures other than a reefer log book maintained by the Carrier.",
+      }],
+    },
+    {
+      document_id: "marine-invoice-1",
+      document_name: "uploaded-pack.pdf",
+      mime_type: "application/pdf",
+      kind: "pdf",
+      extraction_status: "extracted",
+      pages: [{ page: 6, text: "COMMERCIAL INVOICE\nInvoice Number: INV-745\nDescription: glass panels" }],
+    },
+  ];
+  const responseFixture = {
+    ...structuredAnalysis,
+    classification: undefined,
+    document_types: [],
+    fields: [],
+    evidence_findings: [],
+    summary: "The documents concern a containerized glass-panel transit claim.",
+  };
+  const provider = createAnthropicProvider({
+    apiKey: "server-only-key",
+    fetchImpl: async () => new Response(JSON.stringify(anthropicMessageFixture(undefined, {
+      content: [{ type: "text", text: JSON.stringify(toAnthropicTransport(responseFixture)) }],
+    })), { status: 200 }),
+  });
+
+  const result = await provider.analyze({
+    claim: { id: "missing-marine-classification" },
+    evidence,
+    files: evidence.map((item) => ({ mimetype: item.mime_type, buffer: Buffer.from(item.pages[0].text) })),
+  });
+
+  assert.equal(result.analysis.classification.business_line, "Marine Cargo (Non-Reefer)");
+  assert.equal(result.analysis.classification.confidence, 0.94);
+  assert.equal(result.analysis.classification.sources[0].document_id, "marine-bl-1");
+  assert.deepEqual(
+    new Set(result.analysis.document_types.map((item) => item.document_type)),
+    new Set(["Policy", "Bill of Lading", "Commercial Invoice", "Supporting Evidence"]),
+  );
+  assert.equal(result.analysis.missing_documents.some((item) => item.document_type === "Policy"), false);
+  assert.equal(result.analysis.missing_documents.some((item) => item.document_type === "Claim Form"), true);
+  assert.match(result.analysis.warnings.join(" "), /business line was recovered deterministically/i);
+  assert.equal(claimAnalysisSchema.safeParse(result.analysis).success, true);
+});
+
+test("anthropic does not treat a policy-number mention in a claim form as an uploaded policy", () => {
+  const evidence = [{
+    document_id: "claim-only-1",
+    document_name: "claim-form.pdf",
+    mime_type: "application/pdf",
+    kind: "pdf",
+    extraction_status: "extracted",
+    pages: [{
+      page: 1,
+      text: "CLAIM FORM\nPolicy No: CRG/1331149\nClaimant: Example Trading SAL\nClaimed amount: USD 1,000",
+    }],
+  }];
+  const parsed = structuredClone(validAnthropicAnalysisFixture);
+  parsed.classification = {
+    business_line: "Other / Requires Review",
+    confidence: 0,
+    rationale: "Claude returned no recognized classification record.",
+    sources: [],
+  };
+  parsed.document_types = [];
+  parsed.fields = [];
+  parsed.evidence_findings = [];
+  parsed.missing_documents = [];
+
+  const result = anthropicProviderInternals.enforceAnthropicGrounding(parsed, evidence);
+
+  assert.equal(result.document_types.some((item) => item.document_type === "Claim Form"), true);
+  assert.equal(result.document_types.some((item) => item.document_type === "Policy"), false);
+  assert.equal(result.missing_documents.some((item) => item.document_type === "Policy"), true);
+});
+
+test("anthropic recovers an image-only policy only from multiple verified policy-specific fields", () => {
+  const evidence = [{
+    document_id: "scanned-policy-1",
+    document_name: "documents.pdf",
+    mime_type: "application/pdf",
+    kind: "pdf",
+    extraction_status: "vision-required",
+    pages: [{ page: 8, text: "", extraction_status: "image-only" }],
+    vision_images: [{ page: 8, mime_type: "image/jpeg", buffer: Buffer.from("policy-page") }],
+  }];
+  const visualSource = (supportingText) => ({
+    document_id: "scanned-policy-1",
+    document_name: "documents.pdf",
+    page: 8,
+    supporting_text: supportingText,
+    confidence: 0.95,
+    evidence_mode: "document_vision",
+  });
+  const parsed = structuredClone(validAnthropicAnalysisFixture);
+  parsed.classification = {
+    business_line: "Other / Requires Review",
+    confidence: 0,
+    rationale: "Claude returned no recognized classification record.",
+    sources: [],
+  };
+  parsed.document_types = [];
+  parsed.fields = [{
+    field: "policy_number",
+    value: "CRG/1331149",
+    normalized_value: "CRG/1331149",
+    confidence: 0.95,
+    requires_confirmation: false,
+    sources: [visualSource("Policy No. CRG/1331149")],
+  }, {
+    field: "policy_warranties",
+    value: "Survey warranty applies.",
+    normalized_value: "Survey warranty applies.",
+    confidence: 0.93,
+    requires_confirmation: false,
+    sources: [visualSource("Warranted survey report is obtained")],
+  }];
+  parsed.evidence_findings = [];
+  parsed.missing_documents = [];
+
+  const result = anthropicProviderInternals.enforceAnthropicGrounding(parsed, evidence);
+
+  const policy = result.document_types.find((item) => item.document_type === "Policy");
+  assert.equal(policy.sufficient_information, true);
+  assert.equal(policy.sources.every((source) => source.evidence_mode === "document_vision"), true);
+  assert.equal(result.missing_documents.some((item) => item.document_type === "Policy"), false);
 });
 
 test("anthropic turns conflicting classification records into explicit human review", async () => {

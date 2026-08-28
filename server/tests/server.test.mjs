@@ -1,9 +1,43 @@
 import test from "node:test";
 import assert from "node:assert/strict";
+import fs from "node:fs/promises";
+import os from "node:os";
+import path from "node:path";
+import { createAuthService, createPasswordHash } from "../auth/authService.mjs";
 import {
   anthropicMessageFixture,
   multiDocumentEvidenceFixture,
 } from "./fixtures/anthropicResponses.mjs";
+
+const serverAuthDirectory = await fs.mkdtemp(path.join(os.tmpdir(), "ula-server-auth-"));
+const serverAuthStateFile = path.join(serverAuthDirectory, "auth-state.json");
+const serverAuthEmail = "server-test-admin@unitedlossadjusters.com";
+const serverAuthPassword = "ServerTestPass123!";
+const serverAuthService = createAuthService({
+  stateFile: serverAuthStateFile,
+  seedUsers: [{
+    id: "server-test-admin",
+    email: serverAuthEmail,
+    full_name: "Server Test Administrator",
+    job_title: "System Administrator",
+    password_hash: createPasswordHash(serverAuthPassword),
+    password_status: "set",
+    status: "approved",
+    role: "admin",
+  }],
+});
+await serverAuthService.listUsers();
+process.env.AUTH_STATE_FILE = serverAuthStateFile;
+
+const loginCookie = async (baseUrl, fetchImpl = fetch) => {
+  const response = await fetchImpl(`${baseUrl}/api/auth/login`, {
+    method: "POST",
+    headers: { "content-type": "application/json" },
+    body: JSON.stringify({ email: serverAuthEmail, password: serverAuthPassword }),
+  });
+  assert.equal(response.status, 200);
+  return response.headers.get("set-cookie").split(";", 1)[0];
+};
 
 test("HTTP API exposes health and a truthful unavailable analysis state without credentials", async () => {
   const originalEnv = {
@@ -18,8 +52,14 @@ test("HTTP API exposes health and a truthful unavailable analysis state without 
     MICROSOFT_CLIENT_ID: process.env.MICROSOFT_CLIENT_ID,
     MICROSOFT_CLIENT_SECRET: process.env.MICROSOFT_CLIENT_SECRET,
     MICROSOFT_SENDER_EMAIL: process.env.MICROSOFT_SENDER_EMAIL,
+    LEAVE_EMAIL_PROVIDER: process.env.LEAVE_EMAIL_PROVIDER,
+    EMAILJS_SERVICE_ID: process.env.EMAILJS_SERVICE_ID,
+    EMAILJS_TEMPLATE_ID: process.env.EMAILJS_TEMPLATE_ID,
+    EMAILJS_PUBLIC_KEY: process.env.EMAILJS_PUBLIC_KEY,
+    EMAILJS_PRIVATE_KEY: process.env.EMAILJS_PRIVATE_KEY,
     LEAVE_ADMIN_EMAIL: process.env.LEAVE_ADMIN_EMAIL,
     APP_BASE_URL: process.env.APP_BASE_URL,
+    AUTH_STATE_FILE: process.env.AUTH_STATE_FILE,
   };
   Object.assign(process.env, {
     AI_PROVIDER: "openai",
@@ -33,6 +73,7 @@ test("HTTP API exposes health and a truthful unavailable analysis state without 
     MICROSOFT_CLIENT_ID: "",
     MICROSOFT_CLIENT_SECRET: "",
     MICROSOFT_SENDER_EMAIL: "",
+    LEAVE_EMAIL_PROVIDER: "microsoft_graph",
     EMAILJS_SERVICE_ID: "",
     EMAILJS_TEMPLATE_ID: "",
     EMAILJS_PUBLIC_KEY: "",
@@ -50,15 +91,19 @@ test("HTTP API exposes health and a truthful unavailable analysis state without 
     const health = await fetch(`${baseUrl}/api/health`).then((response) => response.json());
     assert.equal(health.ok, true);
 
-    const status = await fetch(`${baseUrl}/api/ai/status`).then((response) => response.json());
+    const unauthenticatedStatus = await fetch(`${baseUrl}/api/ai/status`);
+    assert.equal(unauthenticatedStatus.status, 401);
+    const cookie = await loginCookie(baseUrl);
+
+    const status = await fetch(`${baseUrl}/api/ai/status`, { headers: { cookie } }).then((response) => response.json());
     assert.equal(status.configured, false);
     assert.equal(status.provider, "openai");
 
-    const leaveEmailStatus = await fetch(`${baseUrl}/api/leave/email/status`).then((response) => response.json());
+    const leaveEmailStatus = await fetch(`${baseUrl}/api/leave/email/status`, { headers: { cookie } }).then((response) => response.json());
     assert.equal(leaveEmailStatus.configured, false);
     assert.ok(leaveEmailStatus.missing.includes("MICROSOFT_CLIENT_SECRET"));
 
-    const response = await fetch(`${baseUrl}/api/ai/analyze`, { method: "POST" });
+    const response = await fetch(`${baseUrl}/api/ai/analyze`, { method: "POST", headers: { cookie } });
     const body = await response.json();
     assert.equal(response.status, 503);
     assert.equal(body.code, "ai-provider-unavailable");
@@ -125,6 +170,8 @@ test("regression: closed debug output does not turn a valid mocked Claude analys
   });
   try {
     const address = listener.address();
+    const baseUrl = `http://127.0.0.1:${address.port}`;
+    const cookie = await loginCookie(baseUrl, realFetch);
     const manifest = multiDocumentEvidenceFixture.map((item, index) => ({
         index,
         id: item.document_id,
@@ -146,8 +193,9 @@ test("regression: closed debug output does not turn a valid mocked Claude analys
       return form;
     };
 
-    const preflightResponse = await realFetch(`http://127.0.0.1:${address.port}/api/ai/preflight`, {
+    const preflightResponse = await realFetch(`${baseUrl}/api/ai/preflight`, {
       method: "POST",
+      headers: { cookie },
       body: buildForm(),
     });
     const preflightBody = await preflightResponse.json();
@@ -157,8 +205,9 @@ test("regression: closed debug output does not turn a valid mocked Claude analys
     assert.equal(preflightBody.stats.document_count, 3);
     assert.equal(mockedAnthropicCalls, 0);
 
-    const simultaneousPreflightResponse = await realFetch(`http://127.0.0.1:${address.port}/api/ai/preflight`, {
+    const simultaneousPreflightResponse = await realFetch(`${baseUrl}/api/ai/preflight`, {
       method: "POST",
+      headers: { cookie },
       body: buildForm(),
     });
     const simultaneousPreflight = await simultaneousPreflightResponse.json();
@@ -166,8 +215,9 @@ test("regression: closed debug output does not turn a valid mocked Claude analys
     assert.equal(simultaneousPreflight.preflight_token, preflightBody.preflight_token);
     assert.equal(mockedAnthropicCalls, 0);
 
-    const response = await realFetch(`http://127.0.0.1:${address.port}/api/ai/analyze`, {
+    const response = await realFetch(`${baseUrl}/api/ai/analyze`, {
       method: "POST",
+      headers: { cookie },
       body: buildForm(preflightBody.preflight_token),
     });
     const body = await response.json();
@@ -195,8 +245,9 @@ test("regression: closed debug output does not turn a valid mocked Claude analys
       assert.match(providerBody.messages[0].content[0].text, new RegExp(item.pages[0].text.split("\n")[0]));
     }
 
-    const consumedTokenResponse = await realFetch(`http://127.0.0.1:${address.port}/api/ai/analyze`, {
+    const consumedTokenResponse = await realFetch(`${baseUrl}/api/ai/analyze`, {
       method: "POST",
+      headers: { cookie },
       body: buildForm(simultaneousPreflight.preflight_token),
     });
     const consumedTokenBody = await consumedTokenResponse.json();
@@ -204,15 +255,17 @@ test("regression: closed debug output does not turn a valid mocked Claude analys
     assert.equal(consumedTokenBody.code, "anthropic-preflight-required");
     assert.equal(mockedAnthropicCalls, 1);
 
-    const duplicatePreflightResponse = await realFetch(`http://127.0.0.1:${address.port}/api/ai/preflight`, {
+    const duplicatePreflightResponse = await realFetch(`${baseUrl}/api/ai/preflight`, {
       method: "POST",
+      headers: { cookie },
       body: buildForm(),
     });
     const duplicatePreflight = await duplicatePreflightResponse.json();
     assert.equal(duplicatePreflightResponse.status, 200);
     assert.equal(duplicatePreflight.connectivity.checked, false);
-    const duplicateResponse = await realFetch(`http://127.0.0.1:${address.port}/api/ai/analyze`, {
+    const duplicateResponse = await realFetch(`${baseUrl}/api/ai/analyze`, {
       method: "POST",
+      headers: { cookie },
       body: buildForm(duplicatePreflight.preflight_token),
     });
     const duplicateBody = await duplicateResponse.json();
@@ -223,6 +276,7 @@ test("regression: closed debug output does not turn a valid mocked Claude analys
     console.info = realConsoleInfo;
     globalThis.fetch = realFetch;
     await new Promise((resolve, reject) => listener.close((error) => error ? reject(error) : resolve()));
+    await fs.rm(serverAuthDirectory, { recursive: true, force: true });
     for (const [key, value] of Object.entries(originalEnv)) {
       if (value === undefined) delete process.env[key];
       else process.env[key] = value;

@@ -19,6 +19,9 @@ import { extractEvidenceFile, evidenceText } from "./evidence/extractEvidence.mj
 import { loadApprovedStyleReferences } from "./ai/referenceLayer.mjs";
 import { createLeaveEmailService } from "./leave/leaveEmailService.mjs";
 import { sendTestEmail, getEmailDiagnosticsStatus } from "./email/emailTestService.mjs";
+import { createAuthService } from "./auth/authService.mjs";
+import { createAuthHttp } from "./auth/authHttp.mjs";
+import { sendPasswordResetEmail } from "./auth/passwordResetMailer.mjs";
 
 if (process.env.NODE_ENV !== "test") {
   dotenv.config();
@@ -32,6 +35,13 @@ const maxFileBytes = Number(process.env.AI_MAX_FILE_BYTES || 20 * 1024 * 1024);
 const maxTotalBytes = Number(process.env.AI_MAX_TOTAL_BYTES || 50 * 1024 * 1024);
 const upload = multer({ storage: multer.memoryStorage(), limits: { files: maxFiles, fileSize: maxFileBytes } });
 const app = express();
+const authService = createAuthService({
+  stateFile: process.env.AUTH_STATE_FILE || path.resolve(".data", "auth-state.json"),
+});
+const authHttp = createAuthHttp({
+  service: authService,
+  sendResetEmail: (payload) => sendPasswordResetEmail(payload, { env: process.env }),
+});
 const getLeaveEmailService = () => {
   if (process.env.NODE_ENV !== "test") {
     dotenv.config();
@@ -44,6 +54,8 @@ const anthropicAnalysisCacheMs = Number(process.env.ANTHROPIC_DUPLICATE_CACHE_MS
 app.disable("x-powered-by");
 app.use(express.json({ limit: "64kb" }));
 app.get("/api/health", (_request, response) => response.json({ ok: true }));
+authHttp.registerRoutes(app);
+app.use("/api", authHttp.requireAuth);
 app.get("/api/ai/status", (_request, response) => response.json(getAIStatus()));
 app.get("/api/leave/email/status", (_request, response) => response.json(getLeaveEmailService().getStatus()));
 app.get("/api/email/diagnostics", (_request, response) => {

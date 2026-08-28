@@ -1,5 +1,7 @@
 export const MIN_REPORT_PHOTOGRAPHS = 3;
-export const MAX_REPORT_PHOTOGRAPHS = 6;
+export const REPORT_PHOTOGRAPHS_PER_PAGE = 4;
+export const MAX_REPORT_PHOTO_PAGES = 3;
+export const MAX_REPORT_PHOTOGRAPHS = REPORT_PHOTOGRAPHS_PER_PAGE * MAX_REPORT_PHOTO_PAGES;
 
 const byteFingerprint = (data) => {
   const bytes = data instanceof Uint8Array ? data : new Uint8Array(data || []);
@@ -12,7 +14,7 @@ const byteFingerprint = (data) => {
   return `${bytes.length}:${samples.join(".")}`;
 };
 
-const metadataKey = (item) => `${item.document_id || item.document_name || ""}:${item.page ?? "image"}`;
+const metadataKey = (item) => `${item.document_id || item.document_name || ""}:${item.page ?? "image"}:${item.contact_sheet_index ?? "full"}`;
 
 export function selectReportPhotographs(images = [], preferred = [], maximum = MAX_REPORT_PHOTOGRAPHS) {
   const preferredByKey = new Map(preferred.map((item, index) => [metadataKey(item), { ...item, rank: index }]));

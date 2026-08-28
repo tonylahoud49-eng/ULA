@@ -11,7 +11,7 @@ import {
   buildMasterReportData,
   populateMasterReportDocx,
 } from "../../src/lib/masterReportDocx.js";
-import { selectReportPhotographs } from "../../src/lib/reportPhotoSelection.js";
+import { MAX_REPORT_PHOTOGRAPHS, selectReportPhotographs } from "../../src/lib/reportPhotoSelection.js";
 import { SYSTEM_INSTRUCTIONS } from "../ai/providers/openaiProvider.mjs";
 
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "../..");
@@ -98,6 +98,10 @@ test("production prompt requires concise fact-to-interpretation-to-conclusion re
   assert.match(SYSTEM_INSTRUCTIONS, /Do not suppress a defensible analysis merely because the conclusion is provisional/i);
   assert.match(SYSTEM_INSTRUCTIONS, /Use "not established" only after testing the material hypotheses/i);
   assert.match(SYSTEM_INSTRUCTIONS, /preserve its substantive wording verbatim in report_introduction/i);
+  assert.match(SYSTEM_INSTRUCTIONS, /party fields as named entities, not text buckets/i);
+  assert.match(SYSTEM_INSTRUCTIONS, /Separately extract the exact policy or cover-note number/i);
+  assert.match(SYSTEM_INSTRUCTIONS, /Never add the full shipment value to the value of damaged items/i);
+  assert.match(SYSTEM_INSTRUCTIONS, /interest and policy schedule; shipment routing; chronological surveyor notes/i);
 });
 
 test("professional report narrative remains grounded, analytical, concise, and deterministic", async () => {
@@ -164,9 +168,67 @@ test("professional report narrative remains grounded, analytical, concise, and d
   assert.match(xml, /invoice values are adequately insured and there is no underinsurance/i);
   assert.match(xml, /To date, it is understood that the Assured had not appointed a loss assessor to act on their behalf\./i);
   assert.match(xml, /The above adjusted claim amount USD 9,500\.00 is considered fair &amp; reasonable\./i);
+  assert.match(xml, /SHIPMENT ROUTING/i);
   assert.match(xml, /We confirm having sighted the originals of all documents customarily submitted in support of a claim of this nature and remain at Insurers disposal for further instructions\./i);
   assert.doesNotMatch(xml, /The following was concluded:|End of adjustment note\./i);
   assert.doesNotMatch(xml, /Human review required/i);
+});
+
+test("global report analysis separates policy schedule, party roles, routing, and actual loss quantum", () => {
+  const { evidence, documents } = fixture();
+  const claim = { claim_number: "ULA-GLOBAL-QUALITY-001", title: "Machinery transit damage", business_line: "Marine Cargo (Non-Reefer)" };
+  const analysis = {
+    business_line: claim.business_line,
+    document_types: [],
+    evidence_findings: [],
+    extracted_fields: [
+      field("policy_number", "MC/2026/4455"),
+      field("policy_period", "01 January 2026 to 31 December 2026"),
+      field("insured_value", "748,000.00"),
+      field("currency", "USD"),
+      field("valuation_basis", "Invoice Value + 10%"),
+      field("policy_transit_scope", "Warehouse to warehouse"),
+      field("policy_conveyance_limits", "USD 350,000 per land conveyance"),
+      field("policy_extensions", "Including loading and unloading operations"),
+      field("policy_warranties", "Warranted cargo properly lashed and secured"),
+      field("policy_conditions", "Institute Cargo Clauses (A) CL.382 dated 01.01.2009"),
+      field("policy_exclusions", "Excluding theft from open or unattended trucks"),
+      field("gross_claim_amount", "1,088,250.00"),
+      field("shipper", "CARRIER'S AGENTS ENDORSEMENTS"),
+      field("consignee", "Warranted cargo properly lashed and secured"),
+      field("carrier", "Place of Del iv ery. Applicable only when document used as Multimodal Transport B/L"),
+      field("port_of_loading", "Shanghai, China"),
+      field("transshipment_port", "Singapore"),
+      field("port_of_discharge", "Dar Es Salaam, Tanzania"),
+      field("vessel_name", "MV PROFESSIONAL"),
+      field("voyage_number", "026E"),
+      field("bill_of_lading", "BL-2026-4455"),
+      field("delivery_date", "14 May 2026"),
+      field("empty_return_date", "16 May 2026"),
+    ],
+    adjustment_line_items: [
+      { description: "Damaged generator set", quantity: "1 unit", unit_price: "340250", adjusted_value: "340250", currency: "USD", basis: "Surveyed damage item", confidence: 0.98, sources: [source(2, "Damaged generator set USD 340,250.00")] },
+      { description: "Total insured shipment value", quantity: null, unit_price: null, adjusted_value: "748000", currency: "USD", basis: "Policy / shipment value", confidence: 0.98, sources: [source(1, "Total insured shipment value USD 748,000.00")] },
+    ],
+  };
+  const draft = createUnifiedReportDraft({ claim, documents, versions: [], generatedBy: "Test Adjuster", analysis, evidence });
+  const record = draft.normalizedRecord;
+  const data = buildMasterReportData({ report: { normalized_claim_record: record }, claim });
+
+  assert.equal(record.facts.shipper.value, null);
+  assert.equal(record.facts.consignee.value, null);
+  assert.equal(record.facts.carrier.value, null);
+  assert.equal(record.adjustment.line_items.length, 1);
+  assert.equal(record.financials.presented_claim, 340_250);
+  assert.ok(record.conflicts.some((item) => item.field === "adjustment_line_items"));
+  assert.match(data.scalars.policy_details, /MC\/2026\/4455/);
+  assert.match(data.scalars.policy_details, /Insured Period: 01 January 2026 to 31 December 2026/);
+  assert.match(data.scalars.policy_details, /Warehouse to warehouse/);
+  assert.match(data.scalars.policy_details, /Warranted cargo properly lashed and secured/);
+  assert.match(data.scalars.policy_details, /Excluding theft from open or unattended trucks/);
+  assert.match(data.paragraphs.shipment_routing.join(" "), /Shanghai.*Singapore.*Dar Es Salaam|Shanghai.*Dar Es Salaam/i);
+  assert.match(data.paragraphs.shipment_routing.join(" "), /empty container returned 16 May 2026/i);
+  assert.doesNotMatch(data.scalars.policy_details, /Carrier's Agents Endorsements/i);
 });
 
 test("Director wording remains explicit without inventing conclusions when evidence is insufficient", () => {
@@ -242,7 +304,7 @@ test("conflicting values cannot become Director cause or underinsurance assertio
 });
 
 test("photograph selection caps material views and removes exact duplicates", () => {
-  const preferred = Array.from({ length: 8 }, (_, index) => ({
+  const preferred = Array.from({ length: 14 }, (_, index) => ({
     document_id: "survey-photos",
     document_name: "claim-survey-and-photographs.pdf",
     page: index + 1,
@@ -251,7 +313,8 @@ test("photograph selection caps material views and removes exact duplicates", ()
   const images = preferred.map((item, index) => ({ ...item, data: new Uint8Array([index + 1, 2, 3, 4]) }));
   images.splice(2, 0, { ...preferred[0], page: 99, data: images[0].data, caption: "Duplicate bytes" });
   const selected = selectReportPhotographs(images, preferred);
-  assert.equal(selected.length, 6);
+  assert.equal(selected.length, MAX_REPORT_PHOTOGRAPHS);
+  assert.equal(MAX_REPORT_PHOTOGRAPHS, 12);
   assert.equal(selected.filter((item) => item.data === images[0].data).length, 1);
   assert.ok(selected.every((item) => /Material view/.test(item.caption)));
 });

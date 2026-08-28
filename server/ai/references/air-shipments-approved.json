@@ -1,0 +1,71 @@
+{
+  "approved": true,
+  "profile_id": "air-shipments",
+  "title": "Air Shipments - Owner-Approved Methodology Profile",
+  "applies_to": {
+    "evidence_terms_any": [
+      "air waybill",
+      "airway bill",
+      "air cargo",
+      "air freight",
+      "master awb",
+      "house awb",
+      "airport of departure",
+      "airport of destination",
+      "institute cargo clauses (air)"
+    ],
+    "business_lines": [
+      "Air Shipment (NET)"
+    ]
+  },
+  "section_order": [
+    "Cover Page",
+    "Document Control Page",
+    "Report Summary",
+    "Report and adjustment note",
+    "Table 1 - Summary and salient details",
+    "INTEREST INSURED & RELEVANT CONDITIONS OF INSURANCE POLICY",
+    "SHIPMENT ROUTING",
+    "SURVEYOR NOTES",
+    "AIR CUSTODY, TEMPERATURE OR SPECIAL-HANDLING REVIEW when material",
+    "CAUSE OF LOSS",
+    "RELEVANT POLICY WARRANTIES & CONDITIONS",
+    "ADEQUACY OF THE INSURED VALUE",
+    "APPOINTMENT OF ASSESSORS",
+    "CLAIM PRESENTED ON THE POLICY & ADJUSTMENT",
+    "CONCLUSION",
+    "Enclosure to this report",
+    "Outstanding Documents",
+    "Appendix A - Photographs",
+    "About ULA"
+  ],
+  "style_notes": [
+    "Use this profile only for a current air-shipment claim that satisfies the applicability scope; never infer current claim facts from this profile.",
+    "Open with a concise appointment and scope statement identifying the instructing party, policyholder, Assured or claimant, insured interest, reported air loss, investigation purpose, and whether the review was remote or included a physical survey.",
+    "Resolve the applicant, insurer, policyholder, Assured, shipper, seller, buyer, master-air-waybill consignee, house-air-waybill consignee, ultimate receiver, freight forwarder, issuing agent, actual carrier, successive carrier, ground-handling agent, customs broker, trucking provider, and final-mile carrier before assigning custody, insurable interest, or recovery responsibility.",
+    "Keep the master air waybill, house air waybill, forwarder waybill, parcel tracking record, manifest, delivery record, and carrier conditions separate. Do not assume that identical or similar numbers prove identical contracting parties or carriage obligations.",
+    "Reconstruct the supported route and custody timeline from collection and origin warehouse through acceptance, origin airport, each flight and transshipment hub, destination airport, customs or regulatory hold, storage, final-mile delivery, return, and non-delivery. Distinguish requested or scheduled flights from evidenced actual movement.",
+    "Use airway bills, tracking scans, manifests, cargo damage reports, warehouse records, customs records, proof of delivery, annotated delivery documents, notices, and correspondence together. An airway bill's apparent-good-order statement normally addresses externally apparent condition and is not proof of concealed contents or adequate packing.",
+    "Resolve warehouse-to-warehouse attachment and termination, Incoterms, sale or assignment, who bore the risk, and whose policy responds. A policyholder, freight forwarder, shipper, consignee, seller, and Assured are not interchangeable merely because one party arranged transport.",
+    "Keep invoice value, insured value, policy or shipment limit, value declared for carriage, value declared for customs, freight invoice, presented claim, and carrier recovery limit separate. A low transport or customs declaration is not automatically the insured value or policy indemnity, but it may be material to disclosure, policy terms, and carrier recovery.",
+    "For physical breakage or impact claims, test pre-shipment condition, clean or claused acceptance, outer and inner packing, crate or carton construction, cushioning, pallets, straps, shrink-wrap, orientation, stacking, handling marks, fragility, package weight, airport or carrier damage reports, delivery annotations, photographs, salvage, and when damage was first observed.",
+    "Do not state improper handling merely because fragile cargo arrived broken. Identify the supported physical indicators and custody interval, test inadequate packing, inherent fragility, stacking or compression, impact, puncture, shifting, customs inspection, and final-mile handling, and state the remaining timing limitation when the responsible stage cannot be isolated.",
+    "Apply a professional-packing warranty only after identifying who packed, what materials and method were used, the cargo's known fragility, the ordinary rigours of the evidenced route, any handling instructions, photographs or expert evidence, and the causal significance of any deficiency. Missing pre-loading photographs do not prove either compliance or breach.",
+    "For temperature-sensitive air cargo, keep required set point or permissible range, product condition, dry-ice quantity, re-icing instructions, declared dangerous-goods information, refrigeration or cold-room arrangements, and each party's replenishment responsibility separate.",
+    "Review each data logger by device identity, time zone, start and stop time, interval, coverage period, calibration or validation, minimum, maximum, excursion start, duration, recovery, and any gap before delivery. Do not describe a required set point as a measured product temperature or extrapolate beyond the logger period.",
+    "Correlate temperature evidence with accepted custody events at origin, aircraft, transshipment, destination airport, customs, re-icing, trucking, and delivery. Wet ice, missing dry ice, or a rising curve does not by itself identify the responsible party without the handover and instruction evidence.",
+    "A temperature excursion does not automatically establish spoilage, rejection, or total loss. Require current evidence of the commodity's stability limits, competent technical or laboratory opinion, intended use, condition on arrival, testing, rejection, inability to use, and salvage or mitigation position.",
+    "For non-delivery, build the scan-by-scan custody chain, distinguish planned export from actual dispatch, identify the last supported location and custodian, test customs or cultural-property clearance, storage expiry, scheduled return, tracing efforts, investigation status, and any carrier-issued loss or non-delivery certificate.",
+    "Do not call an unlocated shipment theft unless current evidence establishes theft. Carrier acknowledgment of loss supports non-delivery while the exact disappearance mechanism may remain unexplained.",
+    "Test the applicable cause branch from current evidence: impact or rough handling; compression or stacking; inadequate packing; temperature excursion or re-icing failure; delay, customs or storage handling; loss or non-delivery; partial delivery or shortage; or another supported mechanism. Preserve viable alternatives and isolate the strongest supported custody period.",
+    "Read the current policy and endorsement in full. Apply the actual Institute Cargo Clauses (Air), warehouse-to-warehouse duration, refrigeration or data-logger conditions, commodity and territorial scope, excluded countries, storage periods, airport or warehouse survey requirements, packing warranty, clean-waybill requirement, declaration requirement, shipment limit, valuation basis, deductible, and other exclusions only to established facts.",
+    "Do not substitute a sea-cargo clause for the evidenced air clause, confuse a radioactive or cyber exclusion clause number with the air cover clause, or infer a country exclusion from a country merely being absent from a valuation-uplift schedule.",
+    "Reconcile quantities across packing lists, airway bills, damage reports, delivery documents, claim forms, invoices, and photographs. Preserve conflicts between shipped, damaged, delivered, missing, and claimed quantities instead of silently choosing the figure that produces a claim.",
+    "Calculate quantum locally from supported damaged, lost, or missing quantity and invoice value. Add freight, taxes, duties, policy uplift, re-icing, survey, disposal, or other charges only when the current policy and current evidence show that they form part of the insured loss; apply the supported exchange rate and correct deductible, then deduct supported salvage or recovery.",
+    "For a claimed total loss, establish physical or functional unfitness, competent rejection or technical evidence, lack of residual utility, and salvage status. Severe visible breakage may support total loss for an indivisible item, but photographs alone do not establish the value or insured treatment.",
+    "Recovery analysis must distinguish the contracting carrier, actual and successive air carriers, freight forwarder, ground handler, customs broker, warehouse, trucking provider, shipper or packer, and other candidates. Test the current waybill and reverse terms, custody, written complaint, notice timing, package weight, declared value, liability limitation, causation, evidence preservation, and recovery economics before recommending pursuit.",
+    "Select the strongest supported outcome branch: no established loss, repairable or partial physical damage, evidenced total loss, temperature-related loss, non-delivery, an excluded or warranty-affected claim, or a covered loss below the deductible. Never import the outcome of a historical air claim.",
+    "Use representative current-claim photographs of external and internal packing, labels and handling marks, pallet condition, damaged cargo, logger display, delivery condition, or recovered items under the global Appendix limits. A photograph of an undamaged reference item is not proof of the shipped package's condition.",
+    "The global ULA report specification, Director wording, no-fabrication rules, deterministic calculations, citation requirements, empty Enclosure and Outstanding sections, Appendix limits, and human approval gates take precedence over every inconsistent clause number, unsupported liability statement, arithmetic issue, conclusion order, or legacy appendix practice found in a historical Air Shipment report."
+  ]
+}

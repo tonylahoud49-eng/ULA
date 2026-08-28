@@ -69,6 +69,30 @@ const comparableForField = (field, value) => {
   return normalizeComparable(value);
 };
 
+const entityFields = new Set([
+  "applicant", "insured", "insurer", "reassured", "reinsurer", "broker", "shipper", "consignee", "carrier", "surveyor",
+]);
+const entityContaminationPattern = /(?:carrier'?s? agents? endorsements?|place\s+of\s+del\s*iv\s*ery|multimodal\s+t\s*r\s*ansport|applicable\s+only\s+when|terms?\s+and\s+conditions?|warrant(?:ed|y|ies)?|exclud(?:ed|ing|sion)|bill\s+of\s+lading\s+(?:terms?|conditions?)|received\s+for\s+shipment|freight\s+(?:payable|prepaid)|copy\s+non-negotiable|original\s+bill)/i;
+const normalizedCandidate = (candidate) => {
+  if (!entityFields.has(candidate.field)) return candidate;
+  const rawValue = candidate.normalized_value ?? candidate.value;
+  const cleanValue = sanitizeReportValue(rawValue, candidate.field);
+  if (!cleanValue || cleanValue.length > 180 || entityContaminationPattern.test(cleanValue)) {
+    return { ...candidate, value: null, normalized_value: null, requires_confirmation: true, _rejected_reason: "role field contained boilerplate or OCR contamination" };
+  }
+  return { ...candidate, value: cleanValue, normalized_value: cleanValue };
+};
+
+const nonClaimValuationPattern = /^(?:total\s+)?(?:policy\s+limit|sum\s+insured|insured\s+(?:shipment\s+)?value|shipment\s+value|commercial\s+invoice\s+(?:total|value)|invoice\s+(?:total|value)|fob\s+value|freight\s+invoice\s+(?:total|value)|policy\s+premium|basis\s+of\s+valuation|max(?:imum)?\s+limit)(?:\b|\s*[-:])/i;
+const validAdjustmentLineItem = (item) => {
+  const description = String(item?.description || "").replace(/\s+/g, " ").trim();
+  const basis = String(item?.basis || "").replace(/\s+/g, " ").trim();
+  if (!description || nonClaimValuationPattern.test(description)) return false;
+  if (/\b(?:policy limit|sum insured|insured shipment value|full shipment value)\b/i.test(`${description} ${basis}`)
+    && !/\b(?:damaged|missing|shortage|repair|replacement|loss|fee|cost|deduct)/i.test(description)) return false;
+  return true;
+};
+
 const candidateScore = (candidate) => {
   const sources = candidate.sources || [];
   const sourceDocuments = new Set(sources.map((source) => source.document_id || source.document_name).filter(Boolean)).size;
@@ -199,7 +223,7 @@ function deterministicEvidenceCandidates(evidence = []) {
         );
       }
 
-      capture("policy_number", /Policy\s*(?:No\.?|Number|Reference)\s*[:#]?\s*([A-Z0-9][A-Z0-9/.-]+)/i);
+      capture("policy_number", /(?:Policy|Cover\s+Note|Insurance\s+Certificate)\s*(?:No\.?|Number|Reference)\s*[:#]?\s*([A-Z0-9][A-Z0-9/.-]+)/i);
       capture("policy_number", /(?:Cope\s+Re|Reinsurance)\s+Reference\s*:\s*([A-Z0-9][A-Z0-9/.-]+)/i);
       capture("policy_number", /(?:^|\n)Policy\s*:\s*([A-Z0-9][A-Z0-9 /.-]+?)(?=\s+Effect\.|\n)/i, (value) => value.replace(/\s+/g, " ").trim());
       capture("policy_number", /(?:^|\n)Policy\s+([A-Z0-9][A-Z0-9/.-]+(?:\s+[A-Z0-9]+)?)(?=\n|\s+Issuing Date)/i, (value) => value.replace(/\s+/g, " ").trim());
@@ -215,6 +239,7 @@ function deterministicEvidenceCandidates(evidence = []) {
       capture("broker", /Broker\s*:\s*(.+?)(?=\n|\s+(?:Assured|Period|Policy))/i);
       capture("policy_period", /Period of Insurance\s*:\s*(.+?)(?=\n|\s+(?:Conveyance|Coverage|Deductible))/i);
       capture("policy_period", /(?:^|\n)Period\s*:\s*(.+?)(?=\n|\s+Cancellation Provision\s*:)/i);
+      capture("policy_period", /Insured\s+Period\s*:\s*(.+?)(?=\n|\s+(?:Sum Insured|Max(?:imum)? Limit|Basis of Valuation|Voyage)\s*:)/i);
       capture("conveyance_mode", /Conveyances?\s*:\s*([^\n]+)/i);
       capture("policy_inception_date", /Inception Date\s+([0-9]{1,2}\/[A-Z]{3}\/[0-9]{4})/i);
       capture("policy_inception_date", /([0-9]{1,2}\/[A-Z]{3}\/[0-9]{4})\s+Inception Date/i);
@@ -225,6 +250,14 @@ function deterministicEvidenceCandidates(evidence = []) {
       capture("policy_terms", /(Institute Cargo Clauses\s*[“\"]?A[”\"]?\s+CL\.?\s*382\s+dated\s+01\.01\.2009)/i);
       capture("policy_terms", /(Including Shortage noticed on unstuffing intact container seal)/i);
       capture("policy_terms", /(Including shortage\s*&\s*Loss of weight)/i);
+      capture("policy_transit_scope", /((?:Containeri[sz]ed shipments?\s*:\s*)?Warehouse\s+to\s+warehouse)/i);
+      capture("policy_transit_scope", /Voyage\s*:\s*((?:From\s*:)?[\s\S]{10,900}?)(?=\n\s*(?:Claim relevant|Institute Cargo Clauses|Deductible|Terms of Sale)\b)/i, (value) => value.replace(/\s+/g, " ").trim());
+      capture("policy_conveyance_limits", /((?:Max(?:imum)?\s+Limit|Limit)\s+per\s+shipment\s*:[^\n]+)/i);
+      capture("policy_conveyance_limits", /((?:USD|USDF|EUR|GBP|AED)\s*[0-9][0-9,.]*\s+per\s+(?:container|truck|land conveyance|vessel|shipment)[^\n]*)/i);
+      capture("policy_extensions", /(Including\s+(?:Loading and Unloading Operations|Shortage noticed on unstuffing intact container seal|Non-Delivery shipping\/packing unit[^\n]*|shortage\s*&\s*Loss of weight|Trans\s*shipments?[^\n]*|Extra Expense Clause[^\n]*))/i);
+      capture("policy_warranties", /(Warranted\s+[^\n]+)/i);
+      capture("policy_conditions", /((?:Institute Cargo Clauses|Institute English Jurisdiction Clause|Loading and Unloading Clause|Institute Replacement Clause|Sue and Labour Clause|Duty and or Increased Value Clause)[^\n]*)/i);
+      capture("policy_exclusions", /(Exclud(?:ing|ed)\s+[^\n]+)/i);
       capture("warranties_conditions", /(A\s*-\s*SPECIAL CONDITIONS\s*:[\s\S]+?)(?=B\s*-\s*SPECIAL CLAUSES)/i);
       capture("warranties_conditions", /(D\s*-\s*SPECIAL PROVISIONS\s*:[\s\S]+?)(?=E\s*-\s*Attachment)/i);
       capture("warranties_conditions", /(?:^|\n)Conditions\s*:\s*([^\n]+)/i);
@@ -297,6 +330,7 @@ function deterministicEvidenceCandidates(evidence = []) {
       capture("incoterm", /Incoterm\s*:\s*(CIF|FOB|CFR|EXW|DAP|DDP)/i);
       capture("incoterm", /TERMS OF SALE\s*:\s*(CIF|FOB|CFR|EXW|DAP|DDP)/i);
       capture("incoterm", /Delivery Condition\s+(CIF|FOB|CFR|EXW|DAP|DDP)\b/i);
+      capture("terms_of_sale", /Terms? of Sale\s*[:\-]?\s*([^\n]+)/i);
       capture("departure_date", /Departure\s*:\s*([0-9]{1,2}\/[0-9]{2}\/[0-9]{4})/i);
       capture("arrival_date", /Arrival Date\s*:\s*([0-9]{1,2}\/[0-9]{2}\/[0-9]{4})/i);
       const trackedArrivals = [...text.matchAll(/Vessel arrival\s*\([^)]*\)\s*\n?\s*([0-9]{1,2}\s+[A-Z][a-z]+\s+[0-9]{4})/gi)];
@@ -331,6 +365,7 @@ function deterministicEvidenceCandidates(evidence = []) {
       capture("survey_date", /Survey date and location\s*:\s*(.+?)\s+at\s+/i);
       capture("delivery_date", /(?:cargo|consignment|shipment|container)[^\n.]{0,100}?deliver(?:ed|y)[^\n.]{0,40}?\bon\s+([0-9]{1,2}(?:st|nd|rd|th)?\s+[A-Z][a-z]+\s+[0-9]{4}|[0-9]{1,2}[\/-][0-9]{1,2}[\/-][0-9]{2,4})/i);
       capture("delivery_date", /Gate out for delivery\s*\n?\s*([0-9]{1,2}\s+[A-Z][a-z]+\s+[0-9]{4})/i);
+      capture("empty_return_date", /(?:empty container|container)[^\n.]{0,80}?returned(?: empty)?[^\n.]{0,30}?(?:on\s+)?([0-9]{1,2}(?:st|nd|rd|th)?\s+[A-Z][a-z]+\s+[0-9]{4}|[0-9]{1,2}[\/-][0-9]{1,2}[\/-][0-9]{2,4})/i);
       capture("discharge_date", /(?:cargo|consignment|shipment|container)[^\n.]{0,100}?discharg(?:ed|e)[^\n.]{0,40}?\bon\s+([0-9]{1,2}(?:st|nd|rd|th)?\s+[A-Z][a-z]+\s+[0-9]{4}|[0-9]{1,2}[\/-][0-9]{1,2}[\/-][0-9]{2,4})/i);
       const trackedDischarges = [...text.matchAll(/Discharge\s*\([^)]*\)\s*\n?\s*([0-9]{1,2}\s+[A-Z][a-z]+\s+[0-9]{4})/gi)];
       if (trackedDischarges.length) add("discharge_date", trackedDischarges.at(-1)[1], item, page, sourceExcerpt(trackedDischarges.at(-1)), 0.995);
@@ -427,7 +462,7 @@ function deterministicEvidenceCandidates(evidence = []) {
         else if (/salvage/i.test(label)) add("salvage_amount", value, item, page, sourceExcerpt(line));
         else if (/recovery/i.test(label)) add("recovery_amount", value, item, page, sourceExcerpt(line));
         else if (/depreciation/i.test(label)) add("depreciation_amount", value, item, page, sourceExcerpt(line));
-        else {
+        else if (!nonClaimValuationPattern.test(label)) {
           positiveLines.push({ label, value });
           if (/calibration|inspection|fee|cost/i.test(label)) add("fees_amount", value, item, page, sourceExcerpt(line));
         }
@@ -559,15 +594,15 @@ function deterministicEvidenceCandidates(evidence = []) {
 }
 
 const claimFieldNames = [
-  "applicant", "insured", "insurer", "reassured", "reinsurer", "broker", "claim_reference", "policy_number", "policy_period", "policy_inception_date", "policy_issue_date", "policy_terms", "policy_limit", "policy_premium", "insured_value", "valuation_basis", "valuation_uplift_percent", "valuation_uplift_amount",
+  "applicant", "insured", "insurer", "reassured", "reinsurer", "broker", "claim_reference", "policy_number", "policy_period", "policy_inception_date", "policy_issue_date", "policy_terms", "policy_transit_scope", "policy_conveyance_limits", "policy_extensions", "policy_warranties", "policy_conditions", "policy_exclusions", "policy_limit", "policy_premium", "insured_value", "valuation_basis", "valuation_uplift_percent", "valuation_uplift_amount",
   "deductible", "date_of_loss", "date_of_intimation", "cause_of_loss", "country", "currency", "claim_amount",
   "gross_claim_amount", "invoice_total", "freight_amount", "insurance_amount", "fob_value", "freight_invoice_total", "fees_amount", "salvage_amount", "recovery_amount", "depreciation_amount",
   "adjusted_amount", "surveyor", "vessel_name", "voyage_number", "transshipment_port", "feeder_vessel", "feeder_voyage", "container_number", "container_numbers", "port_of_loading",
   "port_of_discharge", "commodity", "shipper", "consignee", "carrier", "air_waybill", "bill_of_lading",
   "invoice_number", "freight_invoice_number", "invoice_date", "packing_list_number", "packing_list_date", "purchase_order", "voyage_from", "voyage_to", "quantity", "net_weight", "gross_weight",
-  "conveyance_mode", "country_of_origin", "destination_country", "incoterm", "departure_date", "arrival_date", "shipment_date", "seal_numbers", "seal_condition", "production_dates", "expiry_dates",
-  "freight_invoice_date", "delivery_date", "discharge_date", "damage_report_date", "notice_date", "destruction_date",
-  "affected_container", "affected_quantity", "shortage_breakdown", "survey_attendance_scope", "report_introduction", "salvage_quantity", "total_loss_quantity",
+  "conveyance_mode", "country_of_origin", "destination_country", "incoterm", "terms_of_sale", "shipment_routing", "departure_date", "arrival_date", "shipment_date", "seal_numbers", "seal_condition", "production_dates", "expiry_dates",
+  "freight_invoice_date", "delivery_date", "empty_return_date", "discharge_date", "damage_report_date", "notice_date", "destruction_date",
+  "affected_container", "affected_quantity", "shortage_breakdown", "survey_attendance_scope", "representative_parties", "report_introduction", "salvage_quantity", "total_loss_quantity",
   "temperature_requirement", "temperature_findings", "survey_date", "survey_location", "damage_findings",
   "interest_insured", "appointment_details", "warranties_conditions", "insurable_interest",
   "adequacy_of_insured_value", "claim_basis", "salvage_findings", "recovery_findings",
@@ -933,7 +968,16 @@ function buildCauseAssessment(facts, findings) {
 }
 
 function buildPolicyAnalysis(facts, chronology, validationChecks, findings = []) {
-  const wordingFacts = [facts.warranties_conditions, facts.policy_terms].filter((fact) => isPresent(fact?.value));
+  const wordingFacts = [
+    facts.policy_terms,
+    facts.policy_transit_scope,
+    facts.policy_conveyance_limits,
+    facts.policy_extensions,
+    facts.policy_warranties,
+    facts.policy_conditions,
+    facts.policy_exclusions,
+    facts.warranties_conditions,
+  ].filter((fact) => isPresent(fact?.value));
   const wording = wordingFacts.map((fact) => fact.value).join(" ");
   const findingsText = findings.map((finding) => finding.finding || "").join(" ");
   const topics = [
@@ -945,6 +989,15 @@ function buildPolicyAnalysis(facts, chronology, validationChecks, findings = [])
     ["Mysterious / unexplained disappearance exclusion", /mysterious(?: and\/or)? unexplained disappearance|mysterious disappearance/i],
     ["Shortage / loss of weight", /including shortage\s*&\s*loss of weight/i],
     ["Shortage evidence", /shortage|carrier certificate/i],
+    ["Conveyance / shipment limits", /per (?:shipment|container|vessel|truck|land conveyance)|maximum limit|max limit/i],
+    ["Loading / unloading extension", /including loading and unloading|loading and unloading clause/i],
+    ["Non-delivery extension", /including non-delivery|non-delivery shipping\/packing unit/i],
+    ["Replacement clause", /institute replacement clause|replacement clause/i],
+    ["Clean transport-document warranty", /warranted shipped under a clean original (?:bill of lading|air)/i],
+    ["Theft / police-report warranty", /theft claim.*police report|police report.*theft claim/i],
+    ["Container seal warranty", /warranted.*(?:printed|bullet) seals?|seals?.*during the whole voyage/i],
+    ["Broken-seal joint-inspection condition", /broken or tampered seals?.*joint inspection|joint inspection.*seals?/i],
+    ["Open / unattended conveyance exclusion", /excluding theft and wet perils from open \/?unattended (?:trucks?|conveyances?)/i],
     ["Exclusions", /exclusion|excluded|mechanical|electrical|war|delay|inherent vice/i],
   ];
   const entries = topics.flatMap(([topic, pattern]) => {
@@ -1298,7 +1351,7 @@ export function buildNormalizedClaimRecord({ claim = {}, documents = [], analysi
   const allCandidates = [
     ...analysisCandidates,
     ...deterministic.candidates.map((candidate) => ({ ...candidate, _origin: "deterministic" })),
-  ];
+  ].map(normalizedCandidate);
   const conflicts = [];
   const facts = {};
   const fieldTrace = {};
@@ -1395,7 +1448,11 @@ export function buildNormalizedClaimRecord({ claim = {}, documents = [], analysi
       if (conflictIndex >= 0) conflicts.splice(conflictIndex, 1);
     }
   }
-  for (const field of ["policy_terms", "warranties_conditions", "damage_findings", "temperature_findings"]) {
+  for (const field of [
+    "policy_terms", "policy_transit_scope", "policy_conveyance_limits", "policy_extensions", "policy_warranties",
+    "policy_conditions", "policy_exclusions", "warranties_conditions", "shipment_routing", "representative_parties",
+    "damage_findings", "temperature_findings",
+  ]) {
     const candidates = allCandidates.filter((candidate) => candidate.field === field && !candidate.requires_confirmation)
       .filter((candidate) => isPresent(candidate.normalized_value ?? candidate.value));
     const values = unique(candidates.map((candidate) => String(candidate.normalized_value ?? candidate.value).replace(/\s+/g, " ").trim()));
@@ -1413,7 +1470,16 @@ export function buildNormalizedClaimRecord({ claim = {}, documents = [], analysi
     }
   }
 
-  const adjustmentLineItems = [...(resolvedAnalysis?.adjustment_line_items || []), ...(deterministic.adjustmentLineItems || [])].flatMap((item) => {
+  const rawAdjustmentLineItems = [...(resolvedAnalysis?.adjustment_line_items || []), ...(deterministic.adjustmentLineItems || [])];
+  const rejectedAdjustmentLineItems = rawAdjustmentLineItems.filter((item) => !validAdjustmentLineItem(item));
+  if (rejectedAdjustmentLineItems.length) {
+    conflicts.push({
+      field: "adjustment_line_items",
+      values: rejectedAdjustmentLineItems.map((item) => String(item.description || "Unlabelled monetary value")),
+      message: "Policy, shipment, invoice-total, or other non-loss valuation figures were excluded from the claim adjustment schedule.",
+    });
+  }
+  const adjustmentLineItems = rawAdjustmentLineItems.filter(validAdjustmentLineItem).flatMap((item) => {
     const adjustedValue = parseNumber(item.adjusted_value);
     if (!isPresent(item.description) || adjustedValue === null || !(item.sources || []).length) return [];
     return [{
@@ -1443,7 +1509,21 @@ export function buildNormalizedClaimRecord({ claim = {}, documents = [], analysi
     facts.currency = { ...facts.currency, value: itemCurrency, status: "supported", sources: adjustmentLineItems.flatMap((item) => item.sources) };
     fieldTrace.currency = { ...fieldTrace.currency, selected_value: itemCurrency, resolution: "derived from the evidence-reconciled adjustment schedule", final_status: "supported" };
   }
-  const explicitPresentedClaim = parseNumber(facts.gross_claim_amount.value) ?? parseNumber(facts.claim_amount.value);
+  let explicitPresentedClaim = parseNumber(facts.gross_claim_amount.value) ?? parseNumber(facts.claim_amount.value);
+  const rejectedValuationTotal = rejectedAdjustmentLineItems.reduce((total, item) => total + (parseNumber(item.adjusted_value) || 0), 0);
+  if (explicitPresentedClaim !== null && itemizedClaimTotal !== null && rejectedValuationTotal > 0
+    && Math.abs(explicitPresentedClaim - itemizedClaimTotal - rejectedValuationTotal) < 0.01) {
+    conflicts.push({
+      field: "gross_claim_amount",
+      values: [String(explicitPresentedClaim), String(itemizedClaimTotal)],
+      message: "The stated gross claim appears to combine the evidenced loss schedule with a non-claim insured/shipment valuation; only the loss schedule is retained for provisional adjustment.",
+    });
+    explicitPresentedClaim = null;
+    for (const field of ["claim_amount", "gross_claim_amount"]) {
+      facts[field] = { ...facts[field], value: itemizedClaimTotal.toFixed(2), status: "conflict", derived_from: "adjustment_line_items_after_non_claim_value_rejection" };
+      fieldTrace[field] = { ...fieldTrace[field], selected_value: itemizedClaimTotal.toFixed(2), resolution: "excluded a non-claim valuation from the presented quantum", final_status: "conflict" };
+    }
+  }
   const presentedClaim = explicitPresentedClaim ?? itemizedClaimTotal;
   if (explicitPresentedClaim === null && itemizedClaimTotal !== null) {
     const formattedTotal = itemizedClaimTotal.toFixed(2);
@@ -1762,7 +1842,7 @@ export function createUnifiedReportDraft({ claim, documents, versions, generated
       case "interest_insured":
         return masterParagraphs("interest_insured");
       case "routing": case "transport":
-        return `| Routing detail | Evidence-supported value |\n| --- | --- |\n${tableRows(normalizedRecord, index, [["Country of origin", "country_of_origin"], ["Origin / loading", isPresent(facts.voyage_from.value) ? "voyage_from" : "port_of_loading"], ["Destination country", "destination_country"], ["Destination / discharge", isPresent(facts.voyage_to.value) ? "voyage_to" : "port_of_discharge"], ["Mother vessel", "vessel_name"], ["Mother-vessel voyage", "voyage_number"], ["Transshipment port", "transshipment_port"], ["Feeder vessel", "feeder_vessel"], ["Feeder voyage", "feeder_voyage"], ["Carrier", "carrier"], ["Departure date", "departure_date"], ["Arrival date", "arrival_date"], ["Shipment / on-board date", "shipment_date"], ["Bill of lading", "bill_of_lading"], ["Container(s)", "container_numbers"], ["Seal(s)", "seal_numbers"], ["Seal condition", "seal_condition"]])}`;
+        return `${masterParagraphs("shipment_routing")}\n\n| Routing detail | Evidence-supported value |\n| --- | --- |\n${tableRows(normalizedRecord, index, [["Country of origin", "country_of_origin"], ["Origin / loading", isPresent(facts.voyage_from.value) ? "voyage_from" : "port_of_loading"], ["Destination country", "destination_country"], ["Destination / discharge", isPresent(facts.voyage_to.value) ? "voyage_to" : "port_of_discharge"], ["Mother vessel", "vessel_name"], ["Mother-vessel voyage", "voyage_number"], ["Transshipment port", "transshipment_port"], ["Feeder vessel", "feeder_vessel"], ["Feeder voyage", "feeder_voyage"], ["Carrier", "carrier"], ["Departure date", "departure_date"], ["Arrival date", "arrival_date"], ["Shipment / on-board date", "shipment_date"], ["Discharge date", "discharge_date"], ["Delivery date", "delivery_date"], ["Empty-container return", "empty_return_date"], ["Bill of lading", "bill_of_lading"], ["Container(s)", "container_numbers"], ["Seal(s)", "seal_numbers"], ["Seal condition", "seal_condition"]])}`;
       case "temperature":
         return `| Cold-chain fact | Evidence-supported value |\n| --- | --- |\n${tableRows(normalizedRecord, index, [["Required carrying temperature", "temperature_requirement"], ["Affected container", "affected_container"], ["Affected shipment quantity", "affected_quantity"], ["Commercially unacceptable / salvage-suitable quantity", "salvage_quantity"], ["Total-loss quantity", "total_loss_quantity"], ["Recorded temperature findings", "temperature_findings"], ["Survey findings", "damage_findings"]])}\n\nTemperature records are treated as outstanding unless substantive logger readings or equivalent records are present. A policy temperature condition alone is not a temperature record.`;
       case "cause":
@@ -1804,7 +1884,14 @@ export function createUnifiedReportDraft({ claim, documents, versions, generated
     ["Carrying Vessel / Carrier", masterData.scalars.carrier_details],
     ["Cargo Arrival / Delivery Date", masterData.scalars.arrival_delivery_details],
   ].map(([label, value]) => `| ${label} | ${value} |`).join("\n");
-  const bodySections = uniqueSections(template.sections)
+  const baseBodySections = uniqueSections(template.sections);
+  const shipmentReport = /Marine Cargo|Bulk Vessel|Air Shipment|Land Shipment/i.test(normalizedRecord.business_line || "");
+  const reportSections = shipmentReport && !baseBodySections.some((section) => section.id === "routing")
+    ? baseBodySections.flatMap((section) => section.id === "interest_insured"
+      ? [section, { id: "routing", title: "SHIPMENT ROUTING", owner: "preparer", required: true }]
+      : [section])
+    : baseBodySections;
+  const bodySections = reportSections
     .filter((section) => !["cover", "document_control", "version_history", "executive_summary", "claim_facts"].includes(section.id))
     .map((section) => `## ${section.title}\n\n${sectionBody(section)}`).join("\n\n");
   const content = `# ${masterData.scalars.cover_title}

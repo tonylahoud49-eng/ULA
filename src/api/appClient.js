@@ -9,9 +9,9 @@ import {
   recordLeaveEmailDelivery,
   transitionLeave,
 } from "@/lib/leaveWorkflow";
+import { seededLeaveEmployees } from "@/lib/leaveEmployees";
 
 const DATABASE_KEY = "ula_claims_hub_database_v1";
-const AUTH_KEY = "ula_claims_hub_auth_v1";
 
 const entityDefaults = {
   Claim: { business_line: "Unclassified", status: "New", priority: "Medium", missing_documents: [] },
@@ -25,30 +25,6 @@ const entityDefaults = {
 const emptyDatabase = () => Object.fromEntries(
   Object.keys(entityDefaults).map((name) => [name, []]),
 );
-
-const emptyAuth = () => ({
-  accounts: [
-    {
-      id: "admin-id",
-      email: "admin@ula.com",
-      full_name: "ULA Administrator",
-      passwordHash: "240eb518e1d234d74a7ca33d1c47db5515438c3505d9e504c5409ec8b7c6ee5d", // SHA-256 for "admin123"
-      status: "approved",
-      role: "admin",
-    },
-    {
-      id: "local-user-id",
-      email: "local.user@ula.test",
-      full_name: "Local User",
-      passwordHash: "",
-      status: "approved",
-      role: "user",
-    }
-  ],
-  sessionUserId: null,
-  pendingVerification: null,
-  resetRequests: {},
-});
 
 const clone = (value) => {
   if (value == null) return value;
@@ -99,9 +75,8 @@ const writeJson = (key, value) => {
   }
 };
 
-// In-Memory Cached Database & Auth Store for O(1) reads without synchronous JSON deserialization
+// In-memory metadata cache. Authentication is authoritative on the server.
 let memoryDatabase = null;
-let memoryAuth = null;
 const entityMaps = new Map();
 
 const rebuildEntityIndex = (entityName) => {
@@ -118,8 +93,38 @@ const getMemoryDatabase = () => {
     memoryDatabase = readJson(DATABASE_KEY, emptyDatabase);
     for (const key of Object.keys(entityDefaults)) {
       if (!Array.isArray(memoryDatabase[key])) memoryDatabase[key] = [];
-      rebuildEntityIndex(key);
     }
+
+    let employeesChanged = false;
+    const employeeSeeds = seededLeaveEmployees();
+    for (const seed of employeeSeeds) {
+      const email = String(seed.email || "").trim().toLowerCase();
+      const index = memoryDatabase.Employee.findIndex(
+        (employee) => String(employee.email || "").trim().toLowerCase() === email,
+      );
+      if (index < 0) {
+        const timestamp = new Date().toISOString();
+        memoryDatabase.Employee.push({ ...seed, created_date: timestamp, updated_date: timestamp });
+        employeesChanged = true;
+        continue;
+      }
+      const current = memoryDatabase.Employee[index];
+      const canonical = {
+        ...current,
+        name: seed.name,
+        email: seed.email,
+        account_id: seed.account_id,
+        role: seed.role,
+        department: seed.department,
+      };
+      if (JSON.stringify(canonical) !== JSON.stringify(current)) {
+        memoryDatabase.Employee[index] = canonical;
+        employeesChanged = true;
+      }
+    }
+
+    for (const key of Object.keys(entityDefaults)) rebuildEntityIndex(key);
+    if (employeesChanged) writeJson(DATABASE_KEY, memoryDatabase);
   }
   return memoryDatabase;
 };
@@ -127,19 +132,6 @@ const getMemoryDatabase = () => {
 const saveMemoryDatabase = () => {
   if (memoryDatabase) {
     writeJson(DATABASE_KEY, memoryDatabase);
-  }
-};
-
-const getMemoryAuth = () => {
-  if (!memoryAuth) {
-    memoryAuth = readJson(AUTH_KEY, emptyAuth);
-  }
-  return memoryAuth;
-};
-
-const saveMemoryAuth = () => {
-  if (memoryAuth) {
-    writeJson(AUTH_KEY, memoryAuth);
   }
 };
 
@@ -241,29 +233,41 @@ const prepareDatabase = () => {
   return databasePreparation;
 };
 
-const normalizeEmail = (email) => String(email || "").trim().toLowerCase();
+let activeUser = null;
 
-const hashPassword = async (password) => {
-  const value = String(password || "");
-  if (!globalThis.crypto?.subtle || typeof TextEncoder === "undefined") return value;
-  const bytes = new TextEncoder().encode(value);
-  const digest = await globalThis.crypto.subtle.digest("SHA-256", bytes);
-  return Array.from(new Uint8Array(digest), (byte) => byte.toString(16).padStart(2, "0")).join("");
+const authRequest = async (url, options = {}) => {
+  let response;
+  try {
+    response = await fetch(url, {
+      credentials: "same-origin",
+      ...options,
+      headers: options.body ? { "content-type": "application/json", ...options.headers } : options.headers,
+    });
+  } catch {
+    throw createError("The ULA authentication server is unavailable.", 503, "auth-server-unavailable");
+  }
+  const body = await response.json().catch(() => ({}));
+  if (!response.ok) {
+    if (response.status === 401 || response.status === 403) activeUser = null;
+    throw createError(body.error || "Authentication failed.", response.status, body.code || "auth-error");
+  }
+  return body;
+};
+
+const requireCurrentUser = async () => {
+  const body = await authRequest("/api/auth/me");
+  activeUser = body.user;
+  return clone(activeUser);
 };
 
 const currentUser = () => {
-  const auth = getMemoryAuth();
-  const account = auth.accounts.find((item) => item.id === auth.sessionUserId);
-  if (!account) throw createError("Authentication required", 401);
-  if (account.status === "pending") {
-    throw createError("User access is pending administrator approval", 403, "user_not_registered");
-  }
-  const { passwordHash: _passwordHash, ...user } = account;
-  return clone(user);
+  if (!activeUser) throw createError("Authentication required", 401, "auth-required");
+  return clone(activeUser);
 };
 
 const createEntityApi = (entityName) => ({
   async list(sort, limit) {
+    await requireCurrentUser();
     await prepareDatabase();
     const database = getMemoryDatabase();
     const records = database[entityName] || [];
@@ -288,6 +292,7 @@ const createEntityApi = (entityName) => ({
   },
 
   async get(id) {
+    await requireCurrentUser();
     await prepareDatabase();
     getMemoryDatabase();
     const record = entityMaps.get(entityName)?.get(id);
@@ -295,6 +300,7 @@ const createEntityApi = (entityName) => ({
   },
 
   async filter(criteria = {}) {
+    await requireCurrentUser();
     await prepareDatabase();
     const database = getMemoryDatabase();
     const entries = Object.entries(criteria);
@@ -305,6 +311,7 @@ const createEntityApi = (entityName) => ({
   },
 
   async create(values) {
+    await requireCurrentUser();
     await prepareDatabase();
     if (entityName === "ClaimDocument") assertDocumentMetadataOnly(values);
     if (entityName === "Leave") throw createError("Leave requests must be created through the validated leave workflow.", 400, "leave-workflow-required");
@@ -324,10 +331,17 @@ const createEntityApi = (entityName) => ({
   },
 
   async update(id, values) {
+    await requireCurrentUser();
     await prepareDatabase();
     if (entityName === "ClaimDocument") assertDocumentMetadataOnly(values);
     if (entityName === "Leave" && values.status && values.status !== "Pending") {
       throw createError("Leave decisions must be made through the validated leave workflow.", 400, "leave-workflow-required");
+    }
+    if (entityName === "ReportVersion" && (values.status === "Final" || values.issue_state === "Final")) {
+      const actor = currentUser();
+      if (actor.role !== "admin") {
+        throw createError("Only an administrator can approve and issue a final report.", 403, "report-admin-required");
+      }
     }
     const database = getMemoryDatabase();
     const records = database[entityName] || [];
@@ -347,6 +361,7 @@ const createEntityApi = (entityName) => ({
   },
 
   async delete(id) {
+    await requireCurrentUser();
     await prepareDatabase();
     const database = getMemoryDatabase();
     const deletedRecord = entityMaps.get(entityName)?.get(id) || (database[entityName] || []).find((record) => record.id === id);
@@ -365,94 +380,28 @@ const entities = Object.fromEntries(
 );
 
 const auth = {
-  me: async () => currentUser(),
+  me: requireCurrentUser,
 
   async loginViaEmailPassword(email, password) {
-    const normalizedEmail = normalizeEmail(email);
-    const passwordHash = await hashPassword(password);
-    const state = getMemoryAuth();
-    const account = state.accounts.find((item) => item.email === normalizedEmail && item.passwordHash === passwordHash);
-    if (!account) throw createError("Invalid email or password", 401);
-    state.sessionUserId = account.id;
-    saveMemoryAuth();
-    return { access_token: `local:${account.id}` };
+    const body = await authRequest("/api/auth/login", {
+      method: "POST",
+      body: JSON.stringify({ email, password }),
+    });
+    activeUser = body.user;
+    return { user: clone(activeUser) };
   },
 
-  async register({ email, password }) {
-    const normalizedEmail = normalizeEmail(email);
-    const state = getMemoryAuth();
-    if (state.accounts.some((item) => item.email === normalizedEmail)) {
-      throw createError("An account with this email already exists", 409);
-    }
-    const verificationCode = String(Math.floor(100000 + Math.random() * 900000));
-    state.pendingVerification = {
-      id: createId(),
-      email: normalizedEmail,
-      full_name: normalizedEmail.split("@")[0] || "Local User",
-      passwordHash: await hashPassword(password),
-      verificationCode,
-    };
-    saveMemoryAuth();
-    return { verification_code: verificationCode };
+  async register() {
+    throw createError("Public registration is disabled. Contact a ULA administrator for access.", 403, "registration-disabled");
   },
 
-  async verifyOtp({ email, otpCode }) {
-    const state = getMemoryAuth();
-    const pending = state.pendingVerification;
-    if (!pending || pending.email !== normalizeEmail(email) || pending.verificationCode !== String(otpCode)) {
-      throw createError("Invalid verification code", 400);
-    }
-    const { verificationCode: _verificationCode, ...account } = pending;
-    account.status = "pending";
-    account.role = "user";
-    state.accounts.push(account);
-    state.sessionUserId = account.id;
-    state.pendingVerification = null;
-    saveMemoryAuth();
-    return { access_token: `local:${account.id}` };
-  },
-
-  async resendOtp(email) {
-    const state = getMemoryAuth();
-    if (!state.pendingVerification || state.pendingVerification.email !== normalizeEmail(email)) {
-      throw createError("No pending registration was found", 404);
-    }
-    state.pendingVerification.verificationCode = String(Math.floor(100000 + Math.random() * 900000));
-    saveMemoryAuth();
-    return { verification_code: state.pendingVerification.verificationCode };
-  },
-
-  setToken(token) {
-    if (!String(token || "").startsWith("local:")) return;
-    const state = getMemoryAuth();
-    state.sessionUserId = String(token).slice(6);
-    saveMemoryAuth();
-  },
-
-  async loginWithProvider(provider, returnTo = "/", email, name) {
-    const state = getMemoryAuth();
-    const targetEmail = normalizeEmail(email || "local.user@ula.test");
-    let account = state.accounts.find((item) => item.email === targetEmail);
-    if (!account) {
-      account = {
-        id: createId(),
-        email: targetEmail,
-        full_name: name || targetEmail.split("@")[0] || "Local User",
-        passwordHash: "",
-        status: targetEmail.endsWith("@ula.com") || targetEmail.endsWith("@ula.test") ? "approved" : "pending",
-        role: targetEmail === "admin@ula.com" ? "admin" : "user",
-      };
-      state.accounts.push(account);
-    }
-    state.sessionUserId = account.id;
-    saveMemoryAuth();
-    globalThis.location.href = returnTo || "/";
+  async loginWithProvider() {
+    throw createError("Google sign-in is disabled. Use your approved ULA email and system password.", 403, "google-sign-in-disabled");
   },
 
   async logout(redirectTo) {
-    const state = getMemoryAuth();
-    state.sessionUserId = null;
-    saveMemoryAuth();
+    await authRequest("/api/auth/logout", { method: "POST" }).catch(() => ({}));
+    activeUser = null;
     if (redirectTo) globalThis.location.href = redirectTo;
   },
 
@@ -462,61 +411,80 @@ const auth = {
   },
 
   async resetPasswordRequest(email) {
-    const state = getMemoryAuth();
-    const account = state.accounts.find((item) => item.email === normalizeEmail(email));
-    if (!account) return {};
-    const resetToken = createId();
-    state.resetRequests[resetToken] = account.id;
-    saveMemoryAuth();
-    return { reset_token: resetToken };
+    return authRequest("/api/auth/password-reset/request", {
+      method: "POST",
+      body: JSON.stringify({ email }),
+    });
   },
 
   async resetPassword({ resetToken, newPassword }) {
-    const state = getMemoryAuth();
-    const accountId = state.resetRequests[resetToken];
-    const account = state.accounts.find((item) => item.id === accountId);
-    if (!account) throw createError("This password reset link is invalid or expired", 400);
-    account.passwordHash = await hashPassword(newPassword);
-    delete state.resetRequests[resetToken];
-    saveMemoryAuth();
+    return authRequest("/api/auth/password-reset/confirm", {
+      method: "POST",
+      body: JSON.stringify({ token: resetToken, new_password: newPassword }),
+    });
   },
 
   async listAccounts() {
-    const state = getMemoryAuth();
-    return (state.accounts || []).map(({ passwordHash: _hash, ...user }) => clone(user));
+    const body = await authRequest("/api/admin/users");
+    return clone(body.users || []);
   },
 
-  async createAccount({ full_name, email, role = "user", status = "approved", password = "password123" }) {
-    const normalizedEmail = normalizeEmail(email);
-    if (!normalizedEmail || !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(normalizedEmail)) {
-      throw createError("A valid email address is required.", 400);
-    }
-    const state = getMemoryAuth();
-    if (state.accounts.some((item) => item.email === normalizedEmail)) {
-      throw createError("An account with this email already exists", 409);
-    }
-    const account = {
-      id: createId(),
+  async createAccount({ full_name, email, job_title = "", role = "user", status = "approved", password }) {
+    const body = await authRequest("/api/admin/users", {
+      method: "POST",
+      body: JSON.stringify({ full_name, email, job_title, role, status, password }),
+    });
+    return clone(body.user);
+  },
+
+  async createEmployeeAccount({ full_name, email, job_title, role = "user", password }) {
+    const normalizedEmail = String(email || "").trim().toLowerCase();
+    await prepareDatabase();
+    const existingEmployee = (getMemoryDatabase().Employee || []).find(
+      (employee) => String(employee.email || "").trim().toLowerCase() === normalizedEmail,
+    );
+    if (existingEmployee) throw createError("An employee with this email already exists", 409);
+
+    const account = await auth.createAccount({
+      full_name,
       email: normalizedEmail,
-      full_name: full_name?.trim() || normalizedEmail.split("@")[0] || "User",
-      passwordHash: await hashPassword(password),
-      status,
+      job_title,
       role,
-    };
-    state.accounts.push(account);
-    saveMemoryAuth();
-    const { passwordHash: _hash, ...user } = account;
-    return clone(user);
+      status: "approved",
+      password,
+    });
+
+    try {
+      const employee = await entities.Employee.create({
+        account_id: account.id,
+        name: full_name?.trim(),
+        email: normalizedEmail,
+        department: job_title?.trim(),
+        role: job_title?.trim(),
+        annual_leave_total: 15,
+        annual_leave_used: 0,
+        toil_balance: 0,
+        year: new Date().getFullYear(),
+      });
+      return { account, employee };
+    } catch (error) {
+      throw error;
+    }
+  },
+
+  async setAccountPassword(userId, password) {
+    return authRequest(`/api/admin/users/${encodeURIComponent(userId)}/password`, {
+      method: "POST",
+      body: JSON.stringify({ password }),
+    });
   },
 
   async updateAccount(userId, updates) {
-    const state = getMemoryAuth();
-    const index = (state.accounts || []).findIndex((acc) => acc.id === userId);
-    if (index < 0) throw createError("Account not found", 404);
-    state.accounts[index] = { ...state.accounts[index], ...updates };
-    saveMemoryAuth();
-    const { passwordHash: _hash, ...user } = state.accounts[index];
-    return clone(user);
+    const body = await authRequest(`/api/admin/users/${encodeURIComponent(userId)}`, {
+      method: "PATCH",
+      body: JSON.stringify(updates),
+    });
+    return clone(body.user);
   },
 };
 
@@ -689,6 +657,7 @@ const notifyLeave = async (leave, employee, target) => {
 };
 
 const submitLeaveRequest = async (payload) => {
+  await requireCurrentUser();
   await prepareDatabase();
   const database = getMemoryDatabase();
   const created = createPendingLeave(database, payload, { id: payload.request_id || createId() });
@@ -702,6 +671,7 @@ const submitLeaveRequest = async (payload) => {
 };
 
 const decideLeaveRequest = async ({ request_id: requestId, decision }) => {
+  await requireCurrentUser();
   await prepareDatabase();
   const database = getMemoryDatabase();
   const actor = currentUser();
@@ -720,6 +690,7 @@ const decideLeaveRequest = async ({ request_id: requestId, decision }) => {
 };
 
 const retryLeaveNotification = async ({ request_id: requestId, target }) => {
+  await requireCurrentUser();
   await prepareDatabase();
   const actor = currentUser();
   if (actor.role !== "admin") throw createError("Only an administrator can retry leave notification emails.", 403, "leave-admin-required");
@@ -739,6 +710,7 @@ export const appClient = {
   integrations: {
     Core: {
       async UploadFile({ file }) {
+        await requireCurrentUser();
         await prepareDatabase();
         const stored = await documentStorage.save(file);
         return {
@@ -750,6 +722,7 @@ export const appClient = {
         };
       },
       async DeleteFile({ storage_key: storageKey, file_url: fileUrl }) {
+        await requireCurrentUser();
         await documentStorage.delete(storageKey || fileUrl);
       },
     },
@@ -768,7 +741,7 @@ export const appClient = {
     async getInfo(handle) {
       if (!handle) throw createError("This authorization link is invalid or expired", 400);
       let authenticated = true;
-      try { currentUser(); } catch { authenticated = false; }
+      try { await requireCurrentUser(); } catch { authenticated = false; }
       return {
         authenticated,
         login_path: "/login",

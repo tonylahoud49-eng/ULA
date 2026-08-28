@@ -115,6 +115,7 @@ test("Outlook submission email is grounded, server-side, and idempotent", async 
     MICROSOFT_CLIENT_SECRET: "server-only-secret",
     MICROSOFT_SENDER_EMAIL: "leave-sender@example.com",
     LEAVE_ADMIN_EMAIL: "manager@example.com",
+    LEAVE_ADMIN_CC_EMAIL: "second-manager@example.com",
     APP_BASE_URL: "https://ula.example.com",
   };
   let tokenCalls = 0;
@@ -147,6 +148,7 @@ test("Outlook submission email is grounded, server-side, and idempotent", async 
   assert.equal(graphCalls, 1);
   assert.match(graphRequest.url, /users\/leave-sender%40example.com\/sendMail$/);
   assert.equal(requestBody.message.toRecipients[0].emailAddress.address, "manager@example.com");
+  assert.equal(requestBody.message.ccRecipients[0].emailAddress.address, "second-manager@example.com");
   assert.match(requestBody.message.body.content, /Employee One/);
   assert.match(requestBody.message.body.content, /Family commitment/);
   assert.match(requestBody.message.body.content, /leave-1/);

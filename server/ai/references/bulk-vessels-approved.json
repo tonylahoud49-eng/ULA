@@ -1,0 +1,69 @@
+{
+  "approved": true,
+  "profile_id": "bulk-vessels",
+  "title": "Bulk Vessels and Breakbulk Cargo - Owner-Approved Methodology Profile",
+  "applies_to": {
+    "evidence_terms_any": [
+      "bulk vessel",
+      "bulk carrier",
+      "bulk cargo",
+      "breakbulk",
+      "break-bulk",
+      "cargo hold",
+      "hatch cover",
+      "draft survey",
+      "bagged cargo"
+    ],
+    "business_lines": [
+      "Bulk Vessel"
+    ]
+  },
+  "section_order": [
+    "Cover Page",
+    "Document Control Page",
+    "Report Summary",
+    "Report and adjustment note",
+    "Table 1 - Summary and salient details",
+    "INTEREST INSURED & RELEVANT CONDITIONS OF INSURANCE POLICY",
+    "SHIPMENT ROUTING",
+    "SURVEYOR NOTES",
+    "VESSEL, HOLD AND CARGO EXAMINATION when material",
+    "CAUSE OF LOSS",
+    "RELEVANT POLICY WARRANTIES & CONDITIONS",
+    "ADEQUACY OF THE INSURED VALUE",
+    "APPOINTMENT OF ASSESSORS",
+    "CLAIM PRESENTED ON THE POLICY & ADJUSTMENT",
+    "CONCLUSION",
+    "Enclosure to this report",
+    "Outstanding Documents",
+    "Appendix A - Photographs",
+    "About ULA"
+  ],
+  "style_notes": [
+    "Use this profile only for a current bulk-vessel or breakbulk cargo claim that satisfies the applicability scope; never infer current claim facts from this profile.",
+    "Open with a concise appointment and scope statement identifying the instructing party, Assured, consignee or assignee, insured interest, inspection purpose, attendance locations, and current-evidence limitations.",
+    "Resolve the seller, shipper, buyer, Assured, consignee, assignee, applicant, broker, carrier, owner, charterer, stevedore, P&I interest, and attending surveyors before applying policy, custody, or recovery conclusions.",
+    "Build a chronological shipment and survey narrative from origin loading, pre-loading inspection, vessel departure, voyage events, arrival, hatch opening or unsealing, discharge, daily tallies, notices, segregation, warehouse inspection, mitigation, salvage, and disposal where supported.",
+    "Record vessel name, IMO number, type, flag, build year, class, P&I entry, ownership, management, holds, hatch arrangement, and cargo gear only when supported and material; a certificate or clean record is not proof that the vessel or hatch system was defect-free at the loss date.",
+    "Cross-check current bills of lading, reverse terms, mate's receipts, manifests, stowage plans, charterparty or fixture terms, invoices, packing lists, certificates, loading surveys, hold-cleanliness and tightness records, seal records, ventilation logs, statements of facts, tallies, and notices instead of relying on any one document.",
+    "Separate each bill of lading, cargo hold, commodity, brand, package size, damage category, and survey stage. Do not blend cargo interests, origin remarks, discharge findings, or final warehouse findings.",
+    "Distinguish loose bulk cargo from bagged or packaged breakbulk cargo. Assess stowage, packing, ventilation, sampling, tally, and handling according to the actual carriage mode evidenced in the current claim.",
+    "For seawater or hatch-cover allegations, test source-supported chloride or silver-nitrate results, laboratory analysis, moisture distribution, hatch seals, rubbers, cleats, compression pads, coamings, alignment, corrosion, drainage channels, ultrasonic or hose tests, calibration, witnessing, weather, maintenance records, and alternative ingress paths.",
+    "Do not treat heavy weather, wet cargo, salt residue, corrosion, a refused test, or hatch-cover deterioration alone as the proximate cause. Connect the ingress mechanism, cargo contamination, timing, and competing explanations using the complete current evidence.",
+    "For bag damage and discharge handling, reconcile direct observations, photographs, stevedoring method, grabs, nets, pallets, sharp surfaces, dragging, dropping, spillage, rain exposure, daily tallies, signed statements, protest letters, and post-delivery reconditioning before allocating damage.",
+    "For shortage, reconcile manifested, loaded, discharged, delivered, reconditioned, emptied, stolen or missing quantities by bill, hold, brand, and package size; identify who counted and witnessed each stage, seal history, transshipment, pilferage evidence, and unexplained gaps. A clean bill or origin tally does not by itself prove where shortage occurred.",
+    "For fire claims, establish the fire event, location, timing, ignition evidence, affected holds and bills, pre-fire condition, heat, smoke, soot, firefighting-water contamination, revised or claused transport documents, accessibility limits, subsequent aggravation, and the leg during which insurers were on risk.",
+    "For mould, caking, heating, infestation, condensation, sweating, or inherent-vice allegations, compare origin quality and moisture evidence, ventilation records, voyage and hold conditions, seawater testing, location and depth of damage, time required for deterioration, and policy wording. Do not equate compatibility with proof of cause.",
+    "Use current-evidence cargo acceptance criteria only when supported by an applicable contract, independent testing method, competent authority, established trade standard, or documented production capability; identify threshold gaps and do not invent a rejection or total-loss criterion.",
+    "Describe sampling and testing only as evidenced, including date, hold or lot, increment and composite method, sample seals, custody, laboratory, measured result, calibration, and participating parties. Distinguish field screening from conclusive laboratory evidence.",
+    "Reconcile manifested quantity to sound, affected, torn, empty, mouldy, short, reconditioned, salvaged, destroyed, and delivered quantities without double counting. Preserve disagreements between initial allegations, discharge tallies, joint surveys, and final segregation.",
+    "Calculate quantum locally from supported affected quantity, weight, invoice unit rate, and evidence-based depreciation or total-loss treatment. Add freight, policy uplift, survey, sorting, repacking, mitigation, storage, destruction, or other charges only when the current policy and current documents support them; deduct evidenced salvage and the correct deductible basis.",
+    "A depreciation percentage requires current evidence of condition, retained utility, agreed survey assessment, market or processing impact, or an evidenced salvage transaction. Never import a percentage from a historical report.",
+    "Assess mitigation through evidenced segregation, drying or processing, reconditioning, repacking, quarantine, fumigation, storage, sale, salvage, destruction, or continued production, while separating avoided loss from recoverable expense.",
+    "Read the current policy in full and apply the actual transit duration, port-to-port or warehouse extension, loading and unloading cover, Institute Cargo Clauses, shortage and wetting provisions, exclusions, deductible, valuation basis, survey warranties, hold-cleanliness or tightness warranties, clean-document requirements, vessel class, and P&I conditions to established facts only.",
+    "Recovery analysis must distinguish carrier, owner, charterer, stevedore, terminal, supplier, shipper, survey company, and other candidates. Test custody, contract, bill reverse, charterparty, agency, Himalaya or servant wording, notices, LOP, LOI, LOU or security, causation, limitation, evidence preservation, and recovery economics before recommending pursuit.",
+    "Select the strongest current-evidence outcome: no established loss, partial loss limited to reconciled affected cargo, total loss supported by condition and disposal or rejection evidence, or a claim falling below the applicable deductible. Do not force every bulk-vessel claim into the same branch.",
+    "Use representative current-claim photographs of cargo condition, holds, hatches, tests, discharge handling, segregation, warehouse inspection, mitigation, salvage, or disposal under the global Appendix limits; historical photographs and captions are never reusable claim evidence.",
+    "The global ULA report specification, Director wording, no-fabrication rules, deterministic calculations, citation requirements, empty Enclosure and Outstanding sections, Appendix limits, and human approval gates take precedence over any inconsistent wording, arithmetic, conclusion order, or legacy appendix practice found in a historical bulk-vessel report."
+  ]
+}

@@ -1,7 +1,7 @@
 import OpenAI from "openai";
 import { zodTextFormat } from "openai/helpers/zod";
 import { claimAnalysisSchema } from "../claimAnalysisSchema.mjs";
-import { sanitizeReferenceNarrative, splitAnalysisReferences } from "../referenceLayer.mjs";
+import { sanitizeReferenceNarrative, selectApplicableStyleReferences, splitAnalysisReferences } from "../referenceLayer.mjs";
 import { evidenceText } from "../../evidence/extractEvidence.mjs";
 
 const SYSTEM_INSTRUCTIONS = `You are an insurance-claims document analyst. Analyze the complete evidence set together, including searchable text, scanned PDF pages, and photographs.
@@ -18,33 +18,35 @@ Non-negotiable evidence rules:
 - For text shown under [Extracted text], use evidence_mode extracted_text. Use document_vision or image_vision only when the cited fact comes from visual inspection and is absent from extracted text.
 - Use the exact DOCUMENT ID and DOCUMENT NAME shown in the evidence register. Classification may and should cite multiple uploaded documents when the complete set supports it.
 - Photographs may support damage findings. When document evidence is available, photographs must never be the sole basis for business-line classification.
-- Classify only as Yacht, Property, Marine Cargo (Reefer/GFS), Marine Cargo (Non-Reefer), Bulk Vessel, Air Shipment (NET), Fidelity Claims, or Other / Requires Review. Use Other / Requires Review when evidence is insufficient or ambiguous.
-- For completeness, check Policy, Claim Form, and Supporting Evidence across the complete evidence set. Then apply the classified line's additional evidence needs: Yacht—Registration, Repair Invoice or Quotation, Survey Report, Photographs; Property—Incident Report, Repair Invoice or Quotation, Photographs, Survey Report; Marine Cargo Reefer/GFS—Bill of Lading, Commercial Invoice, Packing List, Temperature Records, Survey Report; Marine Cargo Non-Reefer—Bill of Lading, Commercial Invoice, Packing List, Notice of Claim, Survey Report; Bulk Vessel—Bill of Lading, Commercial Invoice, Cargo Certificate, Survey Report; Air Shipment/NET—Air Waybill, Commercial Invoice, Packing List, Survey Report; Fidelity—Employee Records, Account Ledger, Investigation Statement.
+- Classify only with the schema's business-line enum; use Other / Requires Review when evidence is insufficient or ambiguous.
+- For completeness, check Policy, Claim Form, and Supporting Evidence across the complete evidence set. Then apply the classified line's additional evidence needs: Yacht—Registration, Repair Invoice or Quotation, Survey Report, Photographs; Property—Incident Report, Repair Invoice or Quotation, Photographs, Survey Report; Marine Cargo Reefer/GFS—Bill of Lading, Commercial Invoice, Packing List, Temperature Records, Survey Report; Marine Cargo Non-Reefer—Bill of Lading, Commercial Invoice, Packing List, Notice of Claim, Survey Report; Bulk Vessel—Bill of Lading, Commercial Invoice, Cargo Certificate, Survey Report; Air Shipment/NET—Air Waybill, Commercial Invoice, Packing List, Survey Report; Land Shipment—Truck Waybill or CMR, Commercial Invoice, Packing List, Proof of Delivery or Delivery Note, Survey Report; Fidelity—Employee Records, Account Ledger, Investigation Statement.
 - A specific supporting item such as an invoice, survey, ledger, statement, or photograph can also substantiate the broader Supporting Evidence type. Cite both types when justified; do not demand a separate file merely named Supporting Evidence.
 - Account for every DOCUMENT ID and supported type by content, including Policy, Claim Form, and Supporting Evidence; a generic filename does not excuse omission.
-- Treat all supplied style, legal, rules, guidance, and technical references collectively as a professional knowledge base, never as claim evidence or report content; style references affect presentation only.
-- Select only principles relevant to the specific claim, operative policy/contract, jurisdiction and governing law, dates, loss type, and established facts. Resolve differences in scope or applicability before use and never combine rules indiscriminately.
-- Never quote, summarize, cite, or name a reference in the summary, findings, warnings, review items, source registry, or final report. Never use it to populate a field, document type, fact, amount, date, party, event, adjustment item, citation, or factual conclusion.
-- References may improve reasoning and raise a neutral professional issue, but cannot establish its factual premise or legal effect. Claim citations must use exact uploaded claim document IDs; operative wording, applicable law, and professional review control.
+- Treat supplied references collectively as a professional knowledge base, never claim evidence; style affects presentation only. Use only principles relevant to the specific claim, operative policy/contract, jurisdiction and governing law; resolve scope and never combine rules indiscriminately.
+- Never quote, summarize, cite, or name a reference in report output or use it for facts, fields, events, amounts, adjustment, or citations. References may only improve reasoning; uploaded claim evidence must establish every premise.
 - Build a normalized claim record from the complete evidence set. Extract shipment identifiers, parties, routing, quantities, weights, policy wording, survey findings, and each distinct financial value when supported.
 - Resolve party roles before extracting names. Applicant/instructing party maps to applicant; Assured/Policyholder maps to insured; Insurer, Reinsurer, and Reassured are distinct roles. Never map a Reassured, insurer, consignee, broker, email sender, or nearby company name to insured unless the evidence expressly identifies that role.
-- Work in this order: classify every evidence item by content; extract atomic facts with provenance; reconcile repeated identifiers and conflicting values across documents; retain dated events for chronology; retain survey observations separately from causal indicators; then assess cause, policy relevance, and adjustment inputs. Do not skip directly from a document summary to a conclusion.
+- Treat party fields as named entities, not text buckets: keep only the expressly assigned person/organization; reject addresses, headings, warranties, B/L boilerplate, endorsements, and OCR fragments such as "carrier's agents endorsements".
+- Classify by content, extract atomic sourced facts, reconcile conflicts, build chronology, separate observations from causal indicators, then assess cause, policy and quantum.
 - Search the entire combined evidence set before returning a field as null. A value found on any page of any uploaded file must be returned with its source even when it appears in a different document type than expected.
 - Retain material claim-specific facts and clauses as structured fields or findings; do not replace specifics with generic narrative.
 - If an uploaded current-claim report contains an Introduction section, preserve its substantive wording verbatim in report_introduction with its claim citation; do not rewrite it. Return null when no such section is present.
 - Report survey observations as atomic evidence_findings. Distinguish observed condition, factual causal indicators, and any express source-stated cause; do not turn an indicator into a definitive cause.
-- For shortage or non-delivery claims, explicitly extract: booked/shipped quantity; shortage total and per-container breakdown; who counted each container; which counts were personally witnessed; seal numbers and seal condition at origin, port, customs, and delivery; evidence of tampering or forced entry; carrier attendance; any carrier-signed shortage certificate; pre-loading/container-condition records; and any evidential gaps. A consignee-reported count must not be described as independently verified.
+- For shortage/non-delivery, extract shipped quantity, total/per-container shortage, counter and witnessed scope, seal history/condition, tampering, carrier attendance/certificate, pre-loading records, and gaps. Never call a consignee-reported count independently verified.
 - For multi-leg shipments, retain the mother vessel/voyage, transshipment port, feeder vessel/voyage, discharge, gate-out/delivery, and empty-return events separately. Do not collapse all legs into one generic vessel or date.
-- Build causal reasoning as an evidence chain, not a label. In an intact-seal shortage claim, compare the shortage distribution, attendance limitations, seal/tampering evidence, origin loading evidence, carrier records, and timing. You may state a qualified hypothesis such as pre-shipment/packing discrepancy only when those indicators support it; identify competing explanations and the missing evidence that prevents a definitive proximate-cause conclusion.
+- Reconstruct shipment_routing as a short, chronological, evidence-supported route. Keep origin/loading, each sea/air/land leg, transshipment, discharge, final destination, delivery, and empty-return facts distinct, and preserve the transport-document reference for the route.
+- Build cause as an evidence chain. For intact-seal shortage, compare distribution, witnessed scope, seal/tampering, origin loading, carrier records, timing, competing explanations, and decisive gaps.
 - Map each material policy term to the matching fact pattern. In particular, do not treat an intact-seal shortage extension and a mysterious/unexplained-disappearance exclusion as interchangeable; show why each may be relevant and leave their legal effect to professional review.
-- Keep invoice value, commercial-invoice freight, commercial-invoice insurance, FOB value, separate freight-invoice total, insured value, gross presented claim, deductible, salvage, recovery, depreciation, fees, and adjusted amount as separate fields. Preserve the ISO currency stated in the evidence and never substitute zero for an unknown amount.
-- Keep the policy valuation basis and any percentage uplift separate from the underlying cargo loss. Validate quantity x unit price, then apply the evidenced uplift, then the deductible and other deductions in that order. Flag source arithmetic or rounding inconsistencies instead of copying them silently.
-- When a claim schedule or adjustment table is present, return every supported row in adjustment_line_items with its exact description, quantity, unit price or loss rate, adjusted value, currency, basis, and page citation. Do not collapse an itemized schedule into a generic total.
+- Read every policy page. Separately extract the exact policy or cover-note number; period; insured value; mode/conveyance limits; transit scope; valuation/uplift; deductible; clauses; extensions; warranties; conditions; and exclusions. Keep each claim-relevant provision complete and cited; map it to facts without inventing compliance or breach.
+- Keep invoice components, freight invoice, insured value, presented claim, deductions, fees, and adjusted amount separate; preserve ISO currency and never turn unknown into zero.
+- Validate quantity x rate, then evidenced valuation uplift, then deductions; flag inconsistencies. Return each supported adjustment row with description, quantity/rate/value, currency, basis, and citation.
+- Adjustment items are evidenced damaged/missing property, repair, loss fee, or deduction—not policy limit, sum insured, shipment/invoice/FOB value, premium, valuation basis, or freight total. Never add the full shipment value to the value of damaged items. Unsupported quantum stays provisional.
+- “Fair, reasonable, payable, or concluded” requires a reconciled loss schedule, supported quantities/rates, adjustments, deductions, damage scope, and coverage review.
 - Flag conflicting values across documents in warnings and human_review_required. Do not silently choose one conflicting source.
 - Keep factual fields evidence-stated; retain professional inference as a sourced evidence_findings assessment.
 - Do not use "not established" as a substitute for analysis. For each issue, give the strongest supported inference, support, counterevidence, alternatives, and what could change it. Do not suppress a defensible analysis merely because the conclusion is provisional.
 - Use "not established" only after testing the material hypotheses; then explain why they remain unresolved and the exact evidence needed to distinguish them.
-- Write as a loss adjuster, not a document-audit narrator. In every analytical section, move from supported facts to professional interpretation/significance and then a reasoned adjuster/surveyor conclusion where supported; never merely restate facts. Keep conclusions proportionate, distinguish opinion, qualify uncertainty and alternatives, never invent or pad. Group survey findings, keep summary executive-level, reject OCR/label contamination, and select only material visual findings. Claude interprets; local code controls arithmetic, validation, provenance and deduplication.
+- Write as a loss adjuster in this applicable sequence: interest and policy schedule; shipment routing; chronological surveyor notes; warranties/conditions/exclusions; cause; insured-value adequacy; assessors; adjustment; conclusion. In every analytical section, move from supported facts to professional interpretation/significance and then a reasoned adjuster/surveyor conclusion; never merely restate facts. Keep conclusions proportionate, distinguish opinion, qualify uncertainty and alternatives, never invent or pad. Keep summary concise and reject OCR contamination.
 - This output is a suggestion for human review. Coverage, cause, liability, adjustment, recommendations, and conclusions must remain explicitly reviewable.`;
 
 const toDataUrl = (file) => `data:${file.mimetype || "application/octet-stream"};base64,${file.buffer.toString("base64")}`;
@@ -75,8 +77,10 @@ function promptText(claim, evidence, styleReferences) {
     ].join("\n");
   }).join("\n\n--- END DOCUMENT ---\n\n");
   const separatedReferences = splitAnalysisReferences(styleReferences);
-  const references = separatedReferences.styleReferences.length
-    ? JSON.stringify(separatedReferences.styleReferences)
+  const applicableStyleReferences = selectApplicableStyleReferences(separatedReferences.styleReferences, { claim, evidence })
+    .map(({ applies_to: _appliesTo, ...reference }) => reference);
+  const references = applicableStyleReferences.length
+    ? JSON.stringify(applicableStyleReferences)
     : "No approved historical style references were supplied.";
   const legalReferences = separatedReferences.legalReferences.length
     ? JSON.stringify(separatedReferences.legalReferences)
@@ -136,6 +140,7 @@ const REQUIRED_DOCUMENTS = {
   "Marine Cargo (Non-Reefer)": ["Policy", "Claim Form", "Supporting Evidence", "Bill of Lading", "Commercial Invoice", "Packing List", "Notice of Claim", "Survey Report"],
   "Bulk Vessel": ["Policy", "Claim Form", "Supporting Evidence", "Bill of Lading", "Commercial Invoice", "Cargo Certificate", "Survey Report"],
   "Air Shipment (NET)": ["Policy", "Claim Form", "Supporting Evidence", "Air Waybill", "Commercial Invoice", "Packing List", "Survey Report"],
+  "Land Shipment": ["Policy", "Claim Form", "Supporting Evidence", "Truck Waybill", "Commercial Invoice", "Packing List", "Survey Report"],
   "Fidelity Claims": ["Policy", "Claim Form", "Supporting Evidence", "Employee Records", "Account Ledger", "Investigation Statement"],
   "Other / Requires Review": ["Policy", "Claim Form", "Supporting Evidence"],
 };

@@ -52,6 +52,7 @@ const REQUIRED_DOCUMENTS = {
   "Marine Cargo (Non-Reefer)": ["Policy", "Claim Form", "Supporting Evidence", "Bill of Lading", "Commercial Invoice", "Packing List", "Notice of Claim", "Survey Report"],
   "Bulk Vessel": ["Policy", "Claim Form", "Supporting Evidence", "Bill of Lading", "Commercial Invoice", "Cargo Certificate", "Survey Report"],
   "Air Shipment (NET)": ["Policy", "Claim Form", "Supporting Evidence", "Air Waybill", "Commercial Invoice", "Packing List", "Survey Report"],
+  "Land Shipment": ["Policy", "Claim Form", "Supporting Evidence", "Truck Waybill", "Commercial Invoice", "Packing List", "Survey Report"],
   "Fidelity Claims": ["Policy", "Claim Form", "Supporting Evidence", "Employee Records", "Account Ledger", "Investigation Statement"],
   "Other / Requires Review": ["Policy", "Claim Form", "Supporting Evidence"],
 };
@@ -539,6 +540,155 @@ function verifiedSource(source, evidence) {
     : null;
 }
 
+const evidenceExcerpt = (text, matchIndex, matchLength, maximum = 240) => {
+  const source = String(text || "");
+  const start = Math.max(0, matchIndex - Math.floor((maximum - matchLength) / 2));
+  const end = Math.min(source.length, start + maximum);
+  return source.slice(start, end).trim();
+};
+
+function groundedEvidenceMatch(evidence, pattern, confidence = 0.94) {
+  for (const document of evidence) {
+    for (const page of document.pages || []) {
+      const text = String(page.text || "");
+      const match = text.match(pattern);
+      if (!match || match.index === undefined) continue;
+      return {
+        document_id: document.document_id,
+        document_name: document.document_name,
+        page: Number.isInteger(page.page) && page.page > 0 ? page.page : null,
+        supporting_text: evidenceExcerpt(text, match.index, match[0].length),
+        confidence,
+        evidence_mode: "extracted_text",
+      };
+    }
+  }
+  return null;
+}
+
+function groundedEvidencePage(evidence, primaryPattern, corroboratingPatterns = [], confidence = 0.94) {
+  for (const document of evidence) {
+    for (const page of document.pages || []) {
+      const pageText = String(page.text || "");
+      const match = pageText.match(primaryPattern);
+      if (!match || match.index === undefined) continue;
+      if (corroboratingPatterns.length && corroboratingPatterns.filter((pattern) => pattern.test(pageText)).length < 2) continue;
+      return {
+        document_id: document.document_id,
+        document_name: document.document_name,
+        page: Number.isInteger(page.page) && page.page > 0 ? page.page : null,
+        supporting_text: evidenceExcerpt(pageText, match.index, match[0].length),
+        confidence,
+        evidence_mode: "extracted_text",
+      };
+    }
+  }
+  return null;
+}
+
+function deterministicDocumentTypes(evidence) {
+  const transportDetails = [
+    /\bshipper\b/i,
+    /\bconsignee\b/i,
+    /\bport\s+of\s+(?:loading|discharge)\b/i,
+    /\bvessel\b/i,
+    /\b(?:b\/?l|bill\s+of\s+lading)\s*(?:no\.?|number)\b/i,
+  ];
+  const airDetails = [
+    /\bshipper\b/i,
+    /\bconsignee\b/i,
+    /\b(?:airport|flight)\b/i,
+    /\b(?:awb|air\s*waybill)\s*(?:no\.?|number)?\b/i,
+  ];
+  const landDetails = [
+    /\bconsignor\b/i,
+    /\bconsignee\b/i,
+    /\bcarrier\b/i,
+    /\b(?:truck|vehicle|registration)\b/i,
+  ];
+  const definitions = [
+    ["Policy", () => groundedEvidenceMatch(evidence, /(?:^|\n)\s*(?:(?:open\s+)?(?:marine|cargo|air\s+transit|property|fidelity)[^\n]{0,80}\s+)?insurance\s+policy\b|\bschedule\s+of\s+(?:particular\s+)?conditions\b/im, 0.96)],
+    ["Bill of Lading", () => groundedEvidencePage(evidence, /\bbill\s+of\s+lading\b/i, transportDetails, 0.96)],
+    ["Air Waybill", () => groundedEvidencePage(evidence, /\b(?:air\s*waybill|master\s+awb|house\s+awb)\b/i, airDetails, 0.96)],
+    ["Truck Waybill", () => groundedEvidencePage(evidence, /\b(?:truck\s+waybill|cmr\s+consignment\s+note|international\s+consignment\s+note)\b/i, landDetails, 0.96)],
+    ["Commercial Invoice", () => groundedEvidenceMatch(evidence, /(?:^|\n)\s*commercial\s+invoice\b/im, 0.96)],
+    ["Packing List", () => groundedEvidenceMatch(evidence, /(?:^|\n)\s*packing\s+list\b|(?:^|\n)\s*item\s*,\s*package\s+mark\s*,\s*description\s*,[^\n]*\bnet\s+weight\b[^\n]*\bgross\s+weight\b/im, 0.96)],
+    ["Notice of Claim", () => groundedEvidenceMatch(evidence, /(?:^|\n)\s*(?:notice\s+of\s+(?:cargo\s+)?(?:claim|loss|damage)|letter\s+of\s+reserve|intent\s+to\s+claim)\b/im, 0.96)],
+    ["Survey Report", () => groundedEvidenceMatch(evidence, /(?:^|\n)\s*(?:preliminary\s+|final\s+)?(?:attendance\s+(?:and|&)\s+)?survey\s+report\b|(?:^|\n)\s*statement\s+of\s+facts\b/im, 0.96)],
+  ];
+  const detected = definitions.flatMap(([documentType, findSource]) => {
+    const source = findSource();
+    return source ? [{
+      document_type: documentType,
+      confidence: source.confidence,
+      sufficient_information: true,
+      rationale: `${documentType} content was recovered deterministically from the uploaded evidence.`,
+      sources: [source],
+    }] : [];
+  });
+
+  const claimSource = groundedEvidenceMatch(
+    evidence,
+    /(?:^|\n)\s*(?:notice\s+of\s+(?:cargo\s+)?claim(?:\s+(?:and|&)\s+claim\s+declaration)?\s+form|claim\s+declaration\s+form|claim\s+form|statement\s+of\s+claim)\b/im,
+    0.94,
+  );
+  if (claimSource) {
+    detected.push({
+      document_type: "Claim Form",
+      confidence: claimSource.confidence,
+      sufficient_information: true,
+      rationale: "Substantive current-claim declaration or presented-claim content was recovered from the uploaded evidence.",
+      sources: [claimSource],
+    });
+  }
+  return detected;
+}
+
+function deterministicBusinessLine(evidence) {
+  const text = evidence.flatMap((document) => (document.pages || []).map((page) => page.text || "")).join("\n");
+  const recoveredDocumentTypes = deterministicDocumentTypes(evidence);
+  const sourceForDocumentType = (documentType) => recoveredDocumentTypes
+    .find((item) => item.document_type === documentType)?.sources?.[0] || null;
+  const specialistCandidates = [
+    ["Air Shipment (NET)", sourceForDocumentType("Air Waybill")],
+    ["Land Shipment", sourceForDocumentType("Truck Waybill")],
+    ["Bulk Vessel", /\b(?:bulk\s+vessel|bulk\s+cargo|draft\s+survey)\b/i.test(text)
+      && /\b(?:vessel|cargo\s+hold|hatch\s+cover|draft\s+survey)\b/i.test(text)
+      ? groundedEvidenceMatch(evidence, /\b(?:bulk\s+vessel|bulk\s+cargo|draft\s+survey)\b/i)
+      : null],
+    ["Marine Cargo (Reefer/GFS)", /\b(?:(?:frozen|chilled|refrigerated)\s+(?:cargo|goods|products)|reefer\s+container)\b/i.test(text)
+      && /\b(?:carrying\s+temperature|set\s*point|temperature\s+(?:recorder|logger)|data\s+logger)\b[^\n]{0,120}[-+]?\d+(?:\.\d+)?\s*(?:°|degrees?\s*)?[cf]\b/i.test(text)
+      ? groundedEvidenceMatch(evidence, /\b(?:(?:frozen|chilled|refrigerated)\s+(?:cargo|goods|products)|reefer\s+container)\b/i)
+      : null],
+    ["Yacht", groundedEvidenceMatch(evidence, /\b(?:yacht\s+registration|pleasure\s+craft\s+policy|insured\s+yacht)\b/i)],
+    ["Fidelity Claims", groundedEvidenceMatch(evidence, /\b(?:fidelity\s+claim|employee\s+theft|embezzlement|misappropriation)\b/i)],
+    ["Property", groundedEvidenceMatch(evidence, /\b(?:property\s+claim|insured\s+premises|building\s+damage)\b/i)],
+  ].filter(([, source]) => source);
+  if (specialistCandidates.length > 1) return null;
+  const specialist = specialistCandidates[0];
+  if (specialist) {
+    const [businessLine, source] = specialist;
+    return source ? {
+      business_line: businessLine,
+      confidence: 0.94,
+      rationale: `Current uploaded evidence expressly supports the ${businessLine} business line.`,
+      sources: [source],
+    } : null;
+  }
+
+  const billOfLading = recoveredDocumentTypes.find((item) => item.document_type === "Bill of Lading");
+  const seaTransport = billOfLading
+    && /\b(?:container|vessel|port\s+of\s+(?:loading|discharge)|shipped\s+on\s+board)\b/i.test(text);
+  if (!seaTransport) return null;
+  const source = billOfLading.sources[0];
+  return source ? {
+    business_line: "Marine Cargo (Non-Reefer)",
+    confidence: 0.94,
+    rationale: "Current uploaded evidence establishes packaged or containerized sea carriage under a bill of lading.",
+    sources: [source],
+  } : null;
+}
+
 function enforceAnthropicGrounding(parsed, evidence) {
   const warnings = [...parsed.warnings];
   const verifySources = (sources) => (sources || []).map((source) => verifiedSource(source, evidence)).filter(Boolean);
@@ -551,28 +701,56 @@ function enforceAnthropicGrounding(parsed, evidence) {
     }
     return [{ ...item, sources }];
   });
+  for (const recovered of deterministicDocumentTypes(evidence)) {
+    if (documentTypes.some((item) => item.document_type === recovered.document_type && item.sufficient_information)) continue;
+    documentTypes.push(recovered);
+    warnings.push(`${recovered.document_type} was recovered deterministically from verifiable uploaded evidence after Claude omitted a usable document-type record.`);
+  }
+  if (!documentTypes.some((item) => item.document_type === "Policy" && item.sufficient_information)) {
+    const policyFieldNames = new Set([
+      "policy_number", "policy_period", "policy_terms", "policy_transit_scope", "policy_conveyance_limits",
+      "policy_extensions", "policy_warranties", "policy_conditions", "policy_exclusions", "policy_limit",
+      "insured_value", "valuation_basis", "valuation_uplift_percent", "deductible",
+    ]);
+    const verifiedPolicyFields = parsed.fields.flatMap((field) => {
+      if (field.value === null || !policyFieldNames.has(field.field)) return [];
+      const sources = verifySources(field.sources);
+      return sources.length ? [{ field: field.field, confidence: field.confidence, sources }] : [];
+    });
+    const hasPolicyNumber = verifiedPolicyFields.some((field) => field.field === "policy_number");
+    if (hasPolicyNumber && new Set(verifiedPolicyFields.map((field) => field.field)).size >= 2) {
+      const sources = [...new Map(verifiedPolicyFields
+        .flatMap((field) => field.sources)
+        .map((source) => [`${source.document_id}:${source.page}:${source.supporting_text}`, source])).values()];
+      documentTypes.push({
+        document_type: "Policy",
+        confidence: Math.min(0.96, Math.max(...verifiedPolicyFields.map((field) => field.confidence))),
+        sufficient_information: true,
+        rationale: "Substantive policy content was recovered from multiple verified policy-specific fields in the uploaded evidence.",
+        sources: sources.slice(0, 4),
+      });
+      warnings.push("Policy was recovered from multiple verifiable policy-specific fields after Claude omitted a usable document-type record.");
+    }
+  }
 
   const directClassificationSources = verifySources(parsed.classification.sources);
-  const corroboratingDocumentTypes = documentTypes.filter((item) => item.sufficient_information && item.sources.length);
-  const corroboratingSources = [...new Map(corroboratingDocumentTypes
-    .flatMap((item) => item.sources)
-    .map((source) => [`${source.document_id}:${source.supporting_text}`, source])).values()];
-  const canUseCorroboratingSources = parsed.classification.business_line !== "Other / Requires Review"
-    && new Set(corroboratingDocumentTypes.map((item) => item.document_type)).size >= 2;
-  const classificationSources = directClassificationSources.length
-    ? directClassificationSources
-    : canUseCorroboratingSources ? corroboratingSources.slice(0, 4) : [];
-  const classification = classificationSources.length
-    ? { ...parsed.classification, sources: classificationSources }
-    : {
+  const deterministicClassification = !directClassificationSources.length
+    && !/conflicting classification candidates/i.test(parsed.classification.rationale || "")
+    ? deterministicBusinessLine(evidence)
+    : null;
+  const classification = directClassificationSources.length
+    ? { ...parsed.classification, sources: directClassificationSources }
+    : deterministicClassification
+      ? deterministicClassification
+      : {
         business_line: "Other / Requires Review",
         confidence: 0,
         rationale: "Claude did not return a verifiable evidence source for the classification.",
         sources: [],
       };
-  if (!directClassificationSources.length && canUseCorroboratingSources) {
-    warnings.push("Claude's classification citation was repaired using its verified document-type citations.");
-  } else if (!classificationSources.length) {
+  if (deterministicClassification) {
+    warnings.push("Claude omitted a usable classification record; the business line was recovered deterministically from verifiable uploaded evidence.");
+  } else if (!directClassificationSources.length) {
     warnings.push("The proposed classification was withheld because it had no verifiable source.");
   }
 

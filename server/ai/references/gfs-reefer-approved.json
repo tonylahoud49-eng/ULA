@@ -1,0 +1,62 @@
+{
+  "approved": true,
+  "profile_id": "gfs-reefer",
+  "title": "GFS Reefer Cargo - Owner-Approved Methodology Profile",
+  "applies_to": {
+    "client_terms": [
+      "Global Foods Solutions",
+      "GFS FZCO",
+      "GFS FZE",
+      "Asteria Trade"
+    ],
+    "evidence_terms_any": [
+      "reefer",
+      "frozen",
+      "chilled",
+      "temperature"
+    ],
+    "business_lines": [
+      "Marine Cargo (Reefer/GFS)"
+    ]
+  },
+  "section_order": [
+    "Cover Page",
+    "Document Control Page",
+    "Report Summary",
+    "Report and adjustment note",
+    "Table 1 - Summary and salient details",
+    "INTEREST INSURED & RELEVANT CONDITIONS OF INSURANCE POLICY",
+    "SHIPMENT ROUTING",
+    "SURVEYOR NOTES",
+    "TEMPERATURE RECORDER DATA REVIEW when material",
+    "CAUSE OF LOSS",
+    "RELEVANT POLICY WARRANTIES & CONDITIONS",
+    "ADEQUACY OF THE INSURED VALUE",
+    "APPOINTMENT OF ASSESSORS",
+    "CLAIM PRESENTED ON THE POLICY & ADJUSTMENT",
+    "CONCLUSION",
+    "Enclosure to this report",
+    "Outstanding Documents",
+    "Appendix A - Photographs",
+    "About ULA"
+  ],
+  "style_notes": [
+    "Use this profile only for a current GFS-family refrigerated or frozen-cargo claim that satisfies the applicability scope; never infer the client from this profile.",
+    "Use concise numbered adjuster or surveyor notes to present the instruction, notifications, survey attendance, container examination, cargo examination, joint decisions, mitigation, delivery, and destruction events in chronological order.",
+    "Build the route from the current bill of lading and tracking evidence, keeping loading, transshipment, discharge, cross-stuffing, replacement-container movement, delivery, and inspection events distinct.",
+    "For each reefer container, keep set point, supply-air, return-air, cargo/probe readings, power events, alarm events, data gaps, and logger coverage periods separate; do not describe a set point as measured cargo temperature.",
+    "Correlate temperature changes with evidenced handling and transit events, but do not infer the timing or cause of damage from a temperature curve alone.",
+    "Record the observed container condition, power connection, seal condition, T-channel and L-plate condition, ice or blood residue, packaging, odour, leakage, discoloration, crystallisation, thawing, contamination, and sample results only when supported by current survey evidence.",
+    "Select exactly one outcome branch from current evidence: sound cargo and no claim; partial loss limited to the surveyed affected quantity; or total loss supported by rejection, health-authority, destruction, or equivalent evidence.",
+    "For a no-claim outcome, state the sound condition, accepted delivery or equivalent confirmation, and that no claim is presented; do not manufacture a cause, loss schedule, deductible, or indemnity.",
+    "For a partial loss, reconcile the initial allegation against the quantity actually surveyed or otherwise independently established and adjust only that supported quantity.",
+    "For a total loss, require evidence supporting the affected quantity, unfitness or rejection, and destruction or disposal status; do not convert deterioration language into a total loss automatically.",
+    "Test refrigeration malfunction, power interruption, temperature variation, stowage or airflow restriction, pre-shipment condition, delay, handling, and other material alternatives; identify the evidence supporting and weakening each mechanism.",
+    "Do not hold a carrier, shipper, supplier, consignee, or other party liable merely because historical reports did so; connect custody, container fitness, loading responsibility, notice, temperature records, causation, contract, and recovery economics using current evidence.",
+    "Read the current operative policy in full. Apply refrigerated-cargo clauses, packing or stowage exclusions, warranties, insurable interest, attachment, and recovery only when the current wording and facts support them; verify who packed, stowed, loaded, or instructed loading before applying a packing or stowage provision.",
+    "Calculate quantum locally from the supported affected quantity and invoice unit rate, then add only evidenced destination, customs, clearing, delivery, destruction, or other recoverable charges using the source-stated exchange rate; pending or unsupported charges remain excluded or provisional.",
+    "Preserve the source currency consistently. Flag historical or current-document currency, commodity, quantity, rate, total, or arithmetic inconsistencies instead of copying them into the report.",
+    "Use representative current-claim inspection, cross-stuffing, mitigation, and destruction photographs under the global Appendix limits; historical photographs and filenames are never reusable claim evidence.",
+    "The global ULA report specification, Director wording, no-fabrication rules, deterministic calculations, citation requirements, empty Enclosure and Outstanding sections, and human approval gates take precedence over any inconsistent wording found in a historical GFS report."
+  ]
+}

@@ -15,6 +15,25 @@ Example manifest:
 
 Set `ULA_REPORT_REFERENCE_DIR` to the directory containing approved manifests. Raw historical reports are deliberately not loaded automatically.
 
+Client- or business-line-specific methodology profiles may add an `applies_to` scope. The server evaluates that scope against the current claim metadata and uploaded evidence before the profile is included in an AI prompt. For example:
+
+```json
+{
+  "approved": true,
+  "profile_id": "client-reefer",
+  "title": "Approved client reefer methodology",
+  "applies_to": {
+    "client_terms": ["Current evidence client name"],
+    "evidence_terms_any": ["reefer", "frozen", "temperature"],
+    "business_lines": ["Marine Cargo (Reefer/GFS)"]
+  },
+  "section_order": ["SURVEYOR NOTES", "CAUSE OF LOSS"],
+  "style_notes": ["Use the approved methodology without reusing historical facts."]
+}
+```
+
+Unscoped approved manifests remain global. Scoped manifests must use literal evidence terms and, when client-specific, literal client terms. Evidence terms are matched only against the uploaded current-claim content, while client terms may also match current claim metadata. Scoped manifests must not contain historical claim facts or activate for an unrelated client or business line.
+
 ## Local legal-reference knowledge
 
 Legal books, statutes, rules, guidance, and technical references belong in the separate ignored local index at `.data/legal-references/index.json`. They are treated collectively as a professional knowledge base. The server retrieves only excerpts relevant to the particular claim, policy/contract, jurisdiction, loss type, dates, and established facts; differences in scope or applicability must be resolved rather than blended. References may improve reasoning, but they are never claim evidence or report content, cannot populate facts, amounts, dates, parties, calculations, or evidence citations, and must not be quoted, summarized, cited, or named in the report.

@@ -342,9 +342,11 @@ test("metadata zero placeholders remain unknown unless evidence expressly suppor
 
 test("approved sample reference contains presentation guidance only and no historical claim facts", async () => {
   const references = await loadApprovedStyleReferences(path.join(root, "server", "ai", "references"));
-  assert.equal(references.length, 1);
-  assert.equal(references[0].source_role, "style_reference_only");
-  assert.deepEqual(references[0].section_order.slice(0, 5), [
+  assert.ok(references.length >= 2);
+  assert.ok(references.every((reference) => reference.source_role === "style_reference_only"));
+  const globalReference = references.find((reference) => reference.profile_id === "air-shipment-approved");
+  assert.ok(globalReference);
+  assert.deepEqual(globalReference.section_order.slice(0, 5), [
     "Cover Page",
     "Document Control Page",
     "Report Summary",
@@ -757,4 +759,50 @@ test("template readiness counts normalized evidence facts and analyzed document 
   assert.equal(readiness.overallProgress, 100);
   assert.deepEqual(readiness.missingFields, []);
   assert.deepEqual(readiness.missingDocuments, []);
+});
+
+test("historical-style policy schedules are extracted into complete policy categories", () => {
+  const evidence = [{
+    document_id: "policy-schedule",
+    document_name: "marine-policy-schedule.pdf",
+    mime_type: "application/pdf",
+    extraction_status: "extracted",
+    pages: [{
+      page: 2,
+      text: `Insurance Policy No. CPR-2026-7788
+Insured Period: 23 July 2026 to 22 July 2027
+Sum Insured: USD 262,845.00
+Containerized shipments: Warehouse to warehouse
+Max Limit per shipment: USD 2,000,000.00 per vessel
+USD 350,000.00 per Land Conveyance
+Basis of Valuation: Invoice Value + 10%
+Institute Cargo Clauses "A" CL. 382 dated 01.01.2009
+Including Loading and Unloading Operations
+Warranted Shipped under a clean Original Bill of Lading
+Excluding Mysterious and/or Unexplained Disappearance
+Deductible: USD 2,500 each and every loss
+Terms of Sale: CFR Freetown
+Port of Loading Rotterdam
+Port of Discharge Freetown`,
+    }],
+  }];
+  const record = buildNormalizedClaimRecord({
+    claim: { business_line: "Marine Cargo (Non-Reefer)" },
+    documents: documentsFromEvidence(evidence),
+    analysis: { business_line: "Marine Cargo (Non-Reefer)", extracted_fields: [], document_types: [], evidence_findings: [], adjustment_line_items: [] },
+    evidence,
+  });
+
+  assert.equal(record.facts.policy_number.value, "CPR-2026-7788");
+  assert.match(record.facts.policy_period.value, /23 July 2026 to 22 July 2027/);
+  assert.match(record.facts.policy_transit_scope.value, /Warehouse to warehouse/i);
+  assert.match(record.facts.policy_conveyance_limits.value, /2,000,000|350,000/);
+  assert.match(record.facts.policy_extensions.value, /Loading and Unloading/i);
+  assert.match(record.facts.policy_warranties.value, /clean Original Bill of Lading/i);
+  assert.match(record.facts.policy_exclusions.value, /Mysterious and\/or Unexplained Disappearance/i);
+  assert.equal(record.facts.valuation_uplift_percent.value, "10");
+  assert.equal(record.facts.deductible.value, "2,500");
+  assert.match(record.facts.terms_of_sale.value, /CFR Freetown/i);
+  assert.ok(record.policy_analysis.entries.some((entry) => entry.topic === "Loading / unloading extension"));
+  assert.ok(record.policy_analysis.entries.some((entry) => entry.topic === "Clean transport-document warranty"));
 });

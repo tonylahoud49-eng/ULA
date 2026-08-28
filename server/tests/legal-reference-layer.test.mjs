@@ -4,7 +4,13 @@ import os from "node:os";
 import path from "node:path";
 import test from "node:test";
 import { promptText, SYSTEM_INSTRUCTIONS } from "../ai/providers/openaiProvider.mjs";
-import { sanitizeReferenceNarrative, selectLegalReferences, splitAnalysisReferences } from "../ai/referenceLayer.mjs";
+import {
+  loadApprovedStyleReferences,
+  sanitizeReferenceNarrative,
+  selectApplicableStyleReferences,
+  selectLegalReferences,
+  splitAnalysisReferences,
+} from "../ai/referenceLayer.mjs";
 
 const evidence = [{
   document_id: "claim-bill-1",
@@ -111,6 +117,43 @@ test("reference titles and mechanical quotations are removed from provider narra
 
 test("missing or invalid legal index returns no references without affecting claim analysis", async () => {
   assert.deepEqual(await selectLegalReferences({ indexPath: path.join(os.tmpdir(), "missing-ula-index.json"), evidence }), []);
+});
+
+test("client-scoped GFS style references activate only for matching current reefer evidence", async (context) => {
+  const directory = await fs.mkdtemp(path.join(os.tmpdir(), "ula-gfs-style-test-"));
+  context.after(() => fs.rm(directory, { recursive: true, force: true }));
+  await fs.writeFile(path.join(directory, "global.json"), JSON.stringify({
+    approved: true,
+    profile_id: "global",
+    title: "Global ULA style",
+    section_order: ["Summary"],
+    style_notes: ["Global rule"],
+  }));
+  await fs.writeFile(path.join(directory, "gfs.json"), JSON.stringify({
+    approved: true,
+    profile_id: "gfs-reefer",
+    title: "GFS Reefer style",
+    applies_to: {
+      client_terms: ["Global Foods Solutions", "GFS FZCO"],
+      evidence_terms_any: ["reefer", "frozen", "temperature"],
+      business_lines: ["Marine Cargo (Reefer/GFS)"],
+    },
+    section_order: ["Temperature review"],
+    style_notes: ["Use the GFS reefer methodology"],
+  }));
+
+  const references = await loadApprovedStyleReferences(directory);
+  const gfsEvidence = [{ document_id: "gfs-1", document_name: "current.txt", pages: [{ page: 1, text: "Policy Holder Global Foods Solutions FZCO. Frozen cargo carried in a reefer container." }] }];
+  const unrelatedEvidence = [{ document_id: "other-1", document_name: "current.txt", pages: [{ page: 1, text: "Unrelated assured shipped frozen cargo in a reefer container." }] }];
+  const gfs = selectApplicableStyleReferences(references, { claim: { business_line: "Unclassified" }, evidence: gfsEvidence });
+  const unrelated = selectApplicableStyleReferences(references, { claim: { business_line: "Marine Cargo (Reefer/GFS)" }, evidence: unrelatedEvidence });
+  const wrongLine = selectApplicableStyleReferences(references, { claim: { business_line: "Property" }, evidence: gfsEvidence });
+
+  assert.deepEqual(gfs.map((item) => item.profile_id).sort(), ["gfs-reefer", "global"]);
+  assert.deepEqual(unrelated.map((item) => item.profile_id), ["global"]);
+  assert.deepEqual(wrongLine.map((item) => item.profile_id), ["global"]);
+  assert.match(promptText({ business_line: "Unclassified" }, gfsEvidence, references), /GFS Reefer style/);
+  assert.doesNotMatch(promptText({ business_line: "Marine Cargo (Reefer/GFS)" }, unrelatedEvidence, references), /GFS Reefer style/);
 });
 
 test("air-carriage wording does not activate the maritime Scrutton reference", async (context) => {

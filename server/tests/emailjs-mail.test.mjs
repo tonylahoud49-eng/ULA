@@ -13,6 +13,7 @@ const VALID_EMAILJS_ENV = {
   EMAILJS_PUBLIC_KEY: "public_key_abc",
   EMAILJS_PRIVATE_KEY: "private_key_xyz",
   LEAVE_ADMIN_EMAIL: "admin@company.com",
+  LEAVE_ADMIN_CC_EMAIL: "second-approver@company.com",
   APP_BASE_URL: "http://localhost:5173",
 };
 
@@ -150,6 +151,7 @@ test("leaveEmailService sends submission email via EmailJS and records idempoten
   const firstDelivery = await service.sendEvent(event);
   assert.equal(firstDelivery.status, "sent");
   assert.equal(sentPayload.template_params.to_email, "admin@company.com");
+  assert.equal(sentPayload.template_params.cc_email, "second-approver@company.com");
   assert.equal(sentPayload.template_params.employee_name, "Sarah Jenkins");
   assert.equal(sentPayload.template_params.days, 3);
   assert.match(sentPayload.template_params.message_html, /Leave request awaiting review/);

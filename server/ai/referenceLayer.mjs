@@ -154,10 +154,19 @@ export async function loadApprovedStyleReferences(directory) {
     try {
       const parsed = JSON.parse(await fs.readFile(path.join(directory, name), "utf8"));
       if (parsed.approved !== true) continue;
+      const appliesTo = parsed.applies_to && typeof parsed.applies_to === "object"
+        ? {
+            client_terms: Array.isArray(parsed.applies_to.client_terms) ? parsed.applies_to.client_terms.map(String) : [],
+            evidence_terms_any: Array.isArray(parsed.applies_to.evidence_terms_any) ? parsed.applies_to.evidence_terms_any.map(String) : [],
+            business_lines: Array.isArray(parsed.applies_to.business_lines) ? parsed.applies_to.business_lines.map(String) : [],
+          }
+        : null;
       references.push({
+        profile_id: String(parsed.profile_id || name.replace(/\.json$/i, "")),
         title: String(parsed.title || name),
         section_order: Array.isArray(parsed.section_order) ? parsed.section_order.map(String) : [],
         style_notes: Array.isArray(parsed.style_notes) ? parsed.style_notes.map(String) : [],
+        applies_to: appliesTo,
         source_role: "style_reference_only",
       });
     } catch {
@@ -165,6 +174,33 @@ export async function loadApprovedStyleReferences(directory) {
     }
   }
   return references;
+}
+
+export function selectApplicableStyleReferences(references = [], { claim = {}, evidence = [] } = {}) {
+  const claimText = Object.values(claim || {})
+    .filter((value) => ["string", "number", "boolean"].includes(typeof value))
+    .join(" ");
+  const combinedEvidence = evidence.map((item) => evidenceText(item)).join(" ");
+  const searchable = normalizeSearchText(`${claimText} ${combinedEvidence}`);
+  const searchableEvidence = normalizeSearchText(combinedEvidence);
+  const businessLine = String(claim?.business_line || claim?.ai_suggested_business_line || "").trim().toLowerCase();
+  const specificBusinessLine = businessLine
+    && !["unclassified", "requires review", "other / requires review"].includes(businessLine);
+  const containsAny = (terms, source = searchable) => terms.some((term) => {
+    const normalized = normalizeSearchText(term);
+    return normalized && source.includes(normalized);
+  });
+
+  return references.filter((reference) => {
+    if (reference?.source_role !== "style_reference_only") return false;
+    const scope = reference.applies_to;
+    if (!scope) return true;
+    if (scope.client_terms?.length && !containsAny(scope.client_terms)) return false;
+    if (scope.evidence_terms_any?.length && !containsAny(scope.evidence_terms_any, searchableEvidence)) return false;
+    if (scope.business_lines?.length && specificBusinessLine
+      && !scope.business_lines.some((line) => String(line).trim().toLowerCase() === businessLine)) return false;
+    return true;
+  });
 }
 
 export async function selectLegalReferences({

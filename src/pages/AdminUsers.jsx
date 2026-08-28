@@ -5,9 +5,11 @@ import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
-import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter, DialogTrigger } from "@/components/ui/dialog";
-import { Shield, UserCheck, UserMinus, ShieldAlert, UserPlus } from "lucide-react";
+import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle, DialogTrigger } from "@/components/ui/dialog";
+import { KeyRound, Mail, ShieldAlert, UserCheck, UserMinus, UserPlus, Users } from "lucide-react";
 import { toast } from "@/components/ui/use-toast";
+
+const EMPTY_EMPLOYEE = { full_name: "", email: "", job_title: "", password: "", role: "user" };
 
 export default function AdminUsers() {
   const [users, setUsers] = useState([]);
@@ -16,291 +18,211 @@ export default function AdminUsers() {
 
   const loadData = async () => {
     try {
-      const [me, accounts] = await Promise.all([
-        appClient.auth.me(),
-        appClient.auth.listAccounts(),
-      ]);
+      const [me, accounts] = await Promise.all([appClient.auth.me(), appClient.auth.listAccounts()]);
       setCurrentUser(me);
       setUsers(accounts || []);
-    } catch (e) {
-      console.error(e);
+    } catch (error) {
+      toast({ variant: "destructive", title: "Accounts could not be loaded", description: error.message });
     } finally {
       setLoading(false);
     }
   };
 
-  useEffect(() => {
-    loadData();
-  }, []);
+  useEffect(() => { loadData(); }, []);
 
   const updateUserStatus = async (userId, status) => {
     try {
       await appClient.auth.updateAccount(userId, { status });
-      toast({
-        title: "User updated",
-        description: `User status changed to ${status}.`,
-      });
-      loadData();
-    } catch (err) {
-      toast({ variant: "destructive", title: "Update failed", description: err.message });
+      toast({ title: status === "approved" ? "Access granted" : "Access revoked", description: "The employee account was updated." });
+      await loadData();
+    } catch (error) {
+      toast({ variant: "destructive", title: "Update failed", description: error.message });
     }
   };
 
   const updateUserRole = async (userId, role) => {
     try {
       await appClient.auth.updateAccount(userId, { role });
-      toast({
-        title: "User updated",
-        description: `User role changed to ${role}.`,
-      });
-      loadData();
-    } catch (err) {
-      toast({ variant: "destructive", title: "Update failed", description: err.message });
+      toast({ title: role === "admin" ? "Administrator access granted" : "Standard access restored", description: "The employee's job title was not changed." });
+      await loadData();
+    } catch (error) {
+      toast({ variant: "destructive", title: "Update failed", description: error.message });
     }
   };
 
   if (loading) {
-    return (
-      <div className="flex justify-center py-20">
-        <div className="w-8 h-8 border-4 border-primary/20 border-t-primary rounded-full animate-spin" />
-      </div>
-    );
+    return <div className="flex justify-center py-20" role="status" aria-label="Loading employee accounts"><div className="h-8 w-8 animate-spin rounded-full border-4 border-primary/20 border-t-primary" /></div>;
   }
+
+  const approvedCount = users.filter((user) => user.status === "approved").length;
+  const adminCount = users.filter((user) => user.role === "admin").length;
 
   return (
     <div className="space-y-6">
-      <div className="docket-header">
+      <div className="docket-header gap-4">
         <div>
-          <h2 className="docket-title">User administration</h2>
-          <p className="docket-subtitle">Review local accounts, manage access status, and assign administrator authority.</p>
+          <h2 className="docket-title">Employee access</h2>
+          <p className="docket-subtitle">Manage ULA employee profiles, application access, job titles, and temporary passwords.</p>
         </div>
-        <div>
-          <AddUserDialog onCreated={loadData} />
-        </div>
+        <AddEmployeeDialog onCreated={loadData} />
       </div>
 
-      <Card className="docket-surface overflow-hidden shadow-none">
-        <div className="px-5 py-4 border-b flex items-center justify-between bg-muted/20">
-          <div className="flex items-center gap-2 font-heading font-semibold text-sm">
-            <Shield className="w-4 h-4 text-primary" /> Active Accounts ({users.length})
-          </div>
+      <div className="metric-strip grid-cols-1 sm:grid-cols-3">
+        <Metric label="Employee accounts" value={users.length} />
+        <Metric label="Access granted" value={approvedCount} />
+        <Metric label="Administrators" value={adminCount} />
+      </div>
+
+      <Card className="docket-surface overflow-hidden p-0 shadow-none">
+        <div className="flex items-center justify-between border-b bg-muted/20 px-5 py-4">
+          <div className="flex items-center gap-2 font-heading text-base font-semibold"><Users className="h-4 w-4 text-primary" aria-hidden="true" /> ULA employee directory</div>
+          <span className="hidden text-xs text-muted-foreground sm:block">Outlook email is used as the app login</span>
         </div>
 
-        <div className="overflow-x-auto">
-          <table className="register-table">
-            <thead>
-              <tr>
-                <th>User Details</th>
-                <th>Role</th>
-                <th>Status</th>
-                <th className="text-right">Actions</th>
-              </tr>
-            </thead>
-            <tbody>
-              {users.map((acc) => (
-                <tr key={acc.id} className={acc.id === currentUser?.id ? "bg-primary/[0.015]" : ""}>
-                  <td>
-                    <div className="font-semibold flex items-center gap-1.5">
-                      {acc.full_name || "Unknown User"}
-                      {acc.id === currentUser?.id && (
-                        <span className="text-[10px] bg-primary/10 text-primary px-1.5 py-0.5 rounded font-normal">You</span>
-                      )}
-                    </div>
-                    <div className="text-xs text-muted-foreground mt-0.5">{acc.email}</div>
-                  </td>
-                  <td>
-                    <span className={`inline-flex items-center gap-1 text-[11px] font-semibold px-2 py-0.5 rounded ${acc.role === "admin" ? "bg-amber-50 border border-amber-200 text-amber-800" : "bg-slate-50 border border-slate-200 text-slate-700"}`}>
-                      {acc.role === "admin" ? <ShieldAlert className="w-3 h-3" /> : null}
-                      {acc.role === "admin" ? "Administrator" : "Standard User"}
-                    </span>
-                  </td>
-                  <td>
-                    <span className={`status-mark ${acc.status === "approved" ? "border-emerald-300 bg-emerald-50 text-emerald-800" : "border-amber-300 bg-amber-50 text-amber-800"}`}>
-                      {acc.status === "approved" ? "Access Granted" : "Pending Approval"}
-                    </span>
-                  </td>
-                  <td className="text-right">
-                    <div className="flex items-center justify-end gap-2">
-                      {acc.id !== currentUser?.id && (
-                        <>
-                          {acc.status === "approved" ? (
-                            <Button
-                              size="sm"
-                              variant="outline"
-                              onClick={() => updateUserStatus(acc.id, "pending")}
-                              className="h-8 border-destructive/30 text-destructive hover:bg-destructive/5 hover:text-destructive"
-                            >
-                              <UserMinus className="w-3.5 h-3.5 mr-1" /> Revoke
-                            </Button>
-                          ) : (
-                            <Button
-                              size="sm"
-                              onClick={() => updateUserStatus(acc.id, "approved")}
-                              className="h-8 ula-gradient text-white"
-                            >
-                              <UserCheck className="w-3.5 h-3.5 mr-1" /> Approve
-                            </Button>
+        {users.length === 0 ? (
+          <div className="px-6 py-14 text-center">
+            <p className="font-heading text-xl font-semibold">No employee accounts yet</p>
+            <p className="mt-1 text-sm text-muted-foreground">Use Add Employee to create the first profile and login.</p>
+          </div>
+        ) : (
+          <div className="overflow-x-auto">
+            <table className="register-table min-w-[980px]">
+              <thead><tr><th>Employee</th><th>Job title</th><th>App access</th><th>Status</th><th>Password</th><th className="text-right">Actions</th></tr></thead>
+              <tbody>
+                {users.map((account) => {
+                  const isCurrentUser = account.id === currentUser?.id;
+                  return (
+                    <tr key={account.id} className={isCurrentUser ? "bg-primary/[0.025]" : ""}>
+                      <td>
+                        <div className="flex items-center gap-2 font-semibold">{account.full_name || "Unknown employee"}{isCurrentUser && <span className="status-mark border-primary/25 bg-primary/5 text-primary">You</span>}</div>
+                        <div className="mt-1 flex items-center gap-1.5 text-xs text-muted-foreground"><Mail className="h-3.5 w-3.5" aria-hidden="true" /><span>{account.email}</span></div>
+                      </td>
+                      <td className="max-w-[230px] text-sm">{account.job_title || "Not assigned"}</td>
+                      <td><AccessMark role={account.role} /></td>
+                      <td><StatusMark status={account.status} /></td>
+                      <td><span className="text-xs text-muted-foreground">{account.password_status === "temporary" ? "Temporary" : "Set"}</span></td>
+                      <td className="text-right">
+                        <div className="flex items-center justify-end gap-2">
+                          <ResetPasswordDialog account={account} />
+                          {!isCurrentUser && (
+                            <>
+                              <Button size="sm" variant="outline" onClick={() => updateUserStatus(account.id, account.status === "approved" ? "revoked" : "approved")} className={account.status === "approved" ? "h-8 border-destructive/30 text-destructive hover:bg-destructive/5 hover:text-destructive" : "h-8"}>
+                                {account.status === "approved" ? <UserMinus className="mr-1 h-3.5 w-3.5" /> : <UserCheck className="mr-1 h-3.5 w-3.5" />}{account.status === "approved" ? "Revoke" : "Approve"}
+                              </Button>
+                              <Button size="sm" variant="ghost" onClick={() => updateUserRole(account.id, account.role === "admin" ? "user" : "admin")} className="h-8 text-xs">
+                                {account.role === "admin" ? "Make employee" : "Make admin"}
+                              </Button>
+                            </>
                           )}
-                          {acc.role === "admin" ? (
-                            <Button
-                              size="sm"
-                              variant="ghost"
-                              onClick={() => updateUserRole(acc.id, "user")}
-                              className="h-8 text-xs"
-                            >
-                              Demote
-                            </Button>
-                          ) : (
-                            <Button
-                              size="sm"
-                              variant="ghost"
-                              onClick={() => updateUserRole(acc.id, "admin")}
-                              className="h-8 text-xs text-primary"
-                            >
-                              Make Admin
-                            </Button>
-                          )}
-                        </>
-                      )}
-                    </div>
-                  </td>
-                </tr>
-              ))}
-            </tbody>
-          </table>
-        </div>
+                        </div>
+                      </td>
+                    </tr>
+                  );
+                })}
+              </tbody>
+            </table>
+          </div>
+        )}
       </Card>
     </div>
   );
 }
 
-function AddUserDialog({ onCreated }) {
+function Metric({ label, value }) {
+  return <div className="metric-cell"><p className="docket-label">{label}</p><p className="mt-1 font-heading text-3xl font-semibold tabular-nums">{value}</p></div>;
+}
+
+function AccessMark({ role }) {
+  if (role === "admin") {
+    return <span className="status-mark border-amber-300 bg-amber-50 text-amber-800"><ShieldAlert className="h-3.5 w-3.5" aria-hidden="true" />Administrator</span>;
+  }
+  return <span className="status-mark border-slate-300 bg-slate-50 text-slate-700">Employee</span>;
+}
+
+function StatusMark({ status }) {
+  return <span className={`status-mark ${status === "approved" ? "border-emerald-300 bg-emerald-50 text-emerald-800" : "border-red-300 bg-red-50 text-red-800"}`}>{status === "approved" ? "Access granted" : "Access revoked"}</span>;
+}
+
+function AddEmployeeDialog({ onCreated }) {
   const [open, setOpen] = useState(false);
   const [saving, setSaving] = useState(false);
-  const [form, setForm] = useState({
-    full_name: "",
-    email: "",
-    password: "password123",
-    role: "user",
-  });
-
+  const [form, setForm] = useState(EMPTY_EMPLOYEE);
   const validEmail = /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(form.email.trim());
+  const validPassword = form.password.length >= 8;
+  const setField = (field, value) => setForm((current) => ({ ...current, [field]: value }));
+  const handleOpen = (nextOpen) => { setOpen(nextOpen); if (!nextOpen) setForm(EMPTY_EMPLOYEE); };
 
-  const handleSubmit = async (e) => {
-    e?.preventDefault();
-    if (!form.full_name.trim() || !validEmail) return;
+  const handleSubmit = async (event) => {
+    event.preventDefault();
+    if (!form.full_name.trim() || !form.job_title.trim() || !validEmail || !validPassword) return;
     setSaving(true);
     try {
-      await appClient.auth.createAccount({
-        full_name: form.full_name.trim(),
-        email: form.email.trim(),
-        role: form.role,
-        status: "approved",
-        password: form.password || "password123",
-      });
-      toast({
-        title: "User Account Created",
-        description: `Account created for ${form.full_name} (${form.email}).`,
-      });
-      setOpen(false);
-      setForm({ full_name: "", email: "", password: "password123", role: "user" });
-      if (onCreated) onCreated();
-    } catch (err) {
-      toast({
-        title: "Creation Failed",
-        description: err.message,
-        variant: "destructive",
-      });
+      await appClient.auth.createEmployeeAccount({ full_name: form.full_name.trim(), email: form.email.trim(), job_title: form.job_title.trim(), role: form.role, password: form.password });
+      toast({ title: "Employee added", description: `${form.full_name} can now sign in with ${form.email}.` });
+      handleOpen(false);
+      await onCreated?.();
+    } catch (error) {
+      toast({ title: "Employee could not be added", description: error.message, variant: "destructive" });
     } finally {
       setSaving(false);
     }
   };
 
   return (
-    <Dialog open={open} onOpenChange={setOpen}>
-      <DialogTrigger asChild>
-        <Button className="ula-gradient text-white hover:opacity-90 gap-1.5">
-          <UserPlus className="w-4 h-4" />
-          <span>Add User Account</span>
-        </Button>
-      </DialogTrigger>
-      <DialogContent className="sm:max-w-[460px]">
-        <DialogHeader>
-          <DialogTitle>Add User Account</DialogTitle>
-        </DialogHeader>
-        <form onSubmit={handleSubmit} className="space-y-3.5 py-2">
-          <div className="space-y-1.5">
-            <Label htmlFor="user-fullname" className="text-xs font-medium">
-              Full Name <span className="text-red-500">*</span>
-            </Label>
-            <Input
-              id="user-fullname"
-              required
-              placeholder="e.g. Jane Doe"
-              value={form.full_name}
-              onChange={(e) => setForm({ ...form, full_name: e.target.value })}
-              className="h-8 text-xs"
-            />
+    <Dialog open={open} onOpenChange={handleOpen}>
+      <DialogTrigger asChild><Button className="gap-2 bg-primary text-primary-foreground hover:bg-primary/90"><UserPlus className="h-4 w-4" aria-hidden="true" /> Add Employee</Button></DialogTrigger>
+      <DialogContent className="sm:max-w-[520px]">
+        <DialogHeader><DialogTitle>Add employee</DialogTitle><DialogDescription>Create the employee profile and application login together.</DialogDescription></DialogHeader>
+        <form onSubmit={handleSubmit} className="space-y-4 py-1">
+          <Field label="Full name" id="employee-name"><Input id="employee-name" required autoComplete="name" value={form.full_name} onChange={(event) => setField("full_name", event.target.value)} /></Field>
+          <Field label="Outlook email / app login" id="employee-email"><Input id="employee-email" type="email" required autoComplete="email" placeholder="name@unitedlossadjusters.com" value={form.email} onChange={(event) => setField("email", event.target.value)} /></Field>
+          <Field label="Job title" id="employee-job-title"><Input id="employee-job-title" required placeholder="e.g. Claims Handler" value={form.job_title} onChange={(event) => setField("job_title", event.target.value)} /></Field>
+          <div className="grid gap-4 sm:grid-cols-2">
+            <div className="space-y-1.5"><Label>Application access</Label><Select value={form.role} onValueChange={(value) => setField("role", value)}><SelectTrigger><SelectValue /></SelectTrigger><SelectContent><SelectItem value="user">Employee</SelectItem><SelectItem value="admin">Administrator</SelectItem></SelectContent></Select></div>
+            <Field label="Temporary app password" id="employee-password"><Input id="employee-password" type="password" minLength={8} required autoComplete="new-password" placeholder="Minimum 8 characters" value={form.password} onChange={(event) => setField("password", event.target.value)} /></Field>
           </div>
-          <div className="space-y-1.5">
-            <Label htmlFor="user-email" className="text-xs font-medium">
-              Email Address <span className="text-red-500">*</span>
-            </Label>
-            <Input
-              id="user-email"
-              type="email"
-              required
-              placeholder="e.g. jane@company.com"
-              value={form.email}
-              onChange={(e) => setForm({ ...form, email: e.target.value })}
-              className="h-8 text-xs"
-            />
-          </div>
-          <div className="grid grid-cols-2 gap-3">
-            <div className="space-y-1.5">
-              <Label className="text-xs font-medium">Role</Label>
-              <Select value={form.role} onValueChange={(val) => setForm({ ...form, role: val })}>
-                <SelectTrigger className="h-8 text-xs">
-                  <SelectValue />
-                </SelectTrigger>
-                <SelectContent>
-                  <SelectItem value="user">Standard User</SelectItem>
-                  <SelectItem value="admin">Administrator</SelectItem>
-                </SelectContent>
-              </Select>
-            </div>
-            <div className="space-y-1.5">
-              <Label htmlFor="user-password" className="text-xs font-medium">Password</Label>
-              <Input
-                id="user-password"
-                type="password"
-                placeholder="password123"
-                value={form.password}
-                onChange={(e) => setForm({ ...form, password: e.target.value })}
-                className="h-8 text-xs"
-              />
-            </div>
-          </div>
+          <p className="text-xs leading-5 text-muted-foreground">This password opens ULA Claims Hub only. It does not create or change the employee's Microsoft Outlook password.</p>
+          <DialogFooter><Button type="button" variant="ghost" onClick={() => handleOpen(false)}>Cancel</Button><Button type="submit" disabled={saving || !form.full_name.trim() || !form.job_title.trim() || !validEmail || !validPassword}>{saving ? "Adding employee…" : "Add Employee"}</Button></DialogFooter>
+        </form>
+      </DialogContent>
+    </Dialog>
+  );
+}
 
-          <DialogFooter className="pt-2">
-            <Button
-              type="button"
-              variant="ghost"
-              size="sm"
-              onClick={() => setOpen(false)}
-              className="h-8 text-xs"
-            >
-              Cancel
-            </Button>
-            <Button
-              type="submit"
-              size="sm"
-              disabled={saving || !form.full_name.trim() || !validEmail}
-              className="h-8 text-xs ula-gradient text-white"
-            >
-              {saving ? "Creating..." : "Create Account"}
-            </Button>
-          </DialogFooter>
+function Field({ label, id, children }) {
+  return <div className="space-y-1.5"><Label htmlFor={id}>{label}</Label>{children}</div>;
+}
+
+function ResetPasswordDialog({ account }) {
+  const [open, setOpen] = useState(false);
+  const [password, setPassword] = useState("");
+  const [saving, setSaving] = useState(false);
+  const handleOpen = (nextOpen) => { setOpen(nextOpen); if (!nextOpen) setPassword(""); };
+
+  const submit = async (event) => {
+    event.preventDefault();
+    if (password.length < 8) return;
+    setSaving(true);
+    try {
+      await appClient.auth.setAccountPassword(account.id, password);
+      toast({ title: "Password updated", description: `${account.full_name} can use the new app password immediately.` });
+      handleOpen(false);
+    } catch (error) {
+      toast({ title: "Password could not be updated", description: error.message, variant: "destructive" });
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  return (
+    <Dialog open={open} onOpenChange={handleOpen}>
+      <DialogTrigger asChild><Button size="sm" variant="outline" className="h-8" aria-label={`Reset password for ${account.full_name}`}><KeyRound className="mr-1 h-3.5 w-3.5" aria-hidden="true" /> Reset</Button></DialogTrigger>
+      <DialogContent className="sm:max-w-[430px]">
+        <DialogHeader><DialogTitle>Reset app password</DialogTitle><DialogDescription>Set a new password for {account.full_name}. Their Outlook password is not affected.</DialogDescription></DialogHeader>
+        <form onSubmit={submit} className="space-y-4 py-1">
+          <Field label="New app password" id={`reset-password-${account.id}`}><Input id={`reset-password-${account.id}`} type="password" minLength={8} required autoComplete="new-password" value={password} onChange={(event) => setPassword(event.target.value)} /></Field>
+          <p className="text-xs text-muted-foreground">Use at least 8 characters.</p>
+          <DialogFooter><Button type="button" variant="ghost" onClick={() => handleOpen(false)}>Cancel</Button><Button type="submit" disabled={saving || password.length < 8}>{saving ? "Updating…" : "Update password"}</Button></DialogFooter>
         </form>
       </DialogContent>
     </Dialog>
