@@ -1,7 +1,7 @@
 import test from "node:test";
 import assert from "node:assert/strict";
 import JSZip from "jszip";
-import { createCanvas } from "@napi-rs/canvas";
+import { createCanvas, loadImage } from "@napi-rs/canvas";
 import { jsPDF } from "jspdf";
 import { extractEvidenceFile, evidenceText } from "../evidence/extractEvidence.mjs";
 
@@ -107,4 +107,52 @@ test("searchable PDF pages with material photographs are also retained for provi
   assert.equal(evidence.vision_image_count, 1);
   assert.equal(evidence.vision_images[0].page, 1);
   assert.equal(evidence.vision_images[0].vision_reason, "material-raster-with-searchable-text");
+});
+
+test("oversized PDF pages are bounded for Anthropic many-image requests", async () => {
+  const source = createCanvas(2_400, 3_000);
+  const context = source.getContext("2d");
+  context.fillStyle = "white";
+  context.fillRect(0, 0, source.width, source.height);
+  context.fillStyle = "black";
+  context.font = "bold 96px sans-serif";
+  context.fillText("MATERIAL CLAIM PHOTOGRAPH", 120, 260);
+
+  const pdf = new jsPDF({ unit: "px", format: [2_400, 3_000] });
+  pdf.addImage(source.toDataURL("image/jpeg", 0.8), "JPEG", 0, 0, 2_400, 3_000);
+  const evidence = await extractEvidenceFile(
+    file("oversized-visual-page.pdf", "application/pdf", Buffer.from(pdf.output("arraybuffer"))),
+    { id: "oversized-visual" },
+  );
+  const rendered = await loadImage(evidence.vision_images[0].buffer);
+
+  assert.ok(Math.max(rendered.width, rendered.height) <= 1_900);
+  assert.ok(rendered.width > 0 && rendered.height > 0);
+});
+
+test("later sparse OCR visual pages are not hidden by earlier searchable scans", async () => {
+  const scan = createCanvas(400, 300);
+  const scanContext = scan.getContext("2d");
+  scanContext.fillStyle = "#f4f0e8";
+  scanContext.fillRect(0, 0, scan.width, scan.height);
+  scanContext.fillStyle = "#321f19";
+  scanContext.fillRect(45, 45, 310, 210);
+
+  const pdf = new jsPDF({ unit: "px", format: [500, 650] });
+  for (let pageNumber = 1; pageNumber <= 25; pageNumber += 1) {
+    if (pageNumber > 1) pdf.addPage([500, 650], "portrait");
+    pdf.addImage(scan.toDataURL("image/jpeg", 0.78), "JPEG", 50, 130, 400, 300);
+    pdf.text(pageNumber === 25
+      ? "CamScanner"
+      : `Policy scan page ${pageNumber} with searchable wording and ordinary policy conditions`, 40, 70);
+  }
+
+  const evidence = await extractEvidenceFile(
+    file("combined-policy-and-survey.pdf", "application/pdf", Buffer.from(pdf.output("arraybuffer"))),
+    { id: "late-sparse-survey" },
+  );
+
+  assert.equal(evidence.vision_image_count, 24);
+  assert.ok(evidence.vision_images.some((image) => image.page === 25));
+  assert.equal(evidence.vision_images.find((image) => image.page === 25).vision_reason, "sparse-searchable-visual");
 });

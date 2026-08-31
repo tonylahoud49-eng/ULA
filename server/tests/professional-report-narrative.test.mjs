@@ -101,7 +101,112 @@ test("production prompt requires concise fact-to-interpretation-to-conclusion re
   assert.match(SYSTEM_INSTRUCTIONS, /party fields as named entities, not text buckets/i);
   assert.match(SYSTEM_INSTRUCTIONS, /Separately extract the exact policy or cover-note number/i);
   assert.match(SYSTEM_INSTRUCTIONS, /Never add the full shipment value to the value of damaged items/i);
+  assert.match(SYSTEM_INSTRUCTIONS, /smaller affected quantity.*maximum supported loss scope/i);
+  assert.match(SYSTEM_INSTRUCTIONS, /scanner watermark or a few OCR characters/i);
+  assert.match(SYSTEM_INSTRUCTIONS, /charge is not automatically a claim item merely because an invoice exists/i);
+  assert.match(SYSTEM_INSTRUCTIONS, /complete quantity expression and rate with an empty adjusted value/i);
   assert.match(SYSTEM_INSTRUCTIONS, /interest and policy schedule; shipment routing; chronological surveyor notes/i);
+  assert.match(SYSTEM_INSTRUCTIONS, /deductible percentage\/minimum\/maximum\/fixed\/franchise\/aggregate/i);
+  assert.match(SYSTEM_INSTRUCTIONS, /Quotations, estimates, and pro-formas/i);
+  assert.match(SYSTEM_INSTRUCTIONS, /master\/house B\/L/i);
+  assert.match(SYSTEM_INSTRUCTIONS, /amount-in-words/i);
+  assert.match(SYSTEM_INSTRUCTIONS, /dangling connector.*p\..*pp\./i);
+});
+
+test("percentage deductible with a monetary minimum is calculated as a formula and never concatenated", () => {
+  const policySource = { ...source(1, "Deductible: 10% of the adjusted loss, subject to a minimum EUR 750 each and every loss"), document_name: "policy.pdf" };
+  const claimSource = { ...source(2, "Claim form amount EUR 5,865.44"), document_name: "claim-form.pdf" };
+  const analysis = {
+    business_line: "Marine Cargo (Non-Reefer)",
+    extracted_fields: [
+      { ...field("currency", "EUR"), sources: [claimSource] },
+      { ...field("gross_claim_amount", "5865.44"), sources: [claimSource] },
+      { ...field("adjusted_amount", "5115.44"), sources: [{ ...claimSource, supporting_text: "Net adjusted amount EUR 5,115.44" }] },
+      { ...field("deductible", "10750"), sources: [policySource] },
+      field("salvage_amount", "0"), field("recovery_amount", "0"), field("depreciation_amount", "0"),
+    ],
+    adjustment_line_items: [{
+      description: "Supported replacement of damaged cargo", quantity: "1 unit", unit_price: "5865.44", adjusted_value: "5865.44", currency: "EUR",
+      basis: "Claim form and damaged-item valuation", confidence: 0.98, sources: [claimSource],
+    }],
+    document_types: [], evidence_findings: [],
+  };
+  const draft = createUnifiedReportDraft({ claim: { business_line: "Marine Cargo (Non-Reefer)" }, documents: [], versions: [], generatedBy: "Test", analysis, evidence: [] });
+  const record = draft.normalizedRecord;
+  const data = buildMasterReportData({ report: { normalized_claim_record: record }, claim: {} });
+
+  assert.equal(record.financials.deductible_terms.percentage, 10);
+  assert.equal(record.financials.deductible_terms.minimum, 750);
+  assert.equal(record.financials.deductible, 750);
+  assert.equal(record.financials.provisional_indemnity, 5115.44);
+  assert.equal(record.financials.concluded_indemnity, 5115.44);
+  assert.ok(record.financials.provisional_indemnity >= 0);
+  assert.match(data.scalars.policy_details, /10%.*minimum EUR 750/i);
+  assert.match(data.paragraphs.conclusion_items[0], /EUR 5,865\.44 is considered fair & reasonable/i);
+  assert.doesNotMatch(JSON.stringify(data), /EUR 10,750\.00/);
+});
+
+test("quotation evidence remains provisional and cannot become a presented or fair-and-reasonable claim", () => {
+  const quoteSource = { ...source(1, "Replacement quotation Q-901 total EUR 5,865.44 including VAT"), document_name: "replacement-quotation.pdf" };
+  const analysis = {
+    business_line: "Marine Cargo (Non-Reefer)",
+    extracted_fields: [field("currency", "EUR"), field("salvage_amount", "0"), field("recovery_amount", "0"), field("depreciation_amount", "0")],
+    adjustment_line_items: [{
+      description: "Replacement quotation", quantity: "1 unit", unit_price: "5865.44", adjusted_value: "5865.44", currency: "EUR",
+      basis: "Supplier quotation only", confidence: 0.99, sources: [quoteSource],
+    }],
+    document_types: [], evidence_findings: [],
+  };
+  const draft = createUnifiedReportDraft({ claim: { business_line: "Marine Cargo (Non-Reefer)" }, documents: [], versions: [], generatedBy: "Test", analysis, evidence: [] });
+  const data = buildMasterReportData({ report: { normalized_claim_record: draft.normalizedRecord }, claim: {} });
+
+  assert.equal(draft.normalizedRecord.financials.presented_claim, null);
+  assert.equal(draft.normalizedRecord.financials.itemized_evidence_basis, "quotation");
+  assert.match(data.paragraphs.adjustment_intro.join(" "), /quotation or estimate evidence only/i);
+  assert.match(data.paragraphs.conclusion_items[0], /cannot be stated as fair & reasonable.*quotation or estimate evidence/i);
+});
+
+test("transport conflicts, invoice words conflicts, and policy categories remain visible", () => {
+  const evidence = [{
+    document_id: "combined", document_name: "combined.pdf", mime_type: "application/pdf", extraction_status: "extracted",
+    pages: [{ page: 1, text: "COMMERCIAL INVOICE\nAmount due EUR 87,982.51\nSEVENTY-FIVE THOUSAND EIGHT HUNDRED THIRTY-FIVE AND 11/100 EUROS" }],
+  }];
+  const analysis = {
+    business_line: "Marine Cargo (Non-Reefer)",
+    extracted_fields: [
+      field("currency", "EUR"),
+      field("master_bill_of_lading", "BRT0311410"),
+      field("house_bill_of_lading", "CTL/BEY/2026-14"),
+      field("vessel_name", "VESSEL ALPHA"),
+      field("vessel_name", "VESSEL BETA"),
+      field("policy_exclusions", "Warranted preliminary survey before loading"),
+    ],
+    document_types: [], evidence_findings: [], adjustment_line_items: [],
+  };
+  const draft = createUnifiedReportDraft({ claim: { business_line: "Marine Cargo (Non-Reefer)" }, documents: [{ id: "combined", file_name: "combined.pdf" }], versions: [], generatedBy: "Test", analysis, evidence });
+  const record = draft.normalizedRecord;
+  const data = buildMasterReportData({ report: { normalized_claim_record: record }, claim: {} });
+
+  assert.equal(record.facts.invoice_total.status, "conflict");
+  assert.ok(record.conflicts.some((item) => item.field === "invoice_total"));
+  assert.equal(record.facts.policy_exclusions.value, null);
+  assert.match(record.facts.policy_warranties.value, /Warranted preliminary survey/i);
+  assert.match(data.scalars.transport_document, /Master B\/L BRT0311410.*House B\/L CTL\/BEY\/2026-14/i);
+  assert.match(data.paragraphs.shipment_routing.join(" "), /Conflicting evidence values were found for vessel name/i);
+  assert.match(data.paragraphs.adequacy_section[0], /cannot be established/i);
+});
+
+test("dangling findings are identified before final issue and are not cut into the client narrative", () => {
+  const analysis = {
+    business_line: "Marine Cargo (Non-Reefer)", extracted_fields: [], document_types: [], adjustment_line_items: [],
+    evidence_findings: [{ finding: "The crate frame collapsed during handling. Damage is shown in photos pp.", confidence: 0.98, sources: [source(2, "The crate frame collapsed during handling. Damage is shown in photos pp.")] }],
+  };
+  const draft = createUnifiedReportDraft({ claim: { business_line: "Marine Cargo (Non-Reefer)" }, documents: [], versions: [], generatedBy: "Test", analysis, evidence: [] });
+  const data = buildMasterReportData({ report: { normalized_claim_record: draft.normalizedRecord }, claim: {} });
+
+  assert.ok(draft.normalizedRecord.report_quality.issue_blockers.some((item) => /dangling narrative/i.test(item)));
+  assert.doesNotMatch(data.paragraphs.cause_of_loss_section.join(" "), /photos pp\./i);
+  assert.match(data.paragraphs.cause_of_loss_section.join(" "), /crate frame collapsed during handling/i);
 });
 
 test("production analysis performs a Director-grade evidence challenge before structured output", () => {
@@ -146,6 +251,10 @@ test("production analysis performs a Director-grade evidence challenge before st
   assert.match(prompt, /Execute every material test in the applicable owner-approved methodology profile/i);
   assert.match(prompt, /Do not merely restate the profile or the evidence/i);
   assert.match(prompt, /completing the final quality audit/i);
+  assert.match(prompt, /alternative quantities and units in separate sourced records.*never concatenate/is);
+  assert.match(prompt, /loss rows separate from deductible, salvage, recovery, and depreciation/is);
+  assert.match(prompt, /cause_of_loss is only one concise express source-stated mechanism/is);
+  assert.match(prompt, /Follow clauses across line or page breaks.*return null/is);
 });
 
 test("professional report narrative remains grounded, analytical, concise, and deterministic", async () => {
@@ -213,6 +322,7 @@ test("professional report narrative remains grounded, analytical, concise, and d
   assert.match(xml, /To date, it is understood that the Assured had not appointed a loss assessor to act on their behalf\./i);
   assert.match(xml, /The above adjusted claim amount USD 9,500\.00 is considered fair &amp; reasonable\./i);
   assert.match(xml, /SHIPMENT ROUTING/i);
+  assert.match(xml, /Pending professional approval/i);
   assert.match(xml, /We confirm having sighted the originals of all documents customarily submitted in support of a claim of this nature and remain at Insurers disposal for further instructions\./i);
   assert.doesNotMatch(xml, /The following was concluded:|End of adjustment note\./i);
   assert.doesNotMatch(xml, /Human review required/i);
@@ -220,7 +330,12 @@ test("professional report narrative remains grounded, analytical, concise, and d
 
 test("global report analysis separates policy schedule, party roles, routing, and actual loss quantum", () => {
   const { evidence, documents } = fixture();
-  const claim = { claim_number: "ULA-GLOBAL-QUALITY-001", title: "Machinery transit damage", business_line: "Marine Cargo (Non-Reefer)" };
+  const claim = {
+    claim_number: "ULA-GLOBAL-QUALITY-001",
+    title: "Machinery transit damage",
+    business_line: "Marine Cargo (Non-Reefer)",
+    applicant: "a) the Reinsurer shall be liable to pay even though another party is unable",
+  };
   const analysis = {
     business_line: claim.business_line,
     document_types: [],
@@ -238,8 +353,9 @@ test("global report analysis separates policy schedule, party roles, routing, an
       field("policy_conditions", "Institute Cargo Clauses (A) CL.382 dated 01.01.2009"),
       field("policy_exclusions", "Excluding theft from open or unattended trucks"),
       field("gross_claim_amount", "1,088,250.00"),
+      field("applicant", "a) the Reinsurer shall be liable to pay even though another party is unable"),
       field("shipper", "CARRIER'S AGENTS ENDORSEMENTS"),
-      field("consignee", "Warranted cargo properly lashed and secured"),
+      field("consignee", "EXPORTED BY:"),
       field("carrier", "Place of Del iv ery. Applicable only when document used as Multimodal Transport B/L"),
       field("port_of_loading", "Shanghai, China"),
       field("transshipment_port", "Singapore"),
@@ -253,12 +369,14 @@ test("global report analysis separates policy schedule, party roles, routing, an
     adjustment_line_items: [
       { description: "Damaged generator set", quantity: "1 unit", unit_price: "340250", adjusted_value: "340250", currency: "USD", basis: "Surveyed damage item", confidence: 0.98, sources: [source(2, "Damaged generator set USD 340,250.00")] },
       { description: "Total insured shipment value", quantity: null, unit_price: null, adjusted_value: "748000", currency: "USD", basis: "Policy / shipment value", confidence: 0.98, sources: [source(1, "Total insured shipment value USD 748,000.00")] },
+      { description: "Claimed insured value based on commercial invoice total for all 5 containers", quantity: "135000 kg", unit_price: "1.35", adjusted_value: "182250", currency: "USD", basis: "Provisional; affected quantity to be determined after survey", confidence: 0.98, sources: [source(2, "Commercial invoice total for all containers USD 182,250.00")] },
     ],
   };
   const draft = createUnifiedReportDraft({ claim, documents, versions: [], generatedBy: "Test Adjuster", analysis, evidence });
   const record = draft.normalizedRecord;
   const data = buildMasterReportData({ report: { normalized_claim_record: record }, claim });
 
+  assert.equal(record.facts.applicant.value, null);
   assert.equal(record.facts.shipper.value, null);
   assert.equal(record.facts.consignee.value, null);
   assert.equal(record.facts.carrier.value, null);
@@ -270,6 +388,7 @@ test("global report analysis separates policy schedule, party roles, routing, an
   assert.match(data.scalars.policy_details, /Warehouse to warehouse/);
   assert.match(data.scalars.policy_details, /Warranted cargo properly lashed and secured/);
   assert.match(data.scalars.policy_details, /Excluding theft from open or unattended trucks/);
+  assert.match(data.paragraphs.policy_conditions_section.join(" "), /evidenced wording: Including loading and unloading operations/i);
   assert.match(data.paragraphs.shipment_routing.join(" "), /Shanghai.*Singapore.*Dar Es Salaam|Shanghai.*Dar Es Salaam/i);
   assert.match(data.paragraphs.shipment_routing.join(" "), /empty container returned 16 May 2026/i);
   assert.doesNotMatch(data.scalars.policy_details, /Carrier's Agents Endorsements/i);
@@ -361,4 +480,203 @@ test("photograph selection caps material views and removes exact duplicates", ()
   assert.equal(MAX_REPORT_PHOTOGRAPHS, 12);
   assert.equal(selected.filter((item) => item.data === images[0].data).length, 1);
   assert.ok(selected.every((item) => /Material view/.test(item.caption)));
+});
+
+test("non-reefer regression keeps composite evidence, deductions, cause, policy, and issue controls separate", () => {
+  const claimSource = (page, supportingText) => ({
+    document_id: "non-reefer-bundle",
+    document_name: "Non-reefer claim bundle.pdf",
+    page,
+    supporting_text: supportingText,
+    confidence: 0.99,
+    evidence_mode: "extracted_text",
+  });
+  const extractedField = (name, value, page = 1) => ({
+    field: name,
+    value,
+    normalized_value: value,
+    confidence: 0.99,
+    requires_confirmation: false,
+    sources: [claimSource(page, String(value))],
+  });
+  const analysis = {
+    business_line: "Marine Cargo (Non-Reefer)",
+    document_types: [],
+    extracted_fields: [
+      extractedField("currency", "USD"),
+      extractedField("quantity", "1,045 cartons / 915 pcs", 18),
+      extractedField("affected_quantity", "30 surveyed; 26 damaged + 1 missing in claim schedule", 31),
+      extractedField("gross_claim_amount", "471.40", 31),
+      extractedField("adjusted_amount", "221.40", 31),
+      extractedField("deductible", "250.00", 2),
+      extractedField("salvage_amount", "0.00", 31),
+      extractedField("recovery_amount", "0.00", 31),
+      extractedField("depreciation_amount", "0.00", 31),
+      extractedField("valuation_uplift_percent", "10", 2),
+      extractedField("policy_warranties", "Warranted Independent Satisfactory Pre-Shipment Loading, Stowage,", 2),
+      extractedField("policy_exclusions", "Excluded Countries Clause: This Policy does not Cover Shipments To and/or", 3),
+      extractedField("cause_of_loss", "Physical breakage was observed; packing was described without foam; no impact damage was recorded; damage was discovered after delivery.", 30),
+    ],
+    adjustment_line_items: [
+      { description: "Model 7002 broken items", quantity: "19", unit_price: "18.20", adjusted_value: "345.80", currency: "USD", basis: "Claim schedule", confidence: 0.99, sources: [claimSource(31, "19 x 18.20 = 345.80")] },
+      { description: "Model 7003 broken items", quantity: "6", unit_price: "17.10", adjusted_value: "102.60", currency: "USD", basis: "Claim schedule", confidence: 0.99, sources: [claimSource(31, "6 x 17.10 = 102.60")] },
+      { description: "Model H-477 missing item", quantity: "1", unit_price: "23.00", adjusted_value: "23.00", currency: "USD", basis: "Claim schedule", confidence: 0.99, sources: [claimSource(31, "1 x 23.00 = 23.00")] },
+      { description: "Policy deductible", quantity: "", unit_price: "", adjusted_value: "-250.00", currency: "USD", basis: "Less deductible", confidence: 0.99, sources: [claimSource(2, "Deductible USD 250")] },
+    ],
+    evidence_findings: [
+      { analysis_domain: "condition_extent", finding: "Physical breakage affected ceramic items, while one separately claimed H-477 item was reported missing.", confidence: 0.99, sources: [claimSource(30, "broken items and one missing H-477")] },
+      { analysis_domain: "proximate_cause", finding: "The observed breakage is consistent with handling impact or cargo movement, but the available evidence does not isolate the event or custody stage.", confidence: 0.92, sources: [claimSource(30, "physical breakage observed")] },
+      { analysis_domain: "quantum_mitigation", finding: "The claimed quantity is covered by two inconsistent source positions and requires reconciliation.", confidence: 0.99, sources: [claimSource(31, "survey 30; claim schedule 27")] },
+      { analysis_domain: "policy_application", finding: "The deductible and valuation provision may apply to the reconciled loss schedule; the incomplete warranty and exclusion fragments cannot determine cover.", confidence: 0.94, sources: [claimSource(2, "Deductible USD 250; invoice value plus 10%")] },
+    ],
+  };
+  const evidence = [{
+    document_id: "non-reefer-bundle",
+    document_name: "Non-reefer claim bundle.pdf",
+    mime_type: "application/pdf",
+    extraction_status: "extracted",
+    pages: [{ page: 1, text: "Marine cargo policy and non-reefer sea shipment." }],
+  }];
+  const draft = createUnifiedReportDraft({
+    claim: { claim_number: "ULA-REG-NR-001", business_line: "Marine Cargo (Non-Reefer)" },
+    documents: [{ id: "non-reefer-bundle", file_name: "Non-reefer claim bundle.pdf" }],
+    versions: [],
+    generatedBy: "Test Adjuster",
+    analysis,
+    evidence,
+  });
+  const record = draft.normalizedRecord;
+  const data = buildMasterReportData({
+    report: { normalized_claim_record: record, status: "Draft", assignments: draft.assignments },
+    claim: { business_line: "Marine Cargo (Non-Reefer)" },
+    issueDate: "29 August 2026",
+  });
+
+  assert.equal(record.financials.itemized_claim_total, 471.40);
+  assert.equal(record.adjustment.line_items.length, 3);
+  assert.equal(record.financials.valuation_uplift_amount, 47.14);
+  assert.equal(record.financials.deductible, 250);
+  assert.equal(record.financials.provisional_indemnity, 268.54);
+  assert.equal(record.financials.concluded_indemnity, null);
+  assert.equal(record.financials.arithmetic_valid, false);
+  assert.equal(record.facts.quantity.status, "conflict");
+  assert.equal(record.facts.affected_quantity.status, "conflict");
+  assert.ok(record.conflicts.some((item) => item.field === "quantity"));
+  assert.ok(record.conflicts.some((item) => item.field === "affected_quantity"));
+  assert.doesNotMatch(JSON.stringify(record.validation_checks), /30,261|1,045,915/);
+  assert.equal(record.facts.policy_warranties.value, null);
+  assert.equal(record.facts.policy_exclusions.value, null);
+  assert.equal(record.cause_assessment.explicit_cause, null);
+  assert.ok(!record.cause_assessment.hypotheses.some((item) => /sealed transit|pre-shipment quantity/i.test(item.hypothesis)));
+  assert.match(data.paragraphs.conclusion_items[2], /deductible and valuation provision may apply/i);
+  assert.doesNotMatch(data.paragraphs.conclusion_items[2], /claimed quantity is covered/i);
+  assert.match(data.scalars.transport_document, /^Bill of Lading: Not established/i);
+  assert.equal(data.scalars.approval_date, "Pending professional approval");
+  assert.doesNotMatch(JSON.stringify(data.paragraphs), /\(Source:/);
+});
+
+test("policy OCR fragments with broken words or unmatched parentheses are withheld", () => {
+  const source = (supportingText, page) => ({
+    document_id: "fragmented-policy",
+    document_name: "policy.pdf",
+    page,
+    supporting_text: supportingText,
+    confidence: 0.98,
+    evidence_mode: "extracted_text",
+  });
+  const analysis = {
+    business_line: "Marine Cargo (Non-Reefer)",
+    extracted_fields: [{
+      field: "policy_warranties",
+      value: "Warranted immediate notice of any claim under this pol",
+      normalized_value: "Warranted immediate notice of any claim under this pol",
+      confidence: 0.98,
+      requires_confirmation: false,
+      sources: [source("Warranted immediate notice of any claim under this pol", 2)],
+    }, {
+      field: "policy_exclusions",
+      value: "excluding beverages) City LONDONGATEWAY",
+      normalized_value: "excluding beverages) City LONDONGATEWAY",
+      confidence: 0.98,
+      requires_confirmation: false,
+      sources: [source("excluding beverages) City LONDONGATEWAY", 3)],
+    }],
+    document_types: [],
+    evidence_findings: [],
+    missing_documents: [],
+    warnings: [],
+    human_review_required: [],
+  };
+  const record = createUnifiedReportDraft({
+    claim: { business_line: "Marine Cargo (Non-Reefer)" },
+    documents: [],
+    versions: [],
+    generatedBy: "Test",
+    analysis,
+    evidence: [],
+  }).normalizedRecord;
+
+  assert.equal(record.facts.policy_warranties.value, null);
+  assert.equal(record.facts.policy_exclusions.value, null);
+  assert.ok(record.conflicts.some((item) => item.field === "policy_warranties"));
+  assert.ok(record.conflicts.some((item) => item.field === "policy_exclusions"));
+});
+
+test("an aggregate claim row is not added again to its detailed adjusted schedule", () => {
+  const source = {
+    document_id: "adjustment-schedule",
+    document_name: "claim-schedule.pdf",
+    page: 4,
+    supporting_text: "Claimed damage value 16,068; adjusted detailed items 13,552.80",
+    confidence: 0.99,
+    evidence_mode: "extracted_text",
+  };
+  const field = (name, value) => ({
+    field: name,
+    value: String(value),
+    normalized_value: String(value),
+    confidence: 0.99,
+    requires_confirmation: false,
+    sources: [source],
+  });
+  const line = (description, adjustedValue) => ({
+    description,
+    quantity: "1",
+    unit_price: adjustedValue,
+    adjusted_value: adjustedValue,
+    currency: "USD",
+    basis: "Claim schedule",
+    confidence: 0.99,
+    sources: [source],
+  });
+  const analysis = {
+    business_line: "Marine Cargo (Non-Reefer)",
+    extracted_fields: [field("claim_amount", 16068), field("adjusted_amount", 13552.8), field("deductible", 0), field("currency", "USD")],
+    adjustment_line_items: [
+      line("Claimed damage value per claimant schedule", 16068),
+      line("Damaged product group A", 7000),
+      line("Damaged product group B", 6552.8),
+    ],
+    document_types: [],
+    evidence_findings: [],
+    missing_documents: [],
+    warnings: [],
+    human_review_required: [],
+  };
+  const record = createUnifiedReportDraft({
+    claim: { business_line: "Marine Cargo (Non-Reefer)" },
+    documents: [],
+    versions: [],
+    generatedBy: "Test",
+    analysis,
+    evidence: [],
+  }).normalizedRecord;
+
+  assert.equal(record.adjustment.line_items.length, 2);
+  assert.equal(record.financials.itemized_claim_total, 13552.8);
+  assert.equal(record.financials.presented_claim, 16068);
+  assert.equal(record.financials.adjusted_claim_amount, 13552.8);
+  assert.equal(record.financials.concluded_indemnity, 13552.8);
+  assert.equal(record.financials.calculation_status, "validated");
+  assert.ok(record.conflicts.some((item) => item.field === "adjustment_line_items" && /counted twice/i.test(item.message)));
 });

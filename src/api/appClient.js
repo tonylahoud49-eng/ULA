@@ -1,6 +1,7 @@
 import { documentStorage } from "@/api/documentStorage";
+import { metadataStorage } from "@/api/metadataStorage";
 import { analyzeClaimWithProvider } from "@/api/aiAnalysisClient";
-import { createUnifiedReportDraft } from "@/lib/reportingEngine";
+import { createUnifiedReportDraft, sanitizeSuggestedClaimValue } from "@/lib/reportingEngine";
 import { createEvidenceSnapshots } from "@/lib/evidenceSnapshot";
 import { sendLeaveNotification } from "@/api/leaveClient";
 import {
@@ -10,8 +11,6 @@ import {
   transitionLeave,
 } from "@/lib/leaveWorkflow";
 import { seededLeaveEmployees } from "@/lib/leaveEmployees";
-
-const DATABASE_KEY = "ula_claims_hub_database_v1";
 
 const entityDefaults = {
   Claim: { business_line: "Unclassified", status: "New", priority: "Medium", missing_documents: [] },
@@ -51,30 +50,6 @@ const createError = (message, status = 400, code) => {
   return error;
 };
 
-const readJson = (key, fallback) => {
-  try {
-    const value = globalThis.localStorage?.getItem(key);
-    return value ? JSON.parse(value) : fallback();
-  } catch {
-    return fallback();
-  }
-};
-
-const writeJson = (key, value) => {
-  try {
-    globalThis.localStorage?.setItem(key, JSON.stringify(value));
-  } catch (error) {
-    const quotaExceeded = error?.name === "QuotaExceededError" || error?.code === 22 || error?.code === 1014;
-    throw createError(
-      quotaExceeded
-        ? "Local metadata storage is full. Uploaded file content is stored separately, but older site data may need to be cleared or migrated."
-        : "Unable to save local application data. Check that browser site storage is enabled and try again.",
-      quotaExceeded ? 507 : 500,
-      quotaExceeded ? "metadata-quota-exceeded" : "metadata-storage-error",
-    );
-  }
-};
-
 // In-memory metadata cache. Authentication is authoritative on the server.
 let memoryDatabase = null;
 const entityMaps = new Map();
@@ -89,50 +64,58 @@ const rebuildEntityIndex = (entityName) => {
 };
 
 const getMemoryDatabase = () => {
-  if (!memoryDatabase) {
-    memoryDatabase = readJson(DATABASE_KEY, emptyDatabase);
-    for (const key of Object.keys(entityDefaults)) {
-      if (!Array.isArray(memoryDatabase[key])) memoryDatabase[key] = [];
-    }
-
-    let employeesChanged = false;
-    const employeeSeeds = seededLeaveEmployees();
-    for (const seed of employeeSeeds) {
-      const email = String(seed.email || "").trim().toLowerCase();
-      const index = memoryDatabase.Employee.findIndex(
-        (employee) => String(employee.email || "").trim().toLowerCase() === email,
-      );
-      if (index < 0) {
-        const timestamp = new Date().toISOString();
-        memoryDatabase.Employee.push({ ...seed, created_date: timestamp, updated_date: timestamp });
-        employeesChanged = true;
-        continue;
-      }
-      const current = memoryDatabase.Employee[index];
-      const canonical = {
-        ...current,
-        name: seed.name,
-        email: seed.email,
-        account_id: seed.account_id,
-        role: seed.role,
-        department: seed.department,
-      };
-      if (JSON.stringify(canonical) !== JSON.stringify(current)) {
-        memoryDatabase.Employee[index] = canonical;
-        employeesChanged = true;
-      }
-    }
-
-    for (const key of Object.keys(entityDefaults)) rebuildEntityIndex(key);
-    if (employeesChanged) writeJson(DATABASE_KEY, memoryDatabase);
-  }
+  if (!memoryDatabase) throw createError("Local application metadata has not finished loading.", 503, "metadata-not-ready");
   return memoryDatabase;
 };
 
-const saveMemoryDatabase = () => {
-  if (memoryDatabase) {
-    writeJson(DATABASE_KEY, memoryDatabase);
+let metadataSaveQueue = Promise.resolve();
+const saveMemoryDatabase = async () => {
+  if (!memoryDatabase) return;
+  const snapshot = clone(memoryDatabase);
+  const operation = metadataSaveQueue
+    .catch(() => undefined)
+    .then(() => metadataStorage.save(snapshot));
+  metadataSaveQueue = operation;
+  await operation;
+};
+
+const initializeMemoryDatabase = async () => {
+  if (memoryDatabase) return;
+  memoryDatabase = await metadataStorage.load(emptyDatabase);
+  for (const key of Object.keys(entityDefaults)) {
+    if (!Array.isArray(memoryDatabase[key])) memoryDatabase[key] = [];
   }
+
+  let employeesChanged = false;
+  const employeeSeeds = seededLeaveEmployees();
+  for (const seed of employeeSeeds) {
+    const email = String(seed.email || "").trim().toLowerCase();
+    const index = memoryDatabase.Employee.findIndex(
+      (employee) => String(employee.email || "").trim().toLowerCase() === email,
+    );
+    if (index < 0) {
+      const timestamp = new Date().toISOString();
+      memoryDatabase.Employee.push({ ...seed, created_date: timestamp, updated_date: timestamp });
+      employeesChanged = true;
+      continue;
+    }
+    const current = memoryDatabase.Employee[index];
+    const canonical = {
+      ...current,
+      name: seed.name,
+      email: seed.email,
+      account_id: seed.account_id,
+      role: seed.role,
+      department: seed.department,
+    };
+    if (JSON.stringify(canonical) !== JSON.stringify(current)) {
+      memoryDatabase.Employee[index] = canonical;
+      employeesChanged = true;
+    }
+  }
+
+  for (const key of Object.keys(entityDefaults)) rebuildEntityIndex(key);
+  if (employeesChanged) await saveMemoryDatabase();
 };
 
 const isDataUrl = (value) => typeof value === "string" && /^data:[^,]*,/i.test(value);
@@ -219,13 +202,13 @@ const migrateLegacyDocumentContent = async () => {
     database.ClaimDocument = migratedDocuments;
     rebuildEntityIndex("Claim");
     rebuildEntityIndex("ClaimDocument");
-    saveMemoryDatabase();
+    await saveMemoryDatabase();
   }
 };
 
 const prepareDatabase = () => {
   if (!databasePreparation) {
-    databasePreparation = migrateLegacyDocumentContent().catch((error) => {
+    databasePreparation = initializeMemoryDatabase().then(migrateLegacyDocumentContent).catch((error) => {
       databasePreparation = undefined;
       throw error;
     });
@@ -326,7 +309,7 @@ const createEntityApi = (entityName) => ({
     };
     database[entityName] = [...(database[entityName] || []), record];
     entityMaps.get(entityName)?.set(record.id, record);
-    saveMemoryDatabase();
+    await saveMemoryDatabase();
     return clone(record);
   },
 
@@ -347,6 +330,12 @@ const createEntityApi = (entityName) => ({
     const records = database[entityName] || [];
     const index = records.findIndex((record) => record.id === id);
     if (index < 0) throw createError(`${entityName} record not found`, 404);
+    if (entityName === "ReportVersion" && (values.status === "Final" || values.issue_state === "Final")) {
+      const blockers = records[index]?.normalized_claim_record?.report_quality?.issue_blockers || [];
+      if (blockers.length) {
+        throw createError(`The report cannot be issued until the quality blockers are resolved: ${blockers.join(" ")}`, 409, "report-quality-blocked");
+      }
+    }
     const updated = {
       ...records[index],
       ...clone(values),
@@ -356,7 +345,7 @@ const createEntityApi = (entityName) => ({
     records[index] = updated;
     database[entityName] = records;
     entityMaps.get(entityName)?.set(id, updated);
-    saveMemoryDatabase();
+    await saveMemoryDatabase();
     return clone(updated);
   },
 
@@ -367,7 +356,7 @@ const createEntityApi = (entityName) => ({
     const deletedRecord = entityMaps.get(entityName)?.get(id) || (database[entityName] || []).find((record) => record.id === id);
     database[entityName] = (database[entityName] || []).filter((record) => record.id !== id);
     entityMaps.get(entityName)?.delete(id);
-    saveMemoryDatabase();
+    await saveMemoryDatabase();
     if (entityName === "ClaimDocument" && deletedRecord) {
       await documentStorage.delete(deletedRecord.storage_key || deletedRecord.file_url);
     }
@@ -536,10 +525,11 @@ const buildAnalysis = async ({ claim_id: claimId, provider, model, disable_fallb
   // Merge suggestions into claim fields only if they are currently empty/null/blank
   // and never overwrite user-entered data
   for (const [key, val] of Object.entries(suggestions)) {
+    const safeValue = sanitizeSuggestedClaimValue(key, val);
     const currentVal = claim[key];
     const isEmpty = currentVal === undefined || currentVal === null || currentVal === "" || (key === "business_line" && currentVal === "Unclassified");
-    if (isEmpty && val !== undefined && val !== null && val !== "") {
-      claimUpdates[key] = val;
+    if (isEmpty && safeValue !== null) {
+      claimUpdates[key] = safeValue;
     }
   }
 
@@ -626,12 +616,12 @@ const buildReport = async ({ claim_id: claimId, edited_data: editedData }) => {
   return { data: { report, claim_id: claimId } };
 };
 
-const persistLeaveEmailResult = (requestId, target, delivery) => {
+const persistLeaveEmailResult = async (requestId, target, delivery) => {
   const latest = getMemoryDatabase();
   const recorded = recordLeaveEmailDelivery(latest, requestId, target, delivery);
   memoryDatabase = recorded.database;
   rebuildEntityIndex("Leave");
-  saveMemoryDatabase();
+  await saveMemoryDatabase();
   return recorded.leave;
 };
 
@@ -639,7 +629,7 @@ const notifyLeave = async (leave, employee, target) => {
   const event = eventForLeave(leave, target);
   try {
     const result = await sendLeaveNotification({ ...event, leave, employee });
-    const updatedLeave = persistLeaveEmailResult(leave.id, target, result.delivery);
+    const updatedLeave = await persistLeaveEmailResult(leave.id, target, result.delivery);
     return { leave: updatedLeave, delivery: result.delivery, email_error: null };
   } catch (error) {
     const previousAttempts = Number(leave.email_delivery?.[target]?.attempts || 0);
@@ -651,7 +641,7 @@ const notifyLeave = async (leave, employee, target) => {
       code: error.code || "leave-email-delivery-failed",
       retryable: error.status !== 400 && error.status !== 403,
     };
-    const updatedLeave = persistLeaveEmailResult(leave.id, target, delivery);
+    const updatedLeave = await persistLeaveEmailResult(leave.id, target, delivery);
     return { leave: updatedLeave, delivery, email_error: error.message };
   }
 };
@@ -664,7 +654,7 @@ const submitLeaveRequest = async (payload) => {
   if (created.created) {
     memoryDatabase = created.database;
     rebuildEntityIndex("Leave");
-    saveMemoryDatabase();
+    await saveMemoryDatabase();
   }
   const notified = await notifyLeave(created.leave, created.employee, "admin_notification");
   return { data: { request: notified.leave, delivery: notified.delivery, email_error: notified.email_error, created: created.created } };
@@ -683,7 +673,7 @@ const decideLeaveRequest = async ({ request_id: requestId, decision }) => {
     memoryDatabase = transitioned.database;
     rebuildEntityIndex("Leave");
     rebuildEntityIndex("Employee");
-    saveMemoryDatabase();
+    await saveMemoryDatabase();
   }
   const notified = await notifyLeave(transitioned.leave, transitioned.employee, "employee_notification");
   return { data: { request: notified.leave, employee: transitioned.employee, delivery: notified.delivery, email_error: notified.email_error, changed: transitioned.changed } };

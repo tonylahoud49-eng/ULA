@@ -57,7 +57,7 @@ function transformTable(table, index) {
   if (index === 2) {
     rows[1] = replaceCells(rows[1], ["{{preparer_name}}", "{{reviewer_name}}", "{{approver_name}}"]);
     rows[3] = replaceCells(rows[3], ["{{preparer_designation}}", "{{reviewer_designation}}", "{{approver_designation}}"]);
-    rows[7] = replaceCells(rows[7], ["{{issue_date}}"]);
+    rows[7] = replaceCells(rows[7], ["{{approval_date}}"]);
   } else if (index === 3) {
     rows[1] = replaceCells(rows[1], ["{{version_number}}", "{{issue_date}}", "{{revision_reason}}"]);
   } else if (index === 4) {

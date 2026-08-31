@@ -20,30 +20,27 @@ const ANTHROPIC_MESSAGES_URL = "https://api.anthropic.com/v1/messages";
 const DEFAULT_MODEL = "claude-sonnet-4-6";
 const DEFAULT_MAX_OUTPUT_TOKENS = 64_000;
 const MAX_SONNET_4_6_OUTPUT_TOKENS = 64_000;
-const ANTHROPIC_JSON_CONTRACT = `The response is constrained by Anthropic JSON structured output. Return only the structured payload: no Markdown fences, preface, trailing commentary, or extra keys.
-All confidence values must be between 0 and 1. Use only these exact values:
+const ANTHROPIC_JSON_CONTRACT = `Return only the structured payload: no Markdown fences, preface, trailing commentary, or extra keys.
+Confidence is 0..1. Exact values:
 business_line=${JSON.stringify(BUSINESS_LINES)}
 document_type=${JSON.stringify(DOCUMENT_TYPES)}
 field=${JSON.stringify(CLAIM_FIELDS)}
 evidence_mode=${JSON.stringify(EVIDENCE_MODES)}
 analysis_domain=${JSON.stringify(ANALYSIS_DOMAINS)}
-The transport encoding rules below override the earlier canonical null/page wording; the application reconstructs canonical nulls locally. Return exactly two top-level arrays: sources and records. Register each distinct citation once in sources, then cite its zero-based array index in each record's source_refs. Use page=0 when the source page is unknown. Never use an invalid source index.
-Every record must include every key in the constrained schema. Use an empty string, false, 0, or [] for keys that do not apply to that record. Use only these record kinds and mappings:
-- classification: key=business_line, text=rationale, confidence and source_refs.
-- document_type: key=document_type, text=rationale, flag=sufficient_information, confidence and source_refs.
-- field: key=field, value=value, normalized_value=normalized value (empty if unavailable), flag=requires_confirmation, confidence and source_refs. Return only evidence-supported non-null field records; the application adds unsupported fields locally as null.
-- adjustment: text=description, quantity, unit_price, value=adjusted_value, currency, basis, confidence and source_refs.
-- missing_document: key=document_type, text=reason, details=missing_information.
-- finding: key=analysis_domain, text=finding, confidence and source_refs. Use general only when none of the six professional domains applies.
-- summary, warning, review: put the complete item in text; all other record keys use their empty defaults.
-Return exactly one classification and one summary record. Records of every other kind may repeat without an artificial limit. Never omit a material claim finding, conflict, causation issue, coverage issue, liability issue, quantum item, salvage issue, or recovery issue.
-Be concise without losing analysis: do not repeat the same fact across sections; keep summary to at most 4 short sentences; keep each rationale, basis, warning, and review item to one short sentence. A material finding may use a compact analytical paragraph of up to 4 sentences and normally no more than 700 characters when needed to connect fact, significance, counterevidence or alternatives, and a proportionate provisional assessment. Split genuinely distinct issues into separate finding records. Include the strongest non-duplicate sources needed to support each item and both sides of every conflict; keep each supporting_text excerpt exact and normally at most 240 characters, using more only when needed to preserve meaning. Return only detected substantive document_types and only required missing_documents.`;
+These transport rules override canonical null/page wording; the app restores canonical nulls. Return only top-level arrays sources and records. Register each citation once; records cite its zero-based source_refs index. Unknown page=0; never cite an invalid index.
+Every record includes every schema key; use "", false, 0, or [] where inapplicable. Kinds:
+- classification: key=business_line; text=rationale; confidence; source_refs.
+- document_type: key=document_type; text=rationale; flag=sufficient_information; confidence; source_refs.
+- field: key=field; value; normalized_value; flag=requires_confirmation; confidence; source_refs. Return only evidence-supported non-null field records; the app adds null fields.
+- adjustment: text=description; quantity; unit_price; value=adjusted_value; currency; basis; confidence; source_refs. If quantity/conversion/rate are stated but no line total, preserve the expression/rate, leave value empty, and cite all inputs.
+- missing_document: key=document_type; text=reason; details=missing_information.
+- finding: key=analysis_domain; text=finding; confidence; source_refs. Use general only if no professional domain applies.
+- summary, warning, review: complete item in text; other keys use defaults.
+Return exactly one classification and one summary; other kinds may repeat. Never omit a material claim finding, conflict, cause/coverage/liability/quantum/salvage/recovery issue.
+Be concise: no repeated facts; summary <=4 short sentences; rationale/basis/warning/review <=1 sentence. A finding may use a compact analytical paragraph of up to 4 sentences, normally <=700 characters, linking facts, significance, alternatives and provisional assessment. Split distinct issues. Cite strong non-duplicate support and both conflict sides. supporting_text is exact and normally <=240 characters. Return only detected document_types and required missing_documents.`;
 const ANTHROPIC_SYSTEM_INSTRUCTIONS = `${SYSTEM_INSTRUCTIONS}
 
-Cost and calculation boundary:
-- Use Claude for document understanding, classification, conflict identification, and causal reasoning.
-- Extract source-stated quantities, rates, totals, deductions, and valuation terms, but do not reconstruct or calculate claim totals.
-- The deterministic application layer performs arithmetic, reconciliation, validation, and final adjustment calculations.
+Calculation boundary: Claude understands documents and extracts source-stated financial inputs, but does not calculate claim totals. The application performs arithmetic, reconciliation, validation, and adjustment calculations.
 
 ${ANTHROPIC_JSON_CONTRACT}`;
 
@@ -342,7 +339,8 @@ function reconstructCanonicalAnalysis(transport) {
   const documentTypeRecords = knownRecords("document_type", DOCUMENT_TYPES);
   const fieldRecords = knownRecords("field", CLAIM_FIELDS);
   const missingDocumentRecords = knownRecords("missing_document", DOCUMENT_TYPES);
-  const adjustmentRecords = recordsOf("adjustment").filter((record) => record.text.trim() && record.value.trim());
+  const adjustmentRecords = recordsOf("adjustment").filter((record) => record.text.trim()
+    && (record.value.trim() || (record.quantity.trim() && record.unit_price.trim())));
   const findingRecords = knownRecords("finding", ANALYSIS_DOMAINS).filter((record) => record.text.trim());
   const discardedKnownKeyRecords = recordsOf("document_type").length - documentTypeRecords.length
     + recordsOf("field").length - fieldRecords.length
@@ -682,12 +680,27 @@ function deterministicBusinessLine(evidence) {
   const billOfLading = recoveredDocumentTypes.find((item) => item.document_type === "Bill of Lading");
   const seaTransport = billOfLading
     && /\b(?:container|vessel|port\s+of\s+(?:loading|discharge)|shipped\s+on\s+board)\b/i.test(text);
-  if (!seaTransport) return null;
-  const source = billOfLading.sources[0];
+  const marinePolicyTransportSource = seaTransport ? null : groundedEvidencePage(
+    evidence,
+    /\b(?:marine\s+(?:cargo\s+)?insurance\s+(?:policy|certificate)|branch\s*:?\s*marine(?:\s+cargo)?)\b/i,
+    [
+      /\b(?:means\s+of\s+conveyance|vessel(?:\s+name)?)\b/i,
+      /\b(?:bill|b\/?l)\s*(?:no\.?|number)?\s*[:#]?\s*[A-Z0-9][A-Z0-9/-]{5,}\b/i,
+      /\b[A-Z]{4}\d{7}\b/,
+      /\bport\s+of\s+(?:loading|discharge)\b/i,
+    ],
+    0.92,
+  );
+  if (!seaTransport && !marinePolicyTransportSource) return null;
+  if (/\b(?:(?:reefer|refrigerated)\s+(?:container|cargo|goods|products?)|(?:frozen|chilled)\s+(?:cargo|goods|products?)|temperature[- ]controlled)\b/i.test(text)
+    && !specialistCandidates.some(([businessLine]) => businessLine === "Marine Cargo (Reefer/GFS)")) return null;
+  const source = seaTransport ? billOfLading.sources[0] : marinePolicyTransportSource;
   return source ? {
     business_line: "Marine Cargo (Non-Reefer)",
-    confidence: 0.94,
-    rationale: "Current uploaded evidence establishes packaged or containerized sea carriage under a bill of lading.",
+    confidence: seaTransport ? 0.94 : 0.92,
+    rationale: seaTransport
+      ? "Current uploaded evidence establishes packaged or containerized sea carriage under a bill of lading."
+      : "Current uploaded evidence independently establishes a marine cargo policy together with multiple sea-transport identifiers on the same source page.",
     sources: [source],
   } : null;
 }
@@ -1240,6 +1253,7 @@ export const anthropicProviderInternals = {
   resolveMaxOutputTokens,
   systemInstructions: ANTHROPIC_SYSTEM_INSTRUCTIONS,
   contentBlocks,
+  deterministicBusinessLine,
   enforceAnthropicGrounding,
   anthropicTextCandidates,
   buildRequestBody: buildAnthropicRequestBody,

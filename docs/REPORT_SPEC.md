@@ -2,7 +2,7 @@
 
 ## Status and scope
 
-This file records the report rules implemented in the current ULA production code and enforced by the current report tests as of 26 August 2026. It is the mandatory reference for report-related work.
+This file records the report rules implemented in the current ULA production code and enforced by the current report tests as of 31 August 2026. It is the mandatory reference for report-related work.
 
 This specification covers AI claim analysis, normalized facts, professional reasoning, calculations, report narrative, master DOCX export, evidence provenance, historical style references, and photograph selection. It does not authorize a change to production behavior.
 
@@ -161,7 +161,7 @@ required insured value = invoice total × (1 + evidenced uplift percentage / 100
 underinsurance = required insured value - documented insured value
 ```
 
-The comparison allows a USD 0.01 rounding tolerance. The insured value is adequate when:
+The comparison allows a 0.01 rounding tolerance in the single supported reporting currency. The insured value is adequate when:
 
 ```text
 documented insured value + 0.01 >= required insured value
@@ -193,6 +193,10 @@ Keep these values separate:
 
 Valid adjustment rows are evidenced damaged or missing property, repair costs, loss-related fees, or supported deductions. Policy limits, sums insured, shipment values, invoice or FOB totals, premium, valuation basis, and freight totals are not loss rows. Never add a full shipment value to the damaged-item value.
 
+A quotation, estimate, pro-forma invoice, repair proposal, or supplier offer is provisional valuation evidence. It is not automatically a presented claim, incurred cost, accepted repair, or fair-and-reasonable adjusted amount. A presented claim must be supported independently by a claim form, demand, ledger, paid invoice, or clear claim correspondence. Quotation-based rows may remain in the adjustment table when clearly described as provisional valuation evidence.
+
+Deductible wording is retained and parsed as a formula. The application keeps separate the percentage, monetary minimum, monetary maximum, fixed each-loss amount, franchise, currency, and annual/aggregate basis. A percentage and a minimum must never be concatenated into one monetary number. For an ordinary percentage deductible, the application calculates the percentage against the supported adjusted-loss basis, applies the supported minimum and maximum, and uses an explicit claim-specific deduction row in preference when reconciled. Aggregate erosion and franchise effect are not applied automatically without the required claim-specific evidence. A deductible in a different currency is not converted or applied without an evidenced conversion basis.
+
 The calculation order is:
 
 1. Reconcile each supported line, including quantity × rate where available.
@@ -201,9 +205,9 @@ The calculation order is:
 4. Deduct the supported deductible, salvage, recovery, and depreciation.
 5. Compare any source-stated adjusted amount with the deterministic result.
 
-Unknown values are not zero. A concluded indemnity is produced only when a supported explicit adjusted amount exists or every required calculation input is available. Arithmetic conflicts remain visible for professional review.
+Unknown values are not zero. A concluded indemnity is produced only when a supported explicit adjusted amount exists or every required calculation input is available. Arithmetic conflicts remain visible for professional review. A reportable indemnity is never negative; where supported deductions exceed the supported loss, the provisional payable is floored at zero and the calculation remains visible for review.
 
-The statement `fair & reasonable` is allowed only when there is a reconciled USD adjusted amount supported by an adjusted-amount fact or a validated itemized schedule, with valid arithmetic. Otherwise use the exact unsupported-amount conclusion wording below.
+The statement `fair & reasonable` is allowed only when there is one supported ISO reporting currency and a non-negative reconciled adjusted amount supported by an adjusted-amount fact or a validated non-quotation itemized schedule, with valid arithmetic. Otherwise use the unsupported-amount conclusion wording below.
 
 ## Conclusion exact order and wording
 
@@ -211,11 +215,13 @@ The statement `fair & reasonable` is allowed only when there is a reconciled USD
 
 When supported:
 
-> The above adjusted claim amount USD {formatted amount} is considered fair & reasonable.
+> The above adjusted claim amount {ISO currency} {formatted amount} is considered fair & reasonable.
 
 When not supported:
 
-> The above adjusted claim amount in USD cannot be stated as fair & reasonable because a fully supported and reconciled USD adjusted amount is not established from the reviewed evidence.
+> The above adjusted claim amount in {supported ISO currency} cannot be stated as fair & reasonable because a fully supported and reconciled adjusted amount is not established from the reviewed evidence.
+
+When no single reporting currency is supported, replace `in {supported ISO currency}` with `in a single reporting currency`. When the amount is supported only by quotation or estimate evidence, append that limitation expressly.
 
 ### Point 2 - cause
 
@@ -271,6 +277,10 @@ Claude must analyze the complete current-claim evidence set together, including 
 12. Identify counterevidence, alternatives, limitations, and what evidence could change the conclusion.
 13. Keep the executive summary concise and reject OCR contamination or irrelevant detail.
 14. Return a structured suggestion for human review. Cause, coverage, liability, quantum, recommendations, and conclusions remain reviewable and require professional approval before issue.
+15. Extract master and house transport references separately where labelled. Retain source-specific vessel and voyage positions; a conflict between a bill, carrier/tracking record, survey, or other transport source must be stated and must not be converted into an absent transport reference.
+16. Classify policy wording by its evidenced function. `Warranted` wording belongs under warranties, procedural or precedent wording under conditions, and `Excluding` wording under exclusions; their possible coverage effect does not permit category mixing.
+17. Compare a printed invoice total with an amount-in-words on the same invoice. Any mismatch is a material financial conflict and prevents definitive adequacy, underinsurance, or final-quantum use until reconciled.
+18. Return complete professional sentences and remove repeated propositions. Client narrative must not end at a dangling connector, colon, opening parenthesis, `p.`, or `pp.`.
 
 PDF extraction must not assume that a page with searchable text is visually irrelevant. A searchable page containing a materially sized raster image may also be rendered for Claude vision so that captioned photographs, OCR overlays, logger screens, scans, and mixed text/photo survey pages are not omitted. Additional searchable visual pages are bounded locally; ordinary text pages, logos, and decorative marks must not flood the request. The extracted text remains the verification source for textual facts, while genuinely visual findings use visual provenance.
 
@@ -290,6 +300,12 @@ Before returning the structured result, Claude performs a Director-grade interna
 12. Audit the final structured result for unsupported assertions, missed evidence, generic filler, one-sided conflicts, repeated findings, conflated financial concepts, and conclusions that are stronger or weaker than the evidence.
 
 Material findings may use a compact analytical paragraph of up to four sentences when needed to connect fact, significance, counterevidence or alternatives, and a proportionate provisional assessment. Concision must not reduce a material issue to a bare observation or generic review warning.
+
+## Final issue quality gate
+
+Draft generation may retain visible review items, but a report cannot be changed to a controlled final issue or exported as final while a mechanical issue blocker remains. Mechanical blockers include a negative reportable indemnity, an adjusted amount without one supported ISO currency, dangling or incomplete client narrative, or warranty wording presented as an exclusion. Final document-control names and approval date must also be complete. Material evidential and professional review items remain subject to the authorized adjuster and approver; the gate does not invent facts or make the coverage decision.
+
+Generated client content must not inherit yellow text highlighting from editing or template placeholders. Table shading, borders, brand colours, and other approved design elements are unaffected.
 
 ## No fabrication
 
@@ -482,7 +498,7 @@ The global Director wording, approved section order, empty Enclosure and Outstan
 - Appendix A uses the heading `Appendix A - Photographs`.
 - Use one brief sentence describing what the photographs show. The current standard sentence is:
 
-  > Photographs show the insured interest before loading and during inspection, including its packaging, identification markings, and observed condition.
+  > Photographs reproduce material views available in the current claim file, including the insured interest, packaging, identification markings, and observed condition where shown.
 
 - Do not print document filenames, evidence IDs, per-photo labels such as `Photograph 1`, or document lists in Appendix A.
 - Do not fabricate photographs or repeat a photograph to reach a target count.
@@ -516,10 +532,9 @@ AI output is a draft suggestion. Professional review and approval are always req
 
 These mismatches exist in the current code and are documented here; this file does not change them:
 
-1. The AI system prompt lists warranties/conditions/exclusions before cause in its preferred reasoning sequence, while the approved master report, template manifest, and DOCX tests place `CAUSE OF LOSS` before `RELEVANT POLICY WARRANTIES & CONDITIONS`.
-2. `src/lib/reportTemplates.js` still stores the metadata title `Outstanding/ Not Available Documents`, while the issued DOCX and its tests use the approved title `Outstanding Documents`.
-3. The issued DOCX leaves `Enclosure to this report` and `Outstanding Documents` empty, but the Markdown draft/preview path currently falls back to a `Not established from the reviewed evidence` bullet for an empty list.
-4. `MIN_REPORT_PHOTOGRAPHS` is declared as 3, but the current selection/export path does not enforce a minimum; it may export fewer than three or no photographs when sufficient current-claim images are unavailable.
-5. The legacy file `samples/templates/REPORTING-SPEC.md` says photographs require printed evidence IDs, captions, dates, and source references. The current approved DOCX intentionally prints only the one-sentence Appendix description and the photographs; provenance remains internal.
+1. `src/lib/reportTemplates.js` still stores the metadata title `Outstanding/ Not Available Documents`, while the issued DOCX and its tests use the approved title `Outstanding Documents`.
+2. The issued DOCX leaves `Enclosure to this report` and `Outstanding Documents` empty, but the Markdown draft/preview path currently falls back to a `Not established from the reviewed evidence` bullet for an empty list.
+3. `MIN_REPORT_PHOTOGRAPHS` is declared as 3, but the current selection/export path does not enforce a minimum; it may export fewer than three or no photographs when sufficient current-claim images are unavailable.
+4. The legacy file `samples/templates/REPORTING-SPEC.md` says photographs require printed evidence IDs, captions, dates, and source references. The current approved DOCX intentionally prints only the one-sentence Appendix description and the photographs; provenance remains internal.
 
 Do not resolve any listed mismatch as part of unrelated work. A behavior change requires explicit approval, corresponding production changes, and updated tests and specification.

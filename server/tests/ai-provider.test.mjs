@@ -976,6 +976,76 @@ test("anthropic deterministically recovers a missing marine classification from 
   assert.equal(claimAnalysisSchema.safeParse(result.analysis).success, true);
 });
 
+test("anthropic recovers marine classification from a marine policy page with multiple verified sea-transport identifiers", () => {
+  const evidence = [{
+    document_id: "marine-certificate-transport-1",
+    document_name: "claim-bundle.pdf",
+    mime_type: "application/pdf",
+    kind: "pdf",
+    extraction_status: "extracted",
+    pages: [{
+      page: 1,
+      text: [
+        "MARINE INSURANCE CERTIFICATE",
+        "Branch: MARINE CARGO",
+        "Policy: MC/0002606/000 3297",
+        "Means Of Conveyance: MSC ABIDJAN",
+        "BILL MEDULB209962",
+        "Container MSNU7244246",
+        "Commodity: bottled food products",
+      ].join("\n"),
+    }],
+  }];
+  const parsed = structuredClone(validAnthropicAnalysisFixture);
+  parsed.classification = {
+    business_line: "Other / Requires Review",
+    confidence: 0,
+    rationale: "Claude returned no recognized classification record.",
+    sources: [],
+  };
+  parsed.document_types = [];
+  parsed.fields = [];
+  parsed.evidence_findings = [];
+  parsed.missing_documents = [];
+
+  const result = anthropicProviderInternals.enforceAnthropicGrounding(parsed, evidence);
+
+  assert.equal(result.classification.business_line, "Marine Cargo (Non-Reefer)");
+  assert.equal(result.classification.confidence, 0.92);
+  assert.equal(result.classification.sources[0].document_id, "marine-certificate-transport-1");
+  assert.match(result.classification.rationale, /multiple sea-transport identifiers/i);
+  assert.equal(result.document_types.some((item) => item.document_type === "Bill of Lading"), false);
+});
+
+test("anthropic does not force a non-reefer classification when cold-chain evidence is unresolved", () => {
+  const evidence = [{
+    document_id: "cold-chain-marine-1",
+    document_name: "claim-bundle.pdf",
+    mime_type: "application/pdf",
+    kind: "pdf",
+    extraction_status: "extracted",
+    pages: [{
+      page: 1,
+      text: "MARINE INSURANCE CERTIFICATE\nMeans Of Conveyance: MV TEST\nBILL ABCD123456\nContainer TEST1234567\nFrozen refrigerated cargo",
+    }],
+  }];
+  const parsed = structuredClone(validAnthropicAnalysisFixture);
+  parsed.classification = {
+    business_line: "Other / Requires Review",
+    confidence: 0,
+    rationale: "Claude returned no recognized classification record.",
+    sources: [],
+  };
+  parsed.document_types = [];
+  parsed.fields = [];
+  parsed.evidence_findings = [];
+  parsed.missing_documents = [];
+
+  const result = anthropicProviderInternals.enforceAnthropicGrounding(parsed, evidence);
+
+  assert.equal(result.classification.business_line, "Other / Requires Review");
+});
+
 test("anthropic does not treat a policy-number mention in a claim form as an uploaded policy", () => {
   const evidence = [{
     document_id: "claim-only-1",

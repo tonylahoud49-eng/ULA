@@ -8,6 +8,8 @@ import { simpleParser } from "mailparser";
 const TEXT_EXTENSIONS = new Set([".txt", ".csv", ".json", ".xml", ".html", ".htm", ".md", ".rtf"]);
 const IMAGE_EXTENSIONS = new Set([".png", ".jpg", ".jpeg", ".webp", ".gif"]);
 const MAX_SEARCHABLE_VISUAL_PAGES = 24;
+const SPARSE_SEARCHABLE_PAGE_CHARACTERS = 32;
+const MAX_ANTHROPIC_MANY_IMAGE_DIMENSION = 1_900;
 const MATERIAL_RASTER_MIN_WIDTH = 180;
 const MATERIAL_RASTER_MIN_HEIGHT = 180;
 const MATERIAL_RASTER_MIN_AREA = 80_000;
@@ -58,7 +60,13 @@ const xmlText = (xml) => normalizeWhitespace(
 );
 
 async function renderPdfPageForVision(page, pageNumber) {
-  const viewport = page.getViewport({ scale: 1.25 });
+  const preferredScale = 1.25;
+  const preferredViewport = page.getViewport({ scale: preferredScale });
+  const largestPreferredDimension = Math.max(preferredViewport.width, preferredViewport.height);
+  const boundedScale = largestPreferredDimension > MAX_ANTHROPIC_MANY_IMAGE_DIMENSION
+    ? preferredScale * MAX_ANTHROPIC_MANY_IMAGE_DIMENSION / largestPreferredDimension
+    : preferredScale;
+  const viewport = page.getViewport({ scale: boundedScale });
   const canvas = createCanvas(Math.ceil(viewport.width), Math.ceil(viewport.height));
   const context = canvas.getContext("2d");
   await page.render({ canvasContext: context, viewport }).promise;
@@ -128,24 +136,46 @@ async function extractPdf(buffer) {
   const pdf = await task.promise;
   const pages = [];
   const visionImages = [];
-  let searchableVisualPages = 0;
+  const searchableVisualCandidates = [];
+  const imageOnlyPages = [];
   for (let pageNumber = 1; pageNumber <= pdf.numPages; pageNumber += 1) {
     const page = await pdf.getPage(pageNumber);
     const content = await page.getTextContent();
     const extracted = { page: pageNumber, ...pdfPageText(content.items) };
     pages.push(extracted);
     const imageOnly = !extracted.text;
-    const materialSearchableVisual = !imageOnly
-      && searchableVisualPages < MAX_SEARCHABLE_VISUAL_PAGES
-      && await pdfPageHasMaterialRaster(page, pdfjs.OPS);
-    if (materialSearchableVisual) searchableVisualPages += 1;
-    if (imageOnly || materialSearchableVisual) {
-      const rendered = await renderPdfPageForVision(page, pageNumber);
-      if (rendered) visionImages.push({
-        ...rendered,
-        vision_reason: imageOnly ? "image-only" : "material-raster-with-searchable-text",
+    if (imageOnly) {
+      imageOnlyPages.push(pageNumber);
+    } else if (await pdfPageHasMaterialRaster(page, pdfjs.OPS)) {
+      const textLength = extracted.text.length;
+      const sparseText = textLength <= SPARSE_SEARCHABLE_PAGE_CHARACTERS;
+      const materialClaimTerms = (extracted.text.match(/\b(?:survey|statement of facts|inspection|damage|damaged|deteriorat|temperature|logger|photograph|container|customs|claim)\b/gi) || []).length;
+      searchableVisualCandidates.push({
+        pageNumber,
+        sparseText,
+        // Rank the complete document before applying the cap. Otherwise early
+        // OCR policy scans can hide later SOFs, logger screens, and photographs.
+        priority: (sparseText ? 1_000_000 : 0) + materialClaimTerms * 10_000 - textLength,
       });
     }
+    page.cleanup();
+  }
+
+  const selectedSearchableVisualPages = searchableVisualCandidates
+    .sort((left, right) => right.priority - left.priority || left.pageNumber - right.pageNumber)
+    .slice(0, MAX_SEARCHABLE_VISUAL_PAGES);
+  const selectedPages = [
+    ...imageOnlyPages.map((pageNumber) => ({ pageNumber, reason: "image-only" })),
+    ...selectedSearchableVisualPages.map((candidate) => ({
+      pageNumber: candidate.pageNumber,
+      reason: candidate.sparseText ? "sparse-searchable-visual" : "material-raster-with-searchable-text",
+    })),
+  ].sort((left, right) => left.pageNumber - right.pageNumber);
+
+  for (const selected of selectedPages) {
+    const page = await pdf.getPage(selected.pageNumber);
+    const rendered = await renderPdfPageForVision(page, selected.pageNumber);
+    if (rendered) visionImages.push({ ...rendered, vision_reason: selected.reason });
     page.cleanup();
   }
   return { pages, visionImages };

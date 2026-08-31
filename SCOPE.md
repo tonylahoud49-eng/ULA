@@ -13,7 +13,7 @@
 | Frontend | React 18 + Vite |
 | Styling | Tailwind CSS + custom design tokens (see `DESIGN.md`) |
 | Routing | React Router v6 |
-| State / Data | React Query, localStorage (metadata), IndexedDB (uploaded file blobs) |
+| State / Data | React Query, IndexedDB (metadata and uploaded file blobs; separate stores) |
 | Server | Express.js (`server/index.mjs`) — runs alongside Vite dev server |
 | AI Providers | Google Gemini, OpenAI (Responses API), OpenRouter (Chat Completions API) |
 | Auth | Local demo auth (email/password + Google OAuth stub), stored in localStorage |
@@ -37,7 +37,7 @@
 
 ---
 
-## Core Entities (localStorage)
+## Core Entities (IndexedDB metadata store)
 
 | Entity | Key Fields |
 | --- | --- |
@@ -155,7 +155,7 @@ This is the primary guided workflow — a 5-step wizard.
 2. The **DocumentUploader** component appears — the user drags/drops or browses files.
 3. Each uploaded file is:
    - Stored in **IndexedDB** via `documentStorage.save()` (binary blob stays out of localStorage).
-   - A **ClaimDocument** metadata record is created in localStorage with `storage_key`, `file_name`, `file_mime_type`, `file_type`, `category`, etc.
+   - A **ClaimDocument** metadata record is created in IndexedDB with `storage_key`, `file_name`, `file_mime_type`, `file_type`, `category`, etc.
 4. The user can upload multiple files (PDFs, images, DOCX, etc.).
 5. The **Continue** button is disabled until at least one document is registered.
 6. Clicking **Continue** advances to Step 2.
@@ -281,7 +281,7 @@ This is a shorter path for claims that already have documents uploaded.
 2. **Human judgment is final** — AI drafts content but cannot approve, finalize, or replace professional review.
 3. **One controlled core, specialized where necessary** — shared report structure with business-line modules.
 4. **Responsibility is explicit** — workflow assignments, titles, dates, and version transitions are auditable.
-5. **Binary content is separate** — file blobs live in IndexedDB; only metadata lives in localStorage.
+5. **Binary content is separate** — file blobs and application metadata use separate IndexedDB databases/stores. Existing `ula_claims_hub_database_v1` localStorage data is migrated automatically and removed only after the IndexedDB copy succeeds.
 6. **Provider-agnostic AI** — pluggable providers (Gemini, OpenAI, OpenRouter) with automatic fallback.
 
 ---
@@ -290,7 +290,7 @@ This is a shorter path for claims that already have documents uploaded.
 
 - Final DOCX/PDF export requirements
 - Legal-entity and office-specific footer variants
-- Production backend / database migration (currently localStorage + IndexedDB)
+- Production backend / database migration (currently browser IndexedDB)
 - Server-side authentication and authorization for `/api/ai/analyze`
 - Official vector logo source
 - Production document storage (SharePoint or equivalent)

@@ -7,7 +7,7 @@ import { fileURLToPath } from "node:url";
 import JSZip from "jszip";
 
 import { loadApprovedStyleReferences } from "../server/ai/referenceLayer.mjs";
-import { createAnthropicProvider } from "../server/ai/providers/anthropicProvider.mjs";
+import { anthropicProviderInternals, createAnthropicProvider } from "../server/ai/providers/anthropicProvider.mjs";
 import { extractEvidenceFile } from "../server/evidence/extractEvidence.mjs";
 import { mapAnalysis } from "../src/api/aiAnalysisClient.js";
 import { populateMasterReportDocx } from "../src/lib/masterReportDocx.js";
@@ -20,6 +20,7 @@ const args = new Map(process.argv.slice(2).map((argument) => {
   return [key.replace(/^--/, ""), value.join("=") || true];
 }));
 const phase = String(args.get("phase") || "before");
+const replayFrom = args.get("replay-from") ? String(args.get("replay-from")) : null;
 const manifestPath = path.resolve(String(args.get("manifest") || defaultManifest));
 const selectedCase = args.get("case") ? String(args.get("case")) : null;
 const outputRoot = path.join(root, ".tmp", "historical-regression", phase);
@@ -148,9 +149,16 @@ const serializableEvidence = (evidence) => evidence.map((item) => ({
 async function loadEvidence(caseDefinition) {
   await fs.mkdir(evidenceCache, { recursive: true });
   const sourcePath = path.resolve(caseDefinition.source_document);
-  const sourceStats = await fs.stat(sourcePath);
   const cachePath = path.join(evidenceCache, `${caseDefinition.case_id}.json`);
-  const sourceBuffer = await fs.readFile(sourcePath);
+  let sourceStats;
+  let sourceBuffer;
+  try {
+    [sourceStats, sourceBuffer] = await Promise.all([fs.stat(sourcePath), fs.readFile(sourcePath)]);
+  } catch (error) {
+    if (!replayFrom) throw error;
+    const cached = JSON.parse(await fs.readFile(cachePath, "utf8"));
+    return { evidence: cached.evidence, sourceBuffer: Buffer.alloc(0), replayed_from_cache: true };
+  }
   const evidence = await extractEvidenceFile({
     originalname: path.basename(sourcePath),
     mimetype: "application/pdf",
@@ -168,7 +176,7 @@ async function loadEvidence(caseDefinition) {
 
 const appendixImages = (evidence, normalizedRecord) => {
   const preferred = new Set((normalizedRecord.selected_photographs || []).map((item) => `${item.document_id}:${item.page}`));
-  const available = evidence.flatMap((document) => (document.vision_images || []).map((item) => ({ document, item })));
+  const available = evidence.flatMap((document) => (document.vision_images || []).filter((item) => item.buffer).map((item) => ({ document, item })));
   const selected = preferred.size
     ? available.filter(({ document, item }) => preferred.has(`${document.document_id}:${item.page}`))
     : available;
@@ -185,7 +193,21 @@ const appendixImages = (evidence, normalizedRecord) => {
 async function runCase(caseDefinition, provider, styleReferences, template) {
   const caseDirectory = path.join(outputRoot, caseDefinition.case_id);
   await fs.mkdir(caseDirectory, { recursive: true });
-  const approvedBuffer = await fs.readFile(path.resolve(caseDefinition.approved_report));
+  let savedResult = null;
+  let savedMapped = null;
+  let savedComparison = null;
+  if (replayFrom) {
+    const replayDirectory = path.join(root, ".tmp", "historical-regression", replayFrom, caseDefinition.case_id);
+    try {
+      [savedResult, savedMapped, savedComparison] = await Promise.all([
+        fs.readFile(path.join(replayDirectory, "provider-result.json"), "utf8").then(JSON.parse),
+        fs.readFile(path.join(replayDirectory, "mapped-analysis.json"), "utf8").then(JSON.parse),
+        fs.readFile(path.join(replayDirectory, "comparison.json"), "utf8").then(JSON.parse),
+      ]);
+    } catch {
+      throw new Error(`No saved successful analysis is available in replay phase ${replayFrom}.`);
+    }
+  }
   const { evidence, sourceBuffer } = await loadEvidence(caseDefinition);
   if (phase === "before") {
     evidence.vision_images = (evidence.vision_images || []).filter((item) => item.vision_reason !== "material-raster-with-searchable-text");
@@ -204,9 +226,20 @@ async function runCase(caseDefinition, provider, styleReferences, template) {
     size: sourceBuffer.length,
     buffer: sourceBuffer,
   }];
-  const result = await provider.analyze({ claim, evidence: [evidence], files, styleReferences });
+  const result = replayFrom
+    ? structuredClone(savedResult)
+    : await provider.analyze({ claim, evidence: [evidence], files, styleReferences });
   result.evidence_snapshot = serializableEvidence([evidence]);
-  const mapped = mapAnalysis(result);
+  const mapped = replayFrom ? structuredClone(savedMapped) : mapAnalysis(result);
+  if (replayFrom && ["Requires Review", "Other / Requires Review"].includes(mapped.business_line)) {
+    const recoveredClassification = anthropicProviderInternals.deterministicBusinessLine([evidence]);
+    if (recoveredClassification) {
+      result.analysis.classification = recoveredClassification;
+      mapped.business_line = recoveredClassification.business_line;
+      mapped.confidence = recoveredClassification.confidence;
+      mapped.classification_rationale = recoveredClassification.rationale;
+    }
+  }
   const documents = [{
     id: evidence.document_id,
     file_name: evidence.document_name,
@@ -242,10 +275,14 @@ async function runCase(caseDefinition, provider, styleReferences, template) {
     report,
     issueDate: "Historical regression",
   }, { appendixImages: appendixImages([evidence], draft.normalizedRecord) });
-  const [approvedInspection, generatedInspection] = await Promise.all([
-    inspectDocx(approvedBuffer),
-    inspectDocx(generatedDocx),
-  ]);
+  let approvedInspection;
+  try {
+    approvedInspection = await fs.readFile(path.resolve(caseDefinition.approved_report)).then(inspectDocx);
+  } catch (error) {
+    if (!replayFrom || !savedComparison?.approved) throw error;
+    approvedInspection = savedComparison.approved;
+  }
+  const generatedInspection = await inspectDocx(generatedDocx);
   const comparison = {
     case_id: caseDefinition.case_id,
     source_document: path.basename(sourcePath),
@@ -253,6 +290,7 @@ async function runCase(caseDefinition, provider, styleReferences, template) {
     classification: result.analysis.classification,
     document_types: result.analysis.document_types.map((item) => item.document_type),
     missing_documents: result.analysis.missing_documents.map((item) => item.document_type),
+    normalized_outstanding_documents: draft.normalizedRecord.outstanding_documents,
     analysis_quality: analysisQuality(result.analysis),
     evidence_extraction: {
       page_count: evidence.pages.length,
@@ -278,21 +316,21 @@ async function runCase(caseDefinition, provider, styleReferences, template) {
 const manifest = JSON.parse(await fs.readFile(manifestPath, "utf8"));
 const cases = manifest.cases.filter((item) => !selectedCase || item.case_id === selectedCase);
 if (!cases.length) throw new Error(`No regression case matched ${selectedCase || manifestPath}.`);
-if (!process.env.ANTHROPIC_API_KEY) throw new Error("ANTHROPIC_API_KEY is required for historical regression.");
+if (!replayFrom && !process.env.ANTHROPIC_API_KEY) throw new Error("ANTHROPIC_API_KEY is required for historical regression.");
 await fs.mkdir(outputRoot, { recursive: true });
-const provider = createAnthropicProvider({
+const provider = replayFrom ? null : createAnthropicProvider({
   apiKey: process.env.ANTHROPIC_API_KEY,
   model: process.env.ANTHROPIC_MODEL,
   maxOutputTokens: process.env.ANTHROPIC_MAX_OUTPUT_TOKENS,
   verifiedClassificationRecovery: phase !== "before",
 });
-const styleReferences = await loadApprovedStyleReferences(
+const styleReferences = replayFrom ? [] : await loadApprovedStyleReferences(
   process.env.ULA_REPORT_REFERENCE_DIR || path.join(root, "server", "ai", "references"),
 );
 const template = await fs.readFile(path.join(root, "samples", "templates", "ULA-Master-Report.docx"));
 const comparisons = [];
 for (const caseDefinition of cases) {
-  process.stdout.write(`[${phase}] ${caseDefinition.case_id}: analyzing...\n`);
+  process.stdout.write(`[${phase}] ${caseDefinition.case_id}: ${replayFrom ? `replaying saved ${replayFrom} analysis locally` : "analyzing"}...\n`);
   try {
     comparisons.push(await runCase(caseDefinition, provider, styleReferences, template));
     process.stdout.write(`[${phase}] ${caseDefinition.case_id}: complete\n`);

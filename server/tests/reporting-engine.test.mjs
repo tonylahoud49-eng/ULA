@@ -806,3 +806,94 @@ Port of Discharge Freetown`,
   assert.ok(record.policy_analysis.entries.some((entry) => entry.topic === "Loading / unloading extension"));
   assert.ok(record.policy_analysis.entries.some((entry) => entry.topic === "Clean transport-document warranty"));
 });
+
+test("an aggregate policy deductible is recorded but not applied as a claim deduction automatically", () => {
+  const source = {
+    document_id: "aggregate-policy",
+    document_name: "policy.pdf",
+    page: 1,
+    supporting_text: "Annual Aggregate deductible: USD 30,000",
+    confidence: 0.99,
+    evidence_mode: "extracted_text",
+  };
+  const lossSource = {
+    ...source,
+    page: 2,
+    supporting_text: "Surveyed damaged cargo value USD 1,000",
+  };
+  const record = buildNormalizedClaimRecord({
+    claim: { business_line: "Marine Cargo (Reefer/GFS)" },
+    documents: [],
+    evidence: [],
+    analysis: {
+      business_line: "Marine Cargo (Reefer/GFS)",
+      document_types: [],
+      evidence_findings: [],
+      extracted_fields: [{
+        field: "deductible",
+        value: "30000",
+        normalized_value: "30000",
+        confidence: 0.99,
+        requires_confirmation: false,
+        sources: [source],
+      }],
+      adjustment_line_items: [{
+        description: "Surveyed damaged cargo",
+        quantity: "1 unit",
+        unit_price: "1000",
+        adjusted_value: "1000",
+        currency: "USD",
+        basis: "Surveyed affected property only",
+        confidence: 0.99,
+        sources: [lossSource],
+      }],
+    },
+  });
+
+  assert.equal(record.facts.deductible.value, "30000");
+  assert.equal(record.financials.documented_deductible, 30_000);
+  assert.equal(record.financials.deductible, null);
+  assert.equal(record.financials.concluded_indemnity, null);
+  assert.ok(record.conflicts.some((item) => item.field === "applicable_deductible"));
+});
+
+test("the application calculates a loss row from cited package conversion and matching unit rate", () => {
+  const source = (page, supportingText) => ({
+    document_id: "partial-loss-bundle",
+    document_name: "claim-evidence.pdf",
+    page,
+    supporting_text: supportingText,
+    confidence: 0.99,
+    evidence_mode: "extracted_text",
+  });
+  const record = buildNormalizedClaimRecord({
+    claim: { business_line: "Marine Cargo (Reefer/GFS)" },
+    documents: [],
+    evidence: [],
+    analysis: {
+      business_line: "Marine Cargo (Reefer/GFS)",
+      document_types: [],
+      evidence_findings: [],
+      extracted_fields: [],
+      adjustment_line_items: [{
+        description: "Surveyed rejected packages",
+        quantity: "7 cartons x 12.5 kg/carton",
+        unit_price: "USD 2.40/kg",
+        adjusted_value: "",
+        currency: "USD",
+        basis: "Surveyed package count, packing weight, and insured invoice unit rate",
+        confidence: 0.99,
+        sources: [
+          source(4, "Seven cartons were rejected following the joint survey."),
+          source(2, "Fixed weight 12.5 kg per carton."),
+          source(3, "Unit price USD 2.40 per kg."),
+        ],
+      }],
+    },
+  });
+
+  assert.equal(record.adjustment.line_items.length, 1);
+  assert.equal(record.adjustment.line_items[0].adjusted_value, 210);
+  assert.equal(record.financials.itemized_claim_total, 210);
+  assert.match(record.adjustment.line_items[0].basis, /deterministically calculated/i);
+});

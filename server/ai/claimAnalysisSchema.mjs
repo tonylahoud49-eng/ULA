@@ -94,6 +94,8 @@ export const CLAIM_FIELDS = [
   "carrier",
   "air_waybill",
   "bill_of_lading",
+  "master_bill_of_lading",
+  "house_bill_of_lading",
   "invoice_number",
   "freight_invoice_number",
   "invoice_date",

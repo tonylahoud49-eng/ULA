@@ -37,7 +37,7 @@ function positiveInteger(value, fallback) {
 export function anthropicSafetyLimits(env = process.env) {
   return {
     max_files: positiveInteger(env.AI_MAX_FILES, 20),
-    max_file_bytes: positiveInteger(env.AI_MAX_FILE_BYTES, 20 * 1024 * 1024),
+    max_file_bytes: positiveInteger(env.AI_MAX_FILE_BYTES, 30 * 1024 * 1024),
     max_total_upload_bytes: positiveInteger(env.AI_MAX_TOTAL_BYTES, 50 * 1024 * 1024),
     max_request_bytes: positiveInteger(env.ANTHROPIC_MAX_REQUEST_BYTES, DEFAULT_MAX_REQUEST_BYTES),
     max_estimated_input_tokens: positiveInteger(

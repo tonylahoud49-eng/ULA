@@ -76,6 +76,7 @@ test("DOCX export preserves the approved master structure and replaces only clai
   assert.match(text, /Unit Price in USD/);
   assert.match(text, /Adjusted Claim Value in USD/);
   assert.doesNotMatch(text, /\{\{[^}]+\}\}/);
+  assert.doesNotMatch(documentXml, /<w:highlight\b/i);
   assert.doesNotMatch(text, /Victoire|Judi Lebanon|DamasGate|MC\/0002606|MSNU7244246|MEDULB209962|13,552\.80|Best Air|Wazen Trading|Bechara|HO-MAP-0103552/i);
 
   const footer = await archive.file("word/footer1.xml").async("string");
@@ -131,6 +132,30 @@ test("DOCX export keeps enclosure titles empty and lays out at most four photogr
   assert.match(text, /Enclosure to this report/);
   assert.match(text, /Outstanding Documents/);
   assert.match(text, /Appendix A - Photographs/);
-  assert.match(text, /Photographs show the insured interest before loading and during inspection/);
+  assert.match(text, /Photographs reproduce material views available in the current claim file/);
   assert.doesNotMatch(text, /Photograph 1|survey-photos\.pdf|No photographs were provided/);
+});
+
+test("controlled final DOCX export refuses unresolved mechanical quality blockers", async () => {
+  const { claim, draft } = await airFixture();
+  const template = await fs.readFile(path.join(root, "samples", "templates", "ULA-Master-Report.docx"));
+  const blockedRecord = structuredClone(draft.normalizedRecord);
+  blockedRecord.report_quality.issue_blockers = ["Rewrite or remove dangling narrative fragments before issue."];
+
+  await assert.rejects(
+    populateMasterReportDocx(template, {
+      claim,
+      report: {
+        normalized_claim_record: blockedRecord,
+        issue_state: "Final",
+        assignments: [
+          { role: "preparer", name: "Prepared Person", designation: "Claims Handler" },
+          { role: "reviewer", name: "Review Person", designation: "Claims Director" },
+          { role: "approver", name: "Approve Person", designation: "Director" },
+        ],
+        approved_date: "2026-08-31T12:00:00.000Z",
+      },
+    }),
+    /Final report quality gate: Rewrite or remove dangling narrative fragments/i,
+  );
 });

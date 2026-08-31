@@ -84,7 +84,7 @@ Optional approved report-style manifests can be loaded through `ULA_REPORT_REFER
 
 ## Local data and authentication
 
-The application stores claim metadata, reports, employees, and leave records in browser localStorage. Uploaded file blobs are stored separately in IndexedDB. Authentication and User Administration are enforced by the backend using an HTTP-only session cookie and the server-side `.data/auth-state.json` approved-user directory.
+The application stores claim metadata, reports, employees, leave records, and uploaded file blobs in separate browser IndexedDB stores. Existing metadata in `ula_claims_hub_database_v1` localStorage is migrated automatically and removed only after the IndexedDB write succeeds. Authentication and User Administration are enforced by the backend using an HTTP-only session cookie and the server-side `.data/auth-state.json` approved-user directory.
 
 Public registration and Google sign-in are disabled. Only accounts created in User Administration and marked **Access granted** can sign in with their company email and ULA system password. Revocation invalidates active sessions immediately. Password hashes and session tokens are never returned to the browser.
 

@@ -60,6 +60,7 @@ const dateFields = new Set([
 ]);
 const identifierFields = new Set([
   "claim_reference", "policy_number", "air_waybill", "bill_of_lading", "invoice_number", "freight_invoice_number",
+  "master_bill_of_lading", "house_bill_of_lading",
   "packing_list_number", "purchase_order", "voyage_number", "feeder_voyage", "container_number", "affected_container",
 ]);
 const comparableForField = (field, value) => {
@@ -69,11 +70,77 @@ const comparableForField = (field, value) => {
   return normalizeComparable(value);
 };
 
+const NUMBER_WORDS = new Map([
+  ["zero", 0], ["one", 1], ["two", 2], ["three", 3], ["four", 4], ["five", 5], ["six", 6], ["seven", 7], ["eight", 8], ["nine", 9],
+  ["ten", 10], ["eleven", 11], ["twelve", 12], ["thirteen", 13], ["fourteen", 14], ["fifteen", 15], ["sixteen", 16], ["seventeen", 17], ["eighteen", 18], ["nineteen", 19],
+  ["twenty", 20], ["thirty", 30], ["forty", 40], ["fifty", 50], ["sixty", 60], ["seventy", 70], ["eighty", 80], ["ninety", 90],
+]);
+
+const parseEnglishAmountWords = (value) => {
+  const text = String(value || "").toLowerCase().replace(/-/g, " ");
+  const fraction = Number(text.match(/\b([0-9]{1,2})\s*\/\s*100\b/)?.[1] || 0) / 100;
+  const tokens = text.match(/[a-z]+/g) || [];
+  let total = 0;
+  let group = 0;
+  let recognized = 0;
+  for (const token of tokens) {
+    if (token === "and" || token === "only") continue;
+    if (NUMBER_WORDS.has(token)) {
+      group += NUMBER_WORDS.get(token);
+      recognized += 1;
+    } else if (token === "hundred") {
+      group = Math.max(1, group) * 100;
+      recognized += 1;
+    } else if (token === "thousand" || token === "million" || token === "billion") {
+      const multiplier = token === "thousand" ? 1_000 : token === "million" ? 1_000_000 : 1_000_000_000;
+      total += Math.max(1, group) * multiplier;
+      group = 0;
+      recognized += 1;
+    }
+  }
+  if (recognized < 2) return null;
+  const result = total + group + fraction;
+  return Number.isFinite(result) ? Number(result.toFixed(2)) : null;
+};
+
+// Quantity fields frequently contain alternative units or conflicting source values
+// (for example, "1,045 cartons / 915 pcs"). Treat only one atomic numeric value as
+// calculable so separate evidence is never concatenated into a fictitious quantity.
+const parseAtomicQuantity = (value) => {
+  if (typeof value === "number") return Number.isFinite(value) ? value : null;
+  if (!isPresent(value)) return null;
+  const text = String(value).trim();
+  const matches = text.match(/(?:\d{1,3}(?:,\d{3})+|\d+)(?:\.\d+)?/g) || [];
+  if (matches.length !== 1 || /\d\s*\+\s*\d|\d\s*\/\s*\d/.test(text)) return null;
+  const parsed = Number(matches[0].replaceAll(",", ""));
+  return Number.isFinite(parsed) ? parsed : null;
+};
+
 const entityFields = new Set([
   "applicant", "insured", "insurer", "reassured", "reinsurer", "broker", "shipper", "consignee", "carrier", "surveyor",
 ]);
-const entityContaminationPattern = /(?:carrier'?s? agents? endorsements?|place\s+of\s+del\s*iv\s*ery|multimodal\s+t\s*r\s*ansport|applicable\s+only\s+when|terms?\s+and\s+conditions?|warrant(?:ed|y|ies)?|exclud(?:ed|ing|sion)|bill\s+of\s+lading\s+(?:terms?|conditions?)|received\s+for\s+shipment|freight\s+(?:payable|prepaid)|copy\s+non-negotiable|original\s+bill)/i;
+const entityContaminationPattern = /(?:carrier'?s? agents? endorsements?|place\s+of\s+del\s*iv\s*ery|multimodal\s+t\s*r\s*ansport|applicable\s+only\s+when|terms?\s+and\s+conditions?|warrant(?:ed|y|ies)?|exclud(?:ed|ing|sion)|bill\s+of\s+lading\s+(?:terms?|conditions?)|received\s+for\s+shipment|freight\s+(?:payable|prepaid)|copy\s+non-negotiable|original\s+bill|^(?:[a-z]|\d+)[.)]\s+|\b(?:shall|must|may)\s+(?:be|have|pay|remain)\b|\b(?:even though|provided that|in the event that|subject to the following)\b|\b(?:bairro|cep|exported by|export references|phone|fax|e-?mail|address)\b\s*:)/i;
 const normalizedCandidate = (candidate) => {
+  const policyValue = String(candidate.normalized_value ?? candidate.value ?? "").replace(/\s+/g, " ").trim();
+  if (candidate.field === "policy_exclusions" && /^warrant(?:ed|y|ies)\b/i.test(policyValue)) {
+    return normalizedCandidate({ ...candidate, field: "policy_warranties", _reclassified_from: "policy_exclusions" });
+  }
+  if (["policy_warranties", "policy_conditions"].includes(candidate.field) && /^exclud(?:ed|ing|sion)\b/i.test(policyValue)) {
+    return normalizedCandidate({ ...candidate, field: "policy_exclusions", _reclassified_from: candidate.field });
+  }
+  if (candidate.field === "incoterm") {
+    const rawValue = String(candidate.normalized_value ?? candidate.value ?? "").trim();
+    const match = rawValue.match(/\b(CIF|FOB|CFR|EXW|FCA|CPT|CIP|DAP|DPU|DDP|FAS)\b/i);
+    if (!match) return { ...candidate, value: null, normalized_value: null, requires_confirmation: true, _rejected_reason: "incoterm field did not contain a recognized Incoterms code" };
+    return { ...candidate, value: match[1].toUpperCase(), normalized_value: match[1].toUpperCase() };
+  }
+  if (candidate.field === "terms_of_sale") {
+    const rawValue = sanitizeReportValue(candidate.normalized_value ?? candidate.value, candidate.field);
+    if (!rawValue || /^\s*\d+[.)]\s*(?:delivery order|packing list|commercial invoice|bill of lading|air waybill|survey report)\b/i.test(rawValue)) {
+      return { ...candidate, value: null, normalized_value: null, requires_confirmation: true, _rejected_reason: "terms of sale field contained a numbered document heading" };
+    }
+    return { ...candidate, value: rawValue, normalized_value: rawValue };
+  }
   if (!entityFields.has(candidate.field)) return candidate;
   const rawValue = candidate.normalized_value ?? candidate.value;
   const cleanValue = sanitizeReportValue(rawValue, candidate.field);
@@ -83,14 +150,158 @@ const normalizedCandidate = (candidate) => {
   return { ...candidate, value: cleanValue, normalized_value: cleanValue };
 };
 
-const nonClaimValuationPattern = /^(?:total\s+)?(?:policy\s+limit|sum\s+insured|insured\s+(?:shipment\s+)?value|shipment\s+value|commercial\s+invoice\s+(?:total|value)|invoice\s+(?:total|value)|fob\s+value|freight\s+invoice\s+(?:total|value)|policy\s+premium|basis\s+of\s+valuation|max(?:imum)?\s+limit)(?:\b|\s*[-:])/i;
+export const sanitizeSuggestedClaimValue = (field, value) => {
+  if (!isPresent(value)) return null;
+  const normalized = normalizedCandidate({ field, value, normalized_value: value, requires_confirmation: false });
+  return normalized.requires_confirmation ? null : normalized.normalized_value ?? normalized.value;
+};
+
+const nonClaimValuationPattern = /^(?:total\s+)?(?:policy\s+limit|sum\s+insured|(?:claimed\s+)?insured\s+(?:shipment\s+)?value|shipment\s+value|commercial\s+invoice\s+(?:total|value)|invoice\s+(?:total|value)|fob\s+value|freight\s+invoice\s+(?:total|value)|policy\s+premium|basis\s+of\s+valuation|max(?:imum)?\s+limit)(?:\b|\s*[-:])/i;
 const validAdjustmentLineItem = (item) => {
   const description = String(item?.description || "").replace(/\s+/g, " ").trim();
   const basis = String(item?.basis || "").replace(/\s+/g, " ").trim();
+  const combined = `${description} ${basis}`;
   if (!description || nonClaimValuationPattern.test(description)) return false;
-  if (/\b(?:policy limit|sum insured|insured shipment value|full shipment value)\b/i.test(`${description} ${basis}`)
+  if (/\b(?:policy limit|sum insured|(?:claimed\s+)?insured (?:shipment )?value|full shipment value|commercial invoice total|invoice total for (?:the )?(?:entire|full) shipment|all \d+ containers?)\b/i.test(combined)) return false;
+  if (/\bprovisional\b/i.test(combined) && /\b(?:affected|damaged|loss)\b.{0,80}\b(?:to be determined|not established|pending survey)\b/i.test(combined)) return false;
+  if (/\b(?:policy limit|sum insured|insured shipment value|full shipment value)\b/i.test(combined)
     && !/\b(?:damaged|missing|shortage|repair|replacement|loss|fee|cost|deduct)/i.test(description)) return false;
   return true;
+};
+
+const quotationEvidencePattern = /\b(?:quotation|quote|estimate|estimated|pro[ -]?forma|proposal|supplier offer|repair offer)\b/i;
+const quotationBasedItem = (item) => quotationEvidencePattern.test([
+  item?.description,
+  item?.basis,
+  ...(item?.sources || []).flatMap((source) => [source.document_name, source.supporting_text]),
+].filter(Boolean).join(" "));
+
+const factBasedOnlyOnQuotation = (fact) => Boolean((fact?.sources || []).length)
+  && (fact.sources || []).every((source) => quotationEvidencePattern.test(`${source.document_name || ""} ${source.supporting_text || ""}`));
+
+const normalizedAdjustmentUnit = (value) => {
+  const text = String(value || "").toLowerCase();
+  if (/\b(?:kg|kgs|kilogram|kilograms|kilo)\b/.test(text)) return "kg";
+  if (/\b(?:carton|cartons|box|boxes)\b/.test(text)) return "package";
+  if (/\b(?:unit|units|item|items|piece|pieces|pcs)\b/.test(text)) return "unit";
+  if (/\b(?:tonne|tonnes|metric ton|metric tons|mt)\b/.test(text)) return "tonne";
+  return null;
+};
+
+const deterministicAdjustmentValue = (item) => {
+  const sourceValue = parseNumber(item?.adjusted_value);
+  if (sourceValue !== null) return { value: sourceValue, derived: false };
+  const quantityText = String(item?.quantity || "").replace(/,/g, "");
+  const priceText = String(item?.unit_price || "");
+  const conversion = quantityText.match(/\b(\d+(?:\.\d+)?)\s*(?:cartons?|boxes?|packages?|units?|items?|pieces?|pcs)\s*(?:x|×)\s*(\d+(?:\.\d+)?)\s*(kg|kgs|kilograms?|kilo|units?|items?|pieces?|pcs)\s*(?:\/|per)\s*(?:carton|box|package|unit|item|piece)?/i);
+  let quantity;
+  let quantityUnit;
+  if (conversion) {
+    quantity = Number(conversion[1]) * Number(conversion[2]);
+    quantityUnit = normalizedAdjustmentUnit(conversion[3]);
+  } else {
+    const atomic = quantityText.match(/^\s*(\d+(?:\.\d+)?)\s*([A-Za-z]+(?:\s+[A-Za-z]+)?)?\s*$/);
+    if (!atomic) return { value: null, derived: false };
+    quantity = Number(atomic[1]);
+    quantityUnit = normalizedAdjustmentUnit(atomic[2]);
+  }
+  const unitPrice = parseNumber(priceText);
+  const priceUnit = normalizedAdjustmentUnit(priceText.match(/(?:\/|per)\s*([A-Za-z]+(?:\s+[A-Za-z]+)?)/i)?.[1]);
+  if (!Number.isFinite(quantity) || unitPrice === null || !quantityUnit || quantityUnit !== priceUnit) return { value: null, derived: false };
+  return { value: Number((quantity * unitPrice).toFixed(4)), derived: true };
+};
+
+const deductionLineKind = (item) => {
+  const text = `${item?.description || ""} ${item?.basis || ""}`;
+  if (/\b(?:deductible|policy excess|excess applicable)\b/i.test(text)) return "deductible";
+  if (/\b(?:less\s+salvage|salvage\s+(?:deduction|credit|value|proceeds?|realisation))\b/i.test(text)
+    || /^\s*salvage\s*$/i.test(String(item?.description || ""))) return "salvage";
+  if (/\b(?:recovery|subrogation)\b/i.test(text)) return "recovery";
+  if (/\b(?:depreciation|betterment)\b/i.test(text)) return "depreciation";
+  return null;
+};
+
+const deductibleMoney = (text, label) => {
+  const match = String(text || "").match(new RegExp(`\\b${label}\\b(?:\\s+(?:amount|of))?\\s*(?::|is|of)?\\s*(?:USD|USDF|FUS|EUR|GBP|AED|LBP|CAD|AUD|CHF|JPY|[$â‚¬Â£])?\\s*([0-9][0-9,.]*)`, "i"));
+  return match ? parseNumber(match[1]) : null;
+};
+
+const parseDeductibleTerms = (text, documentedAmount = null) => {
+  const wording = String(text || "").replace(/\s+/g, " ").trim();
+  const selectedFixedMatch = wording.match(/\b(?:containeri[sz]ed|air|land|road|sea|each\s+and\s+every\s+loss)\b[^.;\n]{0,80}?(?:USD|USDF|FUS|EUR|GBP|AED|LBP|CAD|AUD|CHF|JPY)\s*([0-9][0-9,.]*)/i);
+  const selectedFixed = parseNumber(selectedFixedMatch?.[1]);
+  if (selectedFixed !== null && documentedAmount !== null && Math.abs(selectedFixed - documentedAmount) <= 0.01) {
+    return {
+      wording: wording || null,
+      currency: currencyCode(selectedFixedMatch[0]) || currencyCode(wording),
+      percentage: null,
+      minimum: null,
+      maximum: null,
+      fixed: documentedAmount,
+      aggregate: false,
+      franchise: false,
+    };
+  }
+  const percentageMatch = wording.match(/\b([0-9]+(?:\.[0-9]+)?)\s*%/);
+  const percentage = percentageMatch ? Number(percentageMatch[1]) : null;
+  const minimum = deductibleMoney(wording, "min(?:imum)?") ?? deductibleMoney(wording, "not less than");
+  const maximum = deductibleMoney(wording, "max(?:imum)?") ?? deductibleMoney(wording, "not more than");
+  const aggregate = /\b(?:annual\s+)?aggregate\s+(?:deductible|excess)|\b(?:deductible|excess)\s+on\s+an\s+aggregate\s+basis\b/i.test(wording);
+  const franchise = /\bfranchise\b/i.test(wording);
+  const fixed = percentage === null && minimum === null && maximum === null && !aggregate
+    ? documentedAmount
+    : null;
+  return {
+    wording: wording || null,
+    currency: currencyCode(wording),
+    percentage,
+    minimum,
+    maximum,
+    fixed,
+    aggregate,
+    franchise,
+  };
+};
+
+const applicableDeductible = ({ terms, calculationBase, documentedAmount, explicitLineAmount, claimCurrency }) => {
+  if (explicitLineAmount !== null) return explicitLineAmount;
+  if (terms.aggregate || terms.franchise) return null;
+  if (terms.currency && claimCurrency && terms.currency !== claimCurrency) return null;
+  if (terms.percentage !== null) {
+    if (calculationBase === null) return null;
+    let calculated = calculationBase * terms.percentage / 100;
+    if (terms.minimum !== null) calculated = Math.max(calculated, terms.minimum);
+    if (terms.maximum !== null) calculated = Math.min(calculated, terms.maximum);
+    return Number(calculated.toFixed(4));
+  }
+  if (terms.minimum !== null || terms.maximum !== null) return null;
+  return terms.fixed ?? documentedAmount;
+};
+
+const POLICY_TEXT_FIELDS = new Set([
+  "policy_terms", "policy_transit_scope", "policy_conveyance_limits", "policy_extensions",
+  "policy_warranties", "policy_conditions", "policy_exclusions", "warranties_conditions",
+]);
+
+const incompletePolicyFragment = (value) => {
+  const text = String(value || "").replace(/\s+/g, " ").trim();
+  const openParentheses = (text.match(/\(/g) || []).length;
+  const closeParentheses = (text.match(/\)/g) || []).length;
+  return !text
+    || /[,;:]$/.test(text)
+    || openParentheses !== closeParentheses
+    || /\b(?:pol|insur|exclu|inclu|condit|warran|applic|jurisdict|respectiv)$/i.test(text)
+    || /\b(?:and|or|and\/or|to and\/or|from and\/or|via and\/or)$/i.test(text);
+};
+
+const completePolicyValues = (values) => {
+  const complete = unique(values.filter((value) => !incompletePolicyFragment(value)));
+  return complete.filter((value, index, items) => {
+    const comparable = normalizeComparable(value);
+    return !items.some((other, otherIndex) => otherIndex !== index
+      && normalizeComparable(other).includes(comparable)
+      && normalizeComparable(other).length > comparable.length);
+  });
 };
 
 const candidateScore = (candidate) => {
@@ -286,6 +497,8 @@ function deterministicEvidenceCandidates(evidence = []) {
       capture("date_of_loss", /(?:Date of Loss(?:\s*\/\s*Flight Arrival)?|Loss Date)\s*:\s*([^\n]+)/i);
       capture("date_of_intimation", /(?:Date of Intimation|Notification Date)\s*:\s*([^\n]+)/i);
       capture("air_waybill", /(?:AWB Number|Air Waybill)\s*:\s*([A-Z0-9-]+)/i);
+      capture("master_bill_of_lading", /(?:Master\s+(?:Bill of Lading|B\/?L)|MBL)(?:\s*(?:No\.?|Number|#))?\s*[:#-]?\s*([A-Z0-9/-]+)/i);
+      capture("house_bill_of_lading", /(?:House\s+(?:Bill of Lading|B\/?L)|HBL)(?:\s*(?:No\.?|Number|#))?\s*[:#-]?\s*([A-Z0-9/-]+)/i);
       capture("bill_of_lading", /Bill of Lading(?:\s*(?:No\.?|Number|#))?\s*[:#]\s*([A-Z0-9/-]+)/i, (value) => /^(?:voyage|above)$/i.test(value) ? null : value);
       capture("bill_of_lading", /(?:B\/L|Bill of Lading)\s*No\.?\s*[:#]?\s*([A-Z0-9/-]+)/i, (value) => /^(?:vessel|voyage|above)$/i.test(value) ? null : value);
       capture("invoice_number", /(?:Invoice No\.?|Invoice #|Order or Invoice No\.)\s*[:#]?\s*([A-Z0-9/-]+)/i, (value) => /^customer$/i.test(value) ? null : value);
@@ -387,6 +600,11 @@ function deterministicEvidenceCandidates(evidence = []) {
       capture("invoice_total", /Amount due\s+(?:USD|USDF|EUR|GBP|AED)\s*([0-9][0-9,.]*)/i);
       capture("invoice_total", /([0-9][0-9,.]+)\s*\$\s*Total Currency/i);
       if (/Sales Invoice/i.test(text)) capture("invoice_total", /(?:Net Total|Sub-Total)\s+([0-9][0-9,.]*)/i);
+      if (/\binvoice\b/i.test(text)) {
+        const wordsMatch = text.match(/\b((?:(?:zero|one|two|three|four|five|six|seven|eight|nine|ten|eleven|twelve|thirteen|fourteen|fifteen|sixteen|seventeen|eighteen|nineteen|twenty|thirty|forty|fifty|sixty|seventy|eighty|ninety|hundred|thousand|million|billion|and|[0-9]{1,2}\s*\/\s*100)[\s-]+){2,})(?:euros?|dollars?|pounds?|dirhams?)\b/i);
+        const wordsAmount = parseEnglishAmountWords(wordsMatch?.[1]);
+        if (wordsMatch && wordsAmount !== null) add("invoice_total", wordsAmount.toFixed(2), item, page, sourceExcerpt(wordsMatch), 0.99);
+      }
       capture("freight_amount", /(?:^|\n)[ \t]*Freight[ \t]*\$?[ \t]*([0-9][0-9,.]*)/i);
       capture("freight_amount", /Insurance[ \t]+([0-9][0-9,.]*)[ \t]+Freight/i);
       capture("insurance_amount", /(?:^|\n)[ \t]*Insurance[ \t]*\$?[ \t]*([0-9][0-9,.]*)/i);
@@ -599,6 +817,7 @@ const claimFieldNames = [
   "gross_claim_amount", "invoice_total", "freight_amount", "insurance_amount", "fob_value", "freight_invoice_total", "fees_amount", "salvage_amount", "recovery_amount", "depreciation_amount",
   "adjusted_amount", "surveyor", "vessel_name", "voyage_number", "transshipment_port", "feeder_vessel", "feeder_voyage", "container_number", "container_numbers", "port_of_loading",
   "port_of_discharge", "commodity", "shipper", "consignee", "carrier", "air_waybill", "bill_of_lading",
+  "master_bill_of_lading", "house_bill_of_lading",
   "invoice_number", "freight_invoice_number", "invoice_date", "packing_list_number", "packing_list_date", "purchase_order", "voyage_from", "voyage_to", "quantity", "net_weight", "gross_weight",
   "conveyance_mode", "country_of_origin", "destination_country", "incoterm", "terms_of_sale", "shipment_routing", "departure_date", "arrival_date", "shipment_date", "seal_numbers", "seal_condition", "production_dates", "expiry_dates",
   "freight_invoice_date", "delivery_date", "empty_return_date", "discharge_date", "damage_report_date", "notice_date", "destruction_date",
@@ -760,9 +979,9 @@ function buildValidationChecks(facts, financials, chronology) {
     ));
   }
 
-  const affected = parseNumber(facts.affected_quantity.value);
-  const salvageQuantity = parseNumber(facts.salvage_quantity.value);
-  const totalLossQuantity = parseNumber(facts.total_loss_quantity.value);
+  const affected = parseAtomicQuantity(facts.affected_quantity.value);
+  const salvageQuantity = parseAtomicQuantity(facts.salvage_quantity.value);
+  const totalLossQuantity = parseAtomicQuantity(facts.total_loss_quantity.value);
   if (affected !== null && salvageQuantity !== null && totalLossQuantity !== null) {
     const componentQuantity = salvageQuantity + totalLossQuantity;
     checks.push(validationCheck(
@@ -776,7 +995,7 @@ function buildValidationChecks(facts, financials, chronology) {
     ));
   }
 
-  const shipmentQuantity = parseNumber(facts.quantity.value);
+  const shipmentQuantity = parseAtomicQuantity(facts.quantity.value);
   if (shipmentQuantity !== null && affected !== null) {
     checks.push(validationCheck(
       "shipment-quantity",
@@ -820,14 +1039,33 @@ function buildValidationChecks(facts, financials, chronology) {
 
 function buildCauseAssessment(facts, findings) {
   const findingRecords = findings.filter((finding) => isPresent(finding.finding));
-  const reasonedOpinionFindings = findingRecords.filter((finding) => /in our opinion|on balance|more consistent|comparatively more plausible|appear(?:s)? consistent|likely attributable|most probable|available circumstances suggest|we consider|cannot be excluded|plausible (?:cause|mechanism|explanation)/i.test(finding.finding));
-  const observed = findingRecords.filter((finding) => /damage|deteriorat|unfit|broken|wet|water|defrost|temperature|shortage|missing|odor|mould|rust|dent|crush/i.test(finding.finding));
-  const indicators = findingRecords.filter((finding) => /temperature|logger|defrost|water ingress|impact|packing|seal|container|handling|delay|weather|leak/i.test(finding.finding));
-  const explicitCause = facts.cause_of_loss.status === "supported" && isPresent(facts.cause_of_loss.value)
+  const hasDomainLabels = findingRecords.some((finding) => finding.analysis_domain && finding.analysis_domain !== "general");
+  const causeDomains = new Set(["chronology_custody", "condition_extent", "proximate_cause", "general"]);
+  const causeFindingRecords = hasDomainLabels
+    ? findingRecords.filter((finding) => causeDomains.has(finding.analysis_domain))
+    : findingRecords;
+  const reasonedOpinionFindings = causeFindingRecords.filter((finding) => /in our opinion|on balance|more consistent|comparatively more plausible|appear(?:s)? consistent|likely attributable|most probable|available circumstances suggest|we consider|cannot be excluded|plausible (?:cause|mechanism|explanation)/i.test(finding.finding));
+  const observed = causeFindingRecords.filter((finding) => /damage|deteriorat|unfit|broken|wet|water|defrost|temperature|shortage|missing|odor|mould|rust|dent|crush/i.test(finding.finding));
+  const indicators = causeFindingRecords.filter((finding) => /temperature|logger|defrost|water ingress|impact|packing|seal|container|handling|delay|weather|leak/i.test(finding.finding));
+  const supportedCause = facts.cause_of_loss.status === "supported" && isPresent(facts.cause_of_loss.value)
     ? facts.cause_of_loss
     : null;
-  const combinedFindings = findingRecords.map((finding) => finding.finding).join(" ");
+  const supportedCauseText = String(supportedCause?.value || "");
+  const explicitCause = supportedCause
+    && supportedCauseText.length <= 240
+    && (supportedCauseText.match(/;/g) || []).length <= 1
+    && !/\b(?:packing described|damage discovered|became visible|no impact damage|survey scope|not independently|however|but)\b/i.test(supportedCauseText)
+    ? supportedCause
+    : null;
+  const combinedFindings = causeFindingRecords.map((finding) => finding.finding).join(" ");
   const shortageClaim = /shortage|missing|non[- ]delivery/i.test(combinedFindings);
+  const physicalDamageClaim = causeFindingRecords.some((finding) => {
+    const text = String(finding.finding || "");
+    if (/broken|breakage|fractur|crack|dent|crush|wet|deteriorat/i.test(text)) return true;
+    return /\bdamag(?:e|ed)\b/i.test(text)
+      && !/\bno\b[^.!?]{0,80}\bdamage\b|\bdamage report\b[^.!?]{0,50}\b(?:not|no)\b/i.test(text);
+  });
+  const primaryShortageClaim = shortageClaim && !physicalDamageClaim;
   const intactSeal = /seal(?:s)? (?:was|were|remained|reported|confirmed)?\s*intact|seal intact/i.test(`${facts.seal_condition?.value || ""} ${combinedFindings}`);
   const noTampering = /no (?:evidence|signs?) of (?:seal )?tampering|no forced entry|without (?:any )?(?:recorded )?seal discrepanc/i.test(combinedFindings);
   const multipleContainers = String(facts.container_numbers?.value || "").split(/\s*,\s*/).filter(Boolean).length > 1
@@ -835,13 +1073,13 @@ function buildCauseAssessment(facts, findings) {
   const limitedAttendance = /only (?:possible|attended|witnessed)|prior to (?:our|the surveyor'?s) attendance|consignee'?s (?:count|reported count)|not independently (?:counted|verified)/i.test(combinedFindings);
   const missingCarrierEvidence = /no (?:carrier[- ]signed )?(?:certificate|shortage certificate)|carrier (?:abstained|did not attend)|certificate of shortage.*not (?:available|provided)/i.test(combinedFindings);
   const originConditionEvidence = /pre[- ]loading|prior to loading|container condition|no visible corrosion, damage or repairs/i.test(combinedFindings);
-  const inferenceFindings = findingRecords.filter((finding) => /shortage|missing|seal|tamper|forced entry|pre[- ]loading|prior to loading|packing|count|carrier|container condition/i.test(finding.finding));
+  const inferenceFindings = causeFindingRecords.filter((finding) => /shortage|missing|seal|tamper|forced entry|pre[- ]loading|prior to loading|packing|count|carrier|container condition/i.test(finding.finding));
   const inferenceSources = unique([
     ...(facts.seal_condition?.sources || []),
     ...(facts.container_numbers?.sources || []),
     ...inferenceFindings.flatMap((finding) => finding.sources || []),
   ]);
-  const reasonedShortageInference = shortageClaim && intactSeal && (multipleContainers || noTampering)
+  const reasonedShortageInference = primaryShortageClaim && intactSeal && (multipleContainers || noTampering)
     ? `The reported shortage is distributed across ${multipleContainers ? "multiple containers" : "the shipment"}, while the available evidence records intact seals${noTampering ? " and no identified tampering or forced entry" : ""}. This weakens, but does not by itself eliminate, a sea-transit shortage scenario and makes a pre-shipment quantity discrepancy, packing/containerisation error, or unexplained disappearance before or outside the evidenced sealed transit comparatively more plausible.${originConditionEvidence ? " The pre-loading records support container condition, but do not independently prove the quantity loaded." : ""}${limitedAttendance ? " The conclusion is limited because not every container count was witnessed by the attending surveyor." : ""}${missingCarrierEvidence ? " No carrier-recognised shortage certificate or equivalent independent carrier record was established." : ""}`
     : null;
   const hypotheses = [];
@@ -865,13 +1103,13 @@ function buildCauseAssessment(facts, findings) {
       missing_evidence: [],
     });
   }
-  if (shortageClaim) {
-    const shortageSources = uniqueSources(findingRecords
+  if (primaryShortageClaim) {
+    const shortageSources = uniqueSources(causeFindingRecords
       .filter((finding) => /shortage|missing|non[- ]delivery/i.test(finding.finding))
       .flatMap((finding) => finding.sources || []));
     const sealSources = uniqueSources([
       ...(facts.seal_condition?.sources || []),
-      ...findingRecords.filter((finding) => /seal|tamper|forced entry/i.test(finding.finding)).flatMap((finding) => finding.sources || []),
+      ...causeFindingRecords.filter((finding) => /seal|tamper|forced entry/i.test(finding.finding)).flatMap((finding) => finding.sources || []),
     ]);
     hypotheses.push({
       hypothesis: "Loss or removal during the evidenced sealed transit",
@@ -898,7 +1136,7 @@ function buildCauseAssessment(facts, findings) {
         hypothesis: "Measurement or post-delivery counting discrepancy",
         status: "open",
         assessment: "Part of the reported shortage was not independently witnessed, so a counting or post-delivery handling discrepancy remains open.",
-        supporting_sources: uniqueSources(findingRecords.filter((finding) => /only .*count|not independently|consignee'?s count|attendance/i.test(finding.finding)).flatMap((finding) => finding.sources || [])),
+        supporting_sources: uniqueSources(causeFindingRecords.filter((finding) => /only .*count|not independently|consignee'?s count|attendance/i.test(finding.finding)).flatMap((finding) => finding.sources || [])),
         contrary_sources: [],
         missing_evidence: ["Contemporaneous witnessed count for every affected unit or container"],
       });
@@ -908,7 +1146,7 @@ function buildCauseAssessment(facts, findings) {
   if (coldChainClaim && !explicitCause) {
     const temperatureSources = uniqueSources([
       ...(facts.temperature_findings?.sources || []),
-      ...findingRecords.filter((finding) => /temperature|logger|defrost|cold[- ]chain/i.test(finding.finding)).flatMap((finding) => finding.sources || []),
+      ...causeFindingRecords.filter((finding) => /temperature|logger|defrost|cold[- ]chain/i.test(finding.finding)).flatMap((finding) => finding.sources || []),
     ]);
     const hasMeasuredExcursion = /logger|reading|recorded|degrees?|°|excursion/i.test(`${facts.temperature_findings?.value || ""} ${combinedFindings}`)
       && !/no (?:temperature )?(?:data )?logger|not (?:available|provided)|without .*record/i.test(`${facts.temperature_findings?.value || ""} ${combinedFindings}`);
@@ -1236,8 +1474,13 @@ function buildQuantumAnalysis(financials, adjustment, validationChecks) {
   };
 }
 
-function buildReportQualityReview({ findings, causeAssessment, policyAnalysis, quantumAnalysis, liabilityAnalysis, conflicts, evidenceGaps }) {
+function buildReportQualityReview({ facts, financials, findings, causeAssessment, policyAnalysis, quantumAnalysis, liabilityAnalysis, conflicts, evidenceGaps }) {
   const unsupportedFindings = findings.filter((finding) => !(finding.sources || []).length);
+  const truncatedFindings = findings.filter((finding) => /(?:\bp{1,2}\.|\b(?:and|or|but|because|including|namely|at|from|to|on|of|with)|[:;(,-])\s*$/i.test(String(finding.finding || "").trim()));
+  const invalidCurrency = financials.adjusted_claim_amount !== null && !/^[A-Z]{3}$/.test(String(financials.currency || ""));
+  const negativeFinancials = ["adjusted_claim_amount", "provisional_indemnity", "concluded_indemnity"]
+    .filter((field) => financials[field] !== null && Number(financials[field]) < 0);
+  const warrantyUnderExclusions = /^warrant(?:ed|y|ies)\b/i.test(String(facts.policy_exclusions?.value || "").trim());
   const checks = [
     {
       id: "evidence-trace",
@@ -1283,6 +1526,26 @@ function buildReportQualityReview({ findings, causeAssessment, policyAnalysis, q
       status: conflicts.length ? "requires_review" : "passed",
       detail: conflicts.length ? `${conflicts.length} material conflict(s) remain visible for resolution.` : "No unresolved deterministic conflict was detected.",
     },
+    {
+      id: "client-narrative-completeness",
+      label: "Client narrative contains complete sentences",
+      status: truncatedFindings.length ? "requires_review" : "passed",
+      detail: truncatedFindings.length ? `${truncatedFindings.length} finding(s) end in a dangling or incomplete fragment and are withheld or require rewriting.` : "No retained finding ends in a recognized dangling fragment.",
+    },
+    {
+      id: "financial-presentation-safety",
+      label: "Currency and indemnity presentation are safe",
+      status: invalidCurrency || negativeFinancials.length ? "requires_review" : "passed",
+      detail: invalidCurrency
+        ? "An adjusted amount exists without one supported ISO reporting currency."
+        : negativeFinancials.length ? `Negative reportable amount(s) detected: ${negativeFinancials.join(", ")}.` : "No negative indemnity is reportable and any adjusted amount uses one ISO currency.",
+    },
+    {
+      id: "policy-category-integrity",
+      label: "Warranties, conditions, and exclusions remain separate",
+      status: warrantyUnderExclusions ? "requires_review" : "passed",
+      detail: warrantyUnderExclusions ? "Warranty wording was placed under exclusions and must be reclassified before issue." : "No recognized warranty wording is presented as an exclusion.",
+    },
   ];
   const materialGaps = evidenceGaps.filter((gap) => gap.priority === "material");
   const reviewActions = unique([
@@ -1301,6 +1564,12 @@ function buildReportQualityReview({ findings, causeAssessment, policyAnalysis, q
     checks,
     material_gap_count: materialGaps.length,
     review_actions: reviewActions,
+    issue_blockers: [
+      invalidCurrency ? "Resolve the reporting currency before issuing an adjusted amount." : null,
+      negativeFinancials.length ? "Reconcile negative reportable financial amounts before issue." : null,
+      truncatedFindings.length ? "Rewrite or remove dangling narrative fragments before issue." : null,
+      warrantyUnderExclusions ? "Reclassify warranty wording that is currently presented as an exclusion." : null,
+    ].filter(Boolean),
   };
 }
 
@@ -1358,14 +1627,15 @@ export function buildNormalizedClaimRecord({ claim = {}, documents = [], analysi
 
   for (const field of claimFieldNames) {
     const rawClaimValue = claim[field === "container_numbers" ? "container_number" : field];
+    const sanitizedClaimValue = sanitizeSuggestedClaimValue(field, rawClaimValue);
     const candidates = allCandidates.filter((candidate) => candidate.field === field && !candidate.requires_confirmation)
       .filter((candidate) => isPresent(candidate.normalized_value ?? candidate.value));
     const hasEvidenceConfirmedZero = candidates.some((candidate) => {
       const number = parseNumber(candidate.normalized_value ?? candidate.value);
       return number === 0 && (candidate.sources || []).length > 0;
     });
-    const zeroPlaceholder = monetaryClaimFields.has(field) && parseNumber(rawClaimValue) === 0 && !hasEvidenceConfirmedZero;
-    const claimValue = isPresent(rawClaimValue) && !zeroPlaceholder ? rawClaimValue : null;
+    const zeroPlaceholder = monetaryClaimFields.has(field) && parseNumber(sanitizedClaimValue) === 0 && !hasEvidenceConfirmedZero;
+    const claimValue = isPresent(sanitizedClaimValue) && !zeroPlaceholder ? sanitizedClaimValue : null;
     const resolution = resolveCandidateGroup(field, candidates);
     const evidenceValues = resolution.ranked.map((group) => group.comparable);
     const claimComparable = isPresent(claimValue) ? comparableForField(field, claimValue) : null;
@@ -1392,6 +1662,7 @@ export function buildNormalizedClaimRecord({ claim = {}, documents = [], analysi
     fieldTrace[field] = {
       field,
       metadata_value: claimValue,
+      metadata_rejected_as_contaminated: isPresent(rawClaimValue) && !isPresent(sanitizedClaimValue),
       metadata_ignored_as_zero_placeholder: zeroPlaceholder,
       candidates: candidates.map((candidate) => ({
         value: candidate.normalized_value ?? candidate.value,
@@ -1455,19 +1726,48 @@ export function buildNormalizedClaimRecord({ claim = {}, documents = [], analysi
   ]) {
     const candidates = allCandidates.filter((candidate) => candidate.field === field && !candidate.requires_confirmation)
       .filter((candidate) => isPresent(candidate.normalized_value ?? candidate.value));
-    const values = unique(candidates.map((candidate) => String(candidate.normalized_value ?? candidate.value).replace(/\s+/g, " ").trim()));
+    const candidateValues = unique(candidates.map((candidate) => String(candidate.normalized_value ?? candidate.value).replace(/\s+/g, " ").trim()));
+    const values = POLICY_TEXT_FIELDS.has(field) ? completePolicyValues(candidateValues) : candidateValues;
     if (!isPresent(claim[field]) && values.length) {
+      const retainedCandidates = candidates.filter((candidate) => values.includes(String(candidate.normalized_value ?? candidate.value).replace(/\s+/g, " ").trim()));
       facts[field] = {
         ...facts[field],
         value: values.join(" — "),
         status: "supported",
-        sources: candidates.flatMap((candidate) => candidate.sources || []),
+        sources: retainedCandidates.flatMap((candidate) => candidate.sources || []),
         candidate_values: values,
       };
       fieldTrace[field] = { ...fieldTrace[field], selected_value: facts[field].value, resolution: "merged complementary evidence passages", final_status: "supported" };
       const conflictIndex = conflicts.findIndex((conflict) => conflict.field === field);
       if (conflictIndex >= 0) conflicts.splice(conflictIndex, 1);
+    } else if (POLICY_TEXT_FIELDS.has(field) && candidateValues.length && !values.length) {
+      facts[field] = {
+        ...facts[field],
+        value: null,
+        status: "requires_confirmation",
+        sources: [],
+        candidate_values: candidateValues,
+      };
+      fieldTrace[field] = { ...fieldTrace[field], selected_value: null, resolution: "incomplete policy fragment withheld from the issued report", final_status: "requires_confirmation" };
+      if (!conflicts.some((conflict) => conflict.field === field)) conflicts.push({
+        field,
+        values: candidateValues,
+        message: `Only an incomplete ${field.replaceAll("_", " ")} fragment was extracted; the complete operative wording must be verified before it is reproduced or applied.`,
+      });
     }
+  }
+
+  for (const field of ["quantity", "affected_quantity", "salvage_quantity", "total_loss_quantity"]) {
+    const value = facts[field]?.value;
+    const numericParts = String(value || "").match(/(?:\d{1,3}(?:,\d{3})+|\d+)(?:\.\d+)?/g) || [];
+    if (!isPresent(value) || numericParts.length <= 1 || parseAtomicQuantity(value) !== null) continue;
+    facts[field] = { ...facts[field], status: "conflict" };
+    fieldTrace[field] = { ...fieldTrace[field], resolution: "composite or alternative quantities retained for review; not treated as one calculable number", final_status: "conflict" };
+    if (!conflicts.some((conflict) => conflict.field === field)) conflicts.push({
+      field,
+      values: facts[field].candidate_values?.length ? facts[field].candidate_values : [String(value)],
+      message: `The ${field.replaceAll("_", " ")} contains multiple quantities or units and cannot be used as one calculation input; the underlying source positions must be reconciled separately.`,
+    });
   }
 
   const rawAdjustmentLineItems = [...(resolvedAnalysis?.adjustment_line_items || []), ...(deterministic.adjustmentLineItems || [])];
@@ -1479,8 +1779,9 @@ export function buildNormalizedClaimRecord({ claim = {}, documents = [], analysi
       message: "Policy, shipment, invoice-total, or other non-loss valuation figures were excluded from the claim adjustment schedule.",
     });
   }
-  const adjustmentLineItems = rawAdjustmentLineItems.filter(validAdjustmentLineItem).flatMap((item) => {
-    const adjustedValue = parseNumber(item.adjusted_value);
+  const initiallyNormalizedAdjustmentLineItems = rawAdjustmentLineItems.filter(validAdjustmentLineItem).flatMap((item) => {
+    const calculated = deterministicAdjustmentValue(item);
+    const adjustedValue = calculated.value;
     if (!isPresent(item.description) || adjustedValue === null || !(item.sources || []).length) return [];
     return [{
       description: String(item.description).trim(),
@@ -1488,7 +1789,11 @@ export function buildNormalizedClaimRecord({ claim = {}, documents = [], analysi
       unit_price: parseNumber(item.unit_price),
       adjusted_value: adjustedValue,
       currency: currencyCode(item.currency) || item.currency || null,
-      basis: isPresent(item.basis) ? String(item.basis).trim() : null,
+      basis: calculated.derived
+        ? `${isPresent(item.basis) ? `${String(item.basis).trim()}; ` : ""}deterministically calculated from the cited quantity/conversion and matching unit rate`
+        : isPresent(item.basis) ? String(item.basis).trim() : null,
+      line_kind: deductionLineKind(item) || "loss",
+      evidence_basis: quotationBasedItem(item) ? "quotation" : "claim_or_incurred_evidence",
       confidence: item.confidence ?? null,
       sources: item.sources,
     }];
@@ -1500,19 +1805,57 @@ export function buildNormalizedClaimRecord({ claim = {}, documents = [], analysi
       return `${candidateSource.document_id || candidateSource.document_name || ""}:${candidateSource.page || ""}:${normalizeComparable(candidate.description)}:${parseNumber(candidate.adjusted_value)}:${parseNumber(candidate.quantity)}` === key;
     }) === index;
   });
+  const schedulePresentedClaim = parseNumber(facts.gross_claim_amount.value) ?? parseNumber(facts.claim_amount.value);
+  const scheduleAdjustedAmount = parseNumber(facts.adjusted_amount.value);
+  const aggregateLinePattern = /\b(?:aggregate|claim(?:ed)?\s+(?:damage|loss)\s+value|gross\s+claim|schedule\s+(?:total|summary)|total\s+(?:claim|damage|loss))\b/i;
+  const initialLossItems = initiallyNormalizedAdjustmentLineItems.filter((item) => item.line_kind === "loss");
+  const detailedLossItems = initialLossItems.filter((item) => !aggregateLinePattern.test(item.description));
+  const detailedLossTotal = detailedLossItems.reduce((total, item) => total + item.adjusted_value, 0);
+  const approximatelyEqual = (left, right) => left !== null && right !== null && Math.abs(left - right) <= 0.01;
+  const excludedAggregateLines = detailedLossItems.length >= 2
+    ? initialLossItems.filter((item) => aggregateLinePattern.test(item.description) && (
+      approximatelyEqual(item.adjusted_value, detailedLossTotal)
+      || (approximatelyEqual(item.adjusted_value, schedulePresentedClaim) && approximatelyEqual(detailedLossTotal, scheduleAdjustedAmount))
+    ))
+    : [];
+  if (excludedAggregateLines.length) conflicts.push({
+    field: "adjustment_line_items",
+    values: excludedAggregateLines.map((item) => `${item.description}: ${item.adjusted_value}`),
+    message: "An aggregate claim or schedule-summary row was excluded from the detailed loss schedule to prevent the same loss from being counted twice.",
+  });
+  const normalizedAdjustmentLineItems = initiallyNormalizedAdjustmentLineItems.filter((item) => !excludedAggregateLines.includes(item));
+  const deductionLineItems = normalizedAdjustmentLineItems.filter((item) => item.line_kind !== "loss");
+  const adjustmentLineItems = normalizedAdjustmentLineItems.filter((item) => item.line_kind === "loss");
   const itemizedClaimTotal = adjustmentLineItems.length
     ? adjustmentLineItems.reduce((total, item) => total + item.adjusted_value, 0)
     : null;
-  const itemCurrencies = unique(adjustmentLineItems.map((item) => currencyCode(item.currency) || item.currency).filter(isPresent));
+  const itemCurrencies = unique(normalizedAdjustmentLineItems.map((item) => currencyCode(item.currency) || item.currency).filter(isPresent));
   if (itemCurrencies.length === 1) {
     const itemCurrency = itemCurrencies[0];
     facts.currency = { ...facts.currency, value: itemCurrency, status: "supported", sources: adjustmentLineItems.flatMap((item) => item.sources) };
     fieldTrace.currency = { ...fieldTrace.currency, selected_value: itemCurrency, resolution: "derived from the evidence-reconciled adjustment schedule", final_status: "supported" };
   }
   let explicitPresentedClaim = parseNumber(facts.gross_claim_amount.value) ?? parseNumber(facts.claim_amount.value);
-  const rejectedValuationTotal = rejectedAdjustmentLineItems.reduce((total, item) => total + (parseNumber(item.adjusted_value) || 0), 0);
-  if (explicitPresentedClaim !== null && itemizedClaimTotal !== null && rejectedValuationTotal > 0
-    && Math.abs(explicitPresentedClaim - itemizedClaimTotal - rejectedValuationTotal) < 0.01) {
+  const presentedClaimFact = parseNumber(facts.gross_claim_amount.value) !== null ? facts.gross_claim_amount : facts.claim_amount;
+  if (explicitPresentedClaim !== null && factBasedOnlyOnQuotation(presentedClaimFact)) {
+    conflicts.push({
+      field: "gross_claim_amount",
+      values: [String(explicitPresentedClaim)],
+      message: "The only source for the stated amount is a quotation, estimate, pro-forma invoice, or proposal. It is retained as provisional valuation evidence and is not treated as a claim presented or an incurred cost.",
+    });
+    explicitPresentedClaim = null;
+  }
+  const rejectedValuationValues = rejectedAdjustmentLineItems.map((item) => parseNumber(item.adjusted_value)).filter((value) => value !== null);
+  const rejectedValuationTotal = rejectedValuationValues.reduce((total, value) => total + value, 0);
+  const presentedDifference = explicitPresentedClaim !== null && itemizedClaimTotal !== null
+    ? explicitPresentedClaim - itemizedClaimTotal
+    : null;
+  const rejectedValuationExplainsDifference = presentedDifference !== null && (
+    Math.abs(presentedDifference - rejectedValuationTotal) < 0.01
+    || rejectedValuationValues.some((value) => Math.abs(presentedDifference - value) < 0.01)
+  );
+  if (explicitPresentedClaim !== null && itemizedClaimTotal !== null && rejectedValuationValues.length
+    && rejectedValuationExplainsDifference) {
     conflicts.push({
       field: "gross_claim_amount",
       values: [String(explicitPresentedClaim), String(itemizedClaimTotal)],
@@ -1524,18 +1867,50 @@ export function buildNormalizedClaimRecord({ claim = {}, documents = [], analysi
       fieldTrace[field] = { ...fieldTrace[field], selected_value: itemizedClaimTotal.toFixed(2), resolution: "excluded a non-claim valuation from the presented quantum", final_status: "conflict" };
     }
   }
-  const presentedClaim = explicitPresentedClaim ?? itemizedClaimTotal;
-  if (explicitPresentedClaim === null && itemizedClaimTotal !== null) {
+  const allLossItemsAreQuotations = adjustmentLineItems.length > 0 && adjustmentLineItems.every((item) => item.evidence_basis === "quotation");
+  const presentedClaim = explicitPresentedClaim ?? (allLossItemsAreQuotations ? null : itemizedClaimTotal);
+  if (explicitPresentedClaim === null && itemizedClaimTotal !== null && !allLossItemsAreQuotations) {
     const formattedTotal = itemizedClaimTotal.toFixed(2);
     for (const field of ["claim_amount", "gross_claim_amount"]) {
       facts[field] = { ...facts[field], value: formattedTotal, status: "supported", sources: adjustmentLineItems.flatMap((item) => item.sources), derived_from: "adjustment_line_items" };
       fieldTrace[field] = { ...fieldTrace[field], selected_value: formattedTotal, resolution: "deterministic sum of evidence-supported adjustment line items", final_status: "supported" };
     }
   }
-  const deductible = parseNumber(facts.deductible.value);
-  const salvage = parseNumber(facts.salvage_amount.value);
-  const recovery = parseNumber(facts.recovery_amount.value);
-  const depreciation = parseNumber(facts.depreciation_amount.value);
+  const deductionAmount = (kind, factName) => {
+    const factAmount = parseNumber(facts[factName].value);
+    const matching = deductionLineItems.filter((item) => item.line_kind === kind);
+    if (factAmount !== null) {
+      if (matching.length) {
+        const lineAmount = matching.reduce((total, item) => total + Math.abs(item.adjusted_value), 0);
+        if (Math.abs(Math.abs(factAmount) - lineAmount) > 0.01) conflicts.push({
+          field: factName,
+          values: [String(Math.abs(factAmount)), String(lineAmount)],
+          message: `The stated ${factName.replaceAll("_", " ")} does not match the corresponding adjustment deduction row and requires reconciliation.`,
+        });
+      }
+      return Math.abs(factAmount);
+    }
+    if (!matching.length) return null;
+    const derived = matching.reduce((total, item) => total + Math.abs(item.adjusted_value), 0);
+    facts[factName] = {
+      ...facts[factName],
+      value: derived.toFixed(2),
+      status: "supported",
+      sources: matching.flatMap((item) => item.sources),
+      derived_from: "adjustment_deduction_line_items",
+    };
+    fieldTrace[factName] = { ...fieldTrace[factName], selected_value: derived.toFixed(2), resolution: "derived from separately classified evidence-supported deduction rows", final_status: "supported" };
+    return derived;
+  };
+  const documentedDeductible = deductionAmount("deductible", "deductible");
+  const deductibleEvidenceText = (facts.deductible.sources || []).map((source) => source.supporting_text || "").join(" ");
+  const deductibleTerms = parseDeductibleTerms(deductibleEvidenceText, documentedDeductible);
+  const explicitDeductibleLineAmount = deductionLineItems.some((item) => item.line_kind === "deductible")
+    ? deductionLineItems.filter((item) => item.line_kind === "deductible").reduce((total, item) => total + Math.abs(item.adjusted_value), 0)
+    : null;
+  const salvage = deductionAmount("salvage", "salvage_amount");
+  const recovery = deductionAmount("recovery", "recovery_amount");
+  const depreciation = deductionAmount("depreciation", "depreciation_amount");
   const explicitAdjusted = parseNumber(facts.adjusted_amount.value);
   const adjustedClaimAmount = itemizedClaimTotal ?? explicitAdjusted ?? presentedClaim;
   const underlyingAdjustedLoss = itemizedClaimTotal ?? presentedClaim;
@@ -1547,19 +1922,63 @@ export function buildNormalizedClaimRecord({ claim = {}, documents = [], analysi
   const calculationBase = underlyingAdjustedLoss === null
     ? null
     : underlyingAdjustedLoss + (valuationUpliftAmount ?? 0);
+  const deductible = applicableDeductible({
+    terms: deductibleTerms,
+    calculationBase,
+    documentedAmount: documentedDeductible,
+    explicitLineAmount: explicitDeductibleLineAmount,
+    claimCurrency: currencyCode(facts.currency.value),
+  });
+  if (deductibleTerms.aggregate && explicitDeductibleLineAmount === null) conflicts.push({
+    field: "applicable_deductible",
+    values: documentedDeductible === null ? [] : [String(documentedDeductible)],
+    message: "The policy states an aggregate deductible or excess, but the reviewed evidence does not establish the remaining aggregate, prior erosion, or a claim-specific applied deduction. The amount is shown as policy wording and is not deducted automatically.",
+  });
+  if (deductibleTerms.franchise && explicitDeductibleLineAmount === null) conflicts.push({
+    field: "applicable_deductible",
+    values: documentedDeductible === null ? [] : [String(documentedDeductible)],
+    message: "The policy uses franchise wording. Its legal and arithmetic effect is not treated as an ordinary deductible without an evidenced claim-specific application.",
+  });
+  if (deductibleTerms.currency && currencyCode(facts.currency.value) && deductibleTerms.currency !== currencyCode(facts.currency.value)) conflicts.push({
+    field: "applicable_deductible_currency",
+    values: [deductibleTerms.currency, currencyCode(facts.currency.value)],
+    message: "The deductible currency differs from the adjustment currency and no evidenced conversion basis is available; the deductible is not applied automatically.",
+  });
+  if (deductibleTerms.percentage !== null && calculationBase === null) conflicts.push({
+    field: "applicable_deductible",
+    values: [`${deductibleTerms.percentage}%`],
+    message: "A percentage deductible is evidenced, but the supported calculation base is not established, so no claim-specific deductible is calculated.",
+  });
   const valuationAdjustment = presentedClaim !== null && itemizedClaimTotal !== null ? Number((presentedClaim - itemizedClaimTotal).toFixed(2)) : null;
   const canCalculateWithoutExplicit = calculationBase !== null && [deductible, salvage, recovery, depreciation].every((value) => value !== null);
   const knownDeductions = [deductible, salvage, recovery, depreciation].filter((value) => value !== null);
-  const knownCalculated = calculationBase === null
+  const rawKnownCalculated = calculationBase === null
     ? null
-    : calculationBase - knownDeductions.reduce((total, value) => total + Math.abs(value), 0);
+    : Number((calculationBase - knownDeductions.reduce((total, value) => total + Math.abs(value), 0)).toFixed(4));
+  const knownCalculated = rawKnownCalculated === null ? null : Math.max(0, rawKnownCalculated);
+  if (rawKnownCalculated !== null && rawKnownCalculated < 0) conflicts.push({
+    field: "provisional_indemnity",
+    values: [String(rawKnownCalculated), "0"],
+    message: "Supported deductions exceed the supported adjusted loss. The provisional payable is floored at zero; a negative indemnity is never reported.",
+  });
   const arithmeticValid = explicitAdjusted !== null && knownCalculated !== null ? Math.abs(explicitAdjusted - knownCalculated) <= 0.01 : false;
-  const concludedIndemnity = explicitAdjusted ?? (canCalculateWithoutExplicit ? knownCalculated : null);
+  const explicitAdjustedNonNegative = explicitAdjusted !== null && explicitAdjusted >= 0 ? explicitAdjusted : null;
+  if (explicitAdjusted !== null && explicitAdjusted < 0) conflicts.push({
+    field: "adjusted_amount",
+    values: [String(explicitAdjusted)],
+    message: "A negative adjusted amount cannot represent an indemnity and is withheld pending reconciliation of the calculation.",
+  });
+  const explicitAdjustedReconciled = explicitAdjustedNonNegative !== null && (!canCalculateWithoutExplicit || knownCalculated === null || arithmeticValid);
+  const itemizedQuantityConflict = itemizedClaimTotal !== null && conflicts.some((conflict) => ["quantity", "affected_quantity", "shortage_breakdown"].includes(conflict.field));
+  const concludedIndemnity = explicitAdjusted !== null
+    ? explicitAdjustedReconciled ? explicitAdjustedNonNegative : null
+    : canCalculateWithoutExplicit && !itemizedQuantityConflict ? knownCalculated : null;
   const reconciledItemizedAdjustment = itemizedClaimTotal !== null && explicitAdjusted !== null && arithmeticValid;
   const financials = {
     currency: facts.currency.value || null,
     presented_claim: presentedClaim,
     itemized_claim_total: itemizedClaimTotal,
+    itemized_evidence_basis: allLossItemsAreQuotations ? "quotation" : adjustmentLineItems.length ? "claim_or_incurred_evidence" : null,
     adjusted_claim_amount: adjustedClaimAmount,
     valuation_adjustment: valuationAdjustment,
     valuation_basis: isPresent(facts.valuation_basis.value) ? facts.valuation_basis.value : null,
@@ -1573,13 +1992,17 @@ export function buildNormalizedClaimRecord({ claim = {}, documents = [], analysi
     freight_invoice_value: parseNumber(facts.freight_invoice_total.value),
     policy_premium: parseNumber(facts.policy_premium.value),
     insured_value: parseNumber(facts.insured_value.value) ?? parseNumber(facts.policy_limit.value),
+    documented_deductible: documentedDeductible,
+    deductible_terms: deductibleTerms,
     deductible, salvage, recovery, depreciation,
     provisional_indemnity: knownCalculated,
     concluded_indemnity: concludedIndemnity,
     calculation_status: arithmeticValid || (canCalculateWithoutExplicit && concludedIndemnity !== null)
       ? "validated"
-      : explicitAdjusted !== null ? "source_stated_requires_reconciliation" : "requires_confirmation",
-    arithmetic_valid: arithmeticValid || (canCalculateWithoutExplicit && explicitAdjusted === null),
+      : explicitAdjusted !== null
+        ? "source_stated_requires_reconciliation"
+        : "requires_confirmation",
+    arithmetic_valid: arithmeticValid || (canCalculateWithoutExplicit && explicitAdjusted === null && !itemizedQuantityConflict),
     requires_confirmation: [
       presentedClaim === null ? "Presented claim quantum" : null,
       deductible === null ? "Applicable deductible / excess" : null,
@@ -1622,6 +2045,8 @@ export function buildNormalizedClaimRecord({ claim = {}, documents = [], analysi
   const liabilityAnalysis = buildLiabilityAnalysis(facts, businessLine, evidenceFindings, financials);
   const quantumAnalysis = buildQuantumAnalysis(financials, adjustment, validationChecks);
   const reportQuality = buildReportQualityReview({
+    facts,
+    financials,
     findings: evidenceFindings,
     causeAssessment,
     policyAnalysis,
@@ -1701,7 +2126,15 @@ const statusText = (status) => ({
 
 const conciseText = (value, length = 480) => {
   const text = String(value || "").replace(/\s+/g, " ").trim();
-  return text.length > length ? `${text.slice(0, length).trim()}...` : text;
+  if (text.length <= length) return text;
+  const completeSentences = text.match(/[^.!?]+[.!?]+/g)?.map((item) => item.trim()).filter(Boolean) || [];
+  if (!completeSentences.length) return text;
+  const retained = [];
+  for (const sentence of completeSentences) {
+    if (retained.length && [...retained, sentence].join(" ").length > length) break;
+    retained.push(sentence);
+  }
+  return retained.join(" ") || completeSentences[0];
 };
 const corporateSection = `**United Loss Adjusters & Surveyors (ULA)** provides independent international loss adjusting, surveying, technical, legal-support, and claims-management services.
 
@@ -1914,7 +2347,7 @@ export function createUnifiedReportDraft({ claim, documents, versions, generated
 | Signature (Approver) |  |  |
 | This survey and its issued report were completed without prejudice to all rights of parties concerned. |  |  |
 | Date of approval |  |  |
-| ${masterData.scalars.issue_date} |  |  |
+| ${masterData.scalars.approval_date} |  |  |
 
 ### Version History
 

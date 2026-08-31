@@ -16,6 +16,7 @@ const configuredEnv = {
 };
 
 test("Anthropic default request ceiling stays below the provider's 32 MB Messages limit", () => {
+  assert.equal(anthropicSafetyLimits({}).max_file_bytes, 30 * 1024 * 1024);
   assert.equal(anthropicSafetyLimits({}).max_request_bytes, 30 * 1024 * 1024);
 });
 
