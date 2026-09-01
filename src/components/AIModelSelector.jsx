@@ -17,7 +17,7 @@ export const POPULAR_MODELS = [
   { value: "gemini", label: "Gemini 3.6 Flash", provider: "gemini", model: "gemini-3.6-flash" },
   { value: "openrouter:openrouter/auto", label: "Auto-Router (Best per Task)", provider: "openrouter", model: "openrouter/auto" },
   { value: "openrouter:minimax/minimax-m3:free", label: "MiniMax M3 (Free · 1M Context)", provider: "openrouter", model: "minimax/minimax-m3:free" },
-  { value: "anthropic", label: "Claude 3.5 Sonnet", provider: "anthropic", model: "claude-sonnet-4-6" },
+  { value: "anthropic", label: "Claude Sonnet (4.6)", provider: "anthropic", model: "claude-sonnet-4-6" },
   { value: "openai", label: "GPT-4o", provider: "openai", model: "gpt-4o" },
   { value: "groq", label: "Groq · Llama 3.3 70B", provider: "groq", model: "llama-3.3-70b-versatile" },
   { value: "ollama", label: "Ollama (Local)", provider: "ollama", model: "llama3.3" },
