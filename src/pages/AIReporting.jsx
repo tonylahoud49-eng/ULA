@@ -6,11 +6,14 @@ import {
   ArrowRight,
   CheckCircle,
   FileText,
+  FolderOpen,
   Link2,
   Loader2,
+  Search,
   ShieldCheck,
   Sparkles,
   Wand2,
+  X,
 } from "lucide-react";
 import { appClient } from "@/api/appClient";
 import { Button } from "@/components/ui/button";
@@ -117,8 +120,35 @@ export default function AIReporting() {
   const [edited, setEdited] = useState({});
   const [generating, setGenerating] = useState(false);
   const [loadingDummy, setLoadingDummy] = useState(false);
+  const [claimSearch, setClaimSearch] = useState("");
+  const [claimFilter, setClaimFilter] = useState("all");
   const navigate = useNavigate();
   const readiness = useMemo(() => reportReadiness(edited || {}, documents), [edited, documents]);
+
+  const filteredClaims = useMemo(() => {
+    return claims.filter((item) => {
+      const matchesSearch = !claimSearch.trim() || [
+        item.title,
+        item.claim_number,
+        item.insured,
+        item.business_line,
+        item.commodity,
+      ].some((val) => String(val || "").toLowerCase().includes(claimSearch.toLowerCase()));
+
+      if (!matchesSearch) return false;
+
+      if (claimFilter === "unclassified") {
+        return item.business_line === "Unclassified" || !item.business_line;
+      }
+      if (claimFilter === "draft") {
+        return item.status?.toLowerCase().includes("draft");
+      }
+      if (claimFilter === "in_progress") {
+        return ["under investigation", "pending documents", "new"].includes(item.status?.toLowerCase());
+      }
+      return true;
+    });
+  }, [claims, claimSearch, claimFilter]);
 
   useEffect(() => {
     appClient.entities.Claim.list("-created_date", 100)
@@ -142,6 +172,7 @@ export default function AIReporting() {
     const created = await appClient.entities.Claim.create({ claim_number: number, title: "New AI Claim", business_line: "Unclassified", status: "New", priority: "Medium" });
     await selectClaim(created.id);
     setClaims((current) => [created, ...current]);
+    setStep(1);
   };
 
   const createDummyTestClaim = async () => {
@@ -196,13 +227,27 @@ export default function AIReporting() {
     setDocuments(await appClient.entities.ClaimDocument.filter({ claim_id: selectedClaimId }));
   };
 
+  const cancelAnalysis = () => {
+    setAnalyzing(false);
+    setAnalysisProgress({ active: false, progress: 0, stage: "" });
+    setAnalysisError("Analysis was cancelled. You can pick another model and restart.");
+  };
+
   const runAnalysis = async () => {
     setAnalyzing(true);
     setAnalysisError("");
     setPreflightStats(null);
-    setAnalysisProgress({ active: true, progress: 10, stage: "Running local safety and request-size checks...", step: 1, totalSteps: 4 });
-    let timer1;
-    let timer2;
+    setAnalysisProgress({ active: true, progress: 15, stage: "Ingesting evidence files & extracting text/OCR...", step: 1, totalSteps: 4 });
+    
+    const timer1 = setTimeout(() => {
+      setAnalysisProgress((prev) => prev.active ? { active: true, progress: 40, stage: "Classifying documents & verifying policy clauses...", step: 2, totalSteps: 4 } : prev);
+    }, 1800);
+    const timer2 = setTimeout(() => {
+      setAnalysisProgress((prev) => prev.active ? { active: true, progress: 70, stage: "Extracting salient claim facts & coverage terms...", step: 3, totalSteps: 4 } : prev);
+    }, 4500);
+    const timer3 = setTimeout(() => {
+      setAnalysisProgress((prev) => prev.active ? { active: true, progress: 88, stage: "Synthesizing adjustment lines & recommendations...", step: 4, totalSteps: 4 } : prev);
+    }, 9000);
 
     try {
       const response = await appClient.functions.invoke("analyseClaim", {
@@ -211,17 +256,12 @@ export default function AIReporting() {
         disable_fallback: selectedProvider === "anthropic" || !enableFallback,
         on_preflight: (stats) => {
           setPreflightStats(stats);
-          setAnalysisProgress({ active: true, progress: 25, stage: "Preflight passed. Starting protected Claude analysis...", step: 1, totalSteps: 4 });
-          timer1 = setTimeout(() => {
-            setAnalysisProgress({ active: true, progress: 45, stage: "Classifying document categories & confidence scoring...", step: 2, totalSteps: 4 });
-          }, 500);
-          timer2 = setTimeout(() => {
-            setAnalysisProgress({ active: true, progress: 75, stage: "Extracting salient facts & policy coverage positions...", step: 3, totalSteps: 4 });
-          }, 1200);
+          setAnalysisProgress({ active: true, progress: 30, stage: "Preflight verified. Processing structured Claude analysis...", step: 1, totalSteps: 4 });
         },
       });
       clearTimeout(timer1);
       clearTimeout(timer2);
+      clearTimeout(timer3);
       setAnalysisProgress({ active: true, progress: 100, stage: "Analysis complete! Finalizing suggestions...", step: 4, totalSteps: 4 });
       await new Promise((r) => setTimeout(r, 300));
       setAnalysis(response.data.analysis);
@@ -269,7 +309,7 @@ export default function AIReporting() {
     try {
       await appClient.entities.Claim.update(selectedClaimId, edited);
       await appClient.functions.invoke("generateReport", { claim_id: selectedClaimId, edited_data: edited });
-      navigate(`/claims/${selectedClaimId}`);
+      navigate(`/claims/${selectedClaimId}?tab=report`);
     } catch (error) {
       toast({ variant: "destructive", title: "Draft report could not be generated", description: error.response?.data?.error || error.message });
     } finally {
@@ -290,29 +330,189 @@ export default function AIReporting() {
       <Stepper step={step} />
 
       {step === 0 && (
-        <Card className="docket-surface overflow-hidden shadow-none">
-          <div className="flex flex-col justify-between gap-3 border-b bg-muted/35 p-5 sm:flex-row sm:items-center">
-            <div><h3 className="font-heading text-xl font-semibold">Select a claim</h3><p className="mt-1 text-xs text-muted-foreground">The business line determines the unified report template.</p></div>
-            <div className="flex gap-2">
-              <Button variant="outline" onClick={createDummyTestClaim} disabled={loadingDummy}>
-                <Sparkles className="w-4 h-4 mr-2 text-primary" /> {loadingDummy ? "Generating..." : "Create Test Claim with Evidence"}
-              </Button>
-              <Button onClick={createClaim}><Wand2 className="w-4 h-4 mr-2" /> Create New AI Claim</Button>
-            </div>
-          </div>
-          <div className="max-h-[430px] divide-y overflow-y-auto scrollbar-thin">
-            {claims.length ? claims.map((item) => (
-              <button key={item.id} type="button" onClick={() => selectClaim(item.id)} className={`w-full border-l-2 p-4 text-left transition-colors ${selectedClaimId === item.id ? "border-l-primary bg-primary/5" : "border-l-transparent hover:bg-muted/40"}`}>
-                <div className="flex flex-wrap items-center justify-between gap-2">
-                  <span className="font-semibold">{item.title}</span>
-                  <span className="font-mono text-xs text-muted-foreground">{item.claim_number}</span>
+        <div className="space-y-5">
+          {/* Top Quick Actions */}
+          <div className="grid gap-4 sm:grid-cols-2">
+            <Card className="docket-surface relative flex flex-col justify-between border-primary/30 bg-primary/[0.03] p-5 shadow-xs transition-all hover:border-primary/50 hover:shadow-sm">
+              <div>
+                <div className="flex items-center gap-2 text-primary">
+                  <Wand2 className="h-5 w-5" />
+                  <span className="font-heading text-xs font-bold uppercase tracking-wider">Start Fresh</span>
                 </div>
-                <p className="mt-1 text-xs text-muted-foreground">{item.business_line} · {item.status}</p>
-              </button>
-            )) : <div className="p-10 text-center text-sm text-muted-foreground">No claims registered yet.</div>}
+                <h3 className="mt-2 font-heading text-lg font-semibold text-foreground">Create New AI Claim</h3>
+                <p className="mt-1 text-xs text-muted-foreground">
+                  Creates an empty claim docket and opens the evidence uploader. The AI will auto-detect the business line from your files.
+                </p>
+              </div>
+              <div className="mt-4">
+                <Button onClick={createClaim} className="ula-gradient text-white hover:opacity-90">
+                  <Wand2 className="mr-2 h-4 w-4" /> Start New Claim
+                </Button>
+              </div>
+            </Card>
+
+            <Card className="docket-surface relative flex flex-col justify-between border-border bg-card p-5 shadow-xs transition-all hover:border-border/80 hover:shadow-sm">
+              <div>
+                <div className="flex items-center gap-2 text-muted-foreground">
+                  <Sparkles className="h-5 w-5 text-primary" />
+                  <span className="font-heading text-xs font-bold uppercase tracking-wider">Instant Demo</span>
+                </div>
+                <h3 className="mt-2 font-heading text-lg font-semibold text-foreground">Test with Sample Pack</h3>
+                <p className="mt-1 text-xs text-muted-foreground">
+                  Generates a realistic Reefer Apples claim pre-attached with policy, invoice, survey notes, and inspection photos.
+                </p>
+              </div>
+              <div className="mt-4">
+                <Button variant="outline" onClick={createDummyTestClaim} disabled={loadingDummy}>
+                  <Sparkles className="mr-2 h-4 w-4 text-primary" /> {loadingDummy ? "Generating..." : "Load Sample Claim"}
+                </Button>
+              </div>
+            </Card>
           </div>
-          {selectedClaimId && <div className="flex justify-end border-t p-5"><Button onClick={() => setStep(1)}>Continue <ArrowRight /></Button></div>}
-        </Card>
+
+          {/* Existing Claims Selector Card */}
+          <Card className="docket-surface overflow-hidden shadow-none border-border">
+            <div className="flex flex-col gap-3 border-b bg-muted/20 p-4 sm:flex-row sm:items-center sm:justify-between">
+              <div>
+                <h3 className="font-heading text-base font-semibold text-foreground">
+                  Or select an existing claim <span className="font-mono text-xs font-normal text-muted-foreground">({filteredClaims.length})</span>
+                </h3>
+                <p className="text-xs text-muted-foreground">Select any registered docket to continue investigation or generate reports.</p>
+              </div>
+
+              {/* Search & Filter Inputs */}
+              <div className="flex flex-wrap items-center gap-2">
+                <div className="relative min-w-[200px] flex-1 sm:w-64">
+                  <Search className="absolute left-2.5 top-1/2 h-3.5 w-3.5 -translate-y-1/2 text-muted-foreground" />
+                  <Input
+                    placeholder="Search claim, insured, line…"
+                    value={claimSearch}
+                    onChange={(e) => setClaimSearch(e.target.value)}
+                    className="h-8 pl-8 pr-8 text-xs bg-background"
+                  />
+                  {claimSearch && (
+                    <button
+                      type="button"
+                      onClick={() => setClaimSearch("")}
+                      className="absolute right-2 top-1/2 -translate-y-1/2 text-muted-foreground hover:text-foreground"
+                    >
+                      <X className="h-3.5 w-3.5" />
+                    </button>
+                  )}
+                </div>
+
+                <div className="flex rounded-md border border-border bg-background p-0.5 text-xs">
+                  {[
+                    ["all", "All"],
+                    ["unclassified", "Unclassified"],
+                    ["in_progress", "In Progress"],
+                    ["draft", "Drafts"],
+                  ].map(([key, label]) => (
+                    <button
+                      key={key}
+                      type="button"
+                      onClick={() => setClaimFilter(key)}
+                      className={`rounded px-2.5 py-1 text-[0.7rem] font-medium transition-colors ${
+                        claimFilter === key
+                          ? "bg-primary text-primary-foreground shadow-xs"
+                          : "text-muted-foreground hover:text-foreground"
+                      }`}
+                    >
+                      {label}
+                    </button>
+                  ))}
+                </div>
+              </div>
+            </div>
+
+            {/* Compact Claims List */}
+            <div className="max-h-[340px] divide-y overflow-y-auto scrollbar-thin">
+              {filteredClaims.length ? (
+                filteredClaims.map((item) => {
+                  const isSelected = selectedClaimId === item.id;
+                  return (
+                    <div
+                      key={item.id}
+                      onClick={async () => {
+                        await selectClaim(item.id);
+                        setStep(1);
+                      }}
+                      className={`group flex flex-col justify-between gap-3 p-3.5 sm:flex-row sm:items-center cursor-pointer transition-colors ${
+                        isSelected
+                          ? "bg-primary/5 border-l-2 border-l-primary"
+                          : "hover:bg-muted/40 border-l-2 border-l-transparent"
+                      }`}
+                    >
+                      <div className="flex items-start gap-3 min-w-0">
+                        <div className="flex flex-col min-w-0">
+                          <div className="flex items-center gap-2 flex-wrap">
+                            <span className="font-mono text-xs font-bold text-foreground">{item.claim_number}</span>
+                            <span className="font-medium text-sm text-foreground truncate max-w-[280px] sm:max-w-md">
+                              {item.title}
+                            </span>
+                            {item.insured && (
+                              <span className="text-xs text-muted-foreground">· {item.insured}</span>
+                            )}
+                          </div>
+                          <div className="mt-1 flex items-center gap-2 text-[0.72rem] text-muted-foreground flex-wrap">
+                            <span className="rounded bg-muted px-1.5 py-0.5 font-medium text-foreground">
+                              {item.business_line || "Unclassified"}
+                            </span>
+                            <span>•</span>
+                            <span>Status: <strong className="text-foreground">{item.status || "New"}</strong></span>
+                            {item.date_of_loss && (
+                              <>
+                                <span>•</span>
+                                <span>Loss: {item.date_of_loss}</span>
+                              </>
+                            )}
+                          </div>
+                        </div>
+                      </div>
+
+                      <div className="flex items-center gap-2 shrink-0 self-end sm:self-center">
+                        <Button
+                          size="sm"
+                          variant={isSelected ? "default" : "outline"}
+                          className="h-7 text-xs font-medium"
+                          onClick={async (e) => {
+                            e.stopPropagation();
+                            await selectClaim(item.id);
+                            setStep(1);
+                          }}
+                        >
+                          Select & Upload <ArrowRight className="ml-1.5 h-3 w-3" />
+                        </Button>
+                      </div>
+                    </div>
+                  );
+                })
+              ) : (
+                <div className="p-8 text-center text-sm text-muted-foreground">
+                  <FolderOpen className="mx-auto mb-2 h-8 w-8 text-muted-foreground/50" />
+                  {claimSearch || claimFilter !== "all" ? (
+                    <div>
+                      <p>No claims match your search filters.</p>
+                      <Button
+                        variant="link"
+                        size="sm"
+                        onClick={() => {
+                          setClaimSearch("");
+                          setClaimFilter("all");
+                        }}
+                        className="mt-1 h-auto p-0 text-xs text-primary"
+                      >
+                        Reset filters
+                      </Button>
+                    </div>
+                  ) : (
+                    <p>No claims registered yet. Click &quot;Start New Claim&quot; above to begin.</p>
+                  )}
+                </div>
+              )}
+            </div>
+          </Card>
+        </div>
       )}
 
       {step === 1 && claim && (
@@ -339,7 +539,7 @@ export default function AIReporting() {
       {step === 2 && claim && (
         <div>
           {analyzing ? (
-            <AIAnalysisProgressCard progress={analysisProgress} provider={selectedProvider} preflight={preflightStats} className="mx-auto max-w-2xl" />
+            <AIAnalysisProgressCard progress={analysisProgress} provider={selectedProvider} preflight={preflightStats} onCancel={cancelAnalysis} className="mx-auto max-w-2xl" />
           ) : (
             <Card className="docket-surface p-8 text-center shadow-none">
               <FileText className="mx-auto mb-4 h-11 w-11 text-primary" />

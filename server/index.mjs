@@ -26,7 +26,7 @@ if (process.env.NODE_ENV !== "test") {
 
 const serverFile = fileURLToPath(import.meta.url);
 const root = path.resolve(path.dirname(serverFile), "..");
-const port = Number(process.env.PORT || 8787);
+const port = Number(process.env.PORT || 8090);
 const maxFiles = Number(process.env.AI_MAX_FILES || 20);
 const maxFileBytes = Number(process.env.AI_MAX_FILE_BYTES || 20 * 1024 * 1024);
 const maxTotalBytes = Number(process.env.AI_MAX_TOTAL_BYTES || 50 * 1024 * 1024);
@@ -49,6 +49,108 @@ app.get("/api/leave/email/status", (_request, response) => response.json(getLeav
 app.get("/api/email/diagnostics", (_request, response) => {
   dotenv.config({ override: true });
   return response.json(getEmailDiagnosticsStatus(process.env));
+});
+
+app.post("/api/ai/test-chat", async (request, response) => {
+  const startTime = Date.now();
+  const { provider = "openrouter", model = "openrouter/auto", prompt = "Hello, respond with a quick test acknowledgement and your active model name." } = request.body || {};
+
+  try {
+    dotenv.config({ override: true });
+    let reply = "";
+    let routedModel = model;
+    let usage = null;
+
+    if (provider === "openrouter" || provider.startsWith("openrouter:")) {
+      const key = process.env.OPENROUTER_API_KEY;
+      if (!key) throw new Error("OPENROUTER_API_KEY is not configured in .env");
+      const actualModel = (model || "").replace(/^openrouter:/, "") || "openrouter/auto";
+
+      const res = await fetch("https://openrouter.ai/api/v1/chat/completions", {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          "Authorization": `Bearer ${key}`,
+        },
+        body: JSON.stringify({
+          model: actualModel,
+          messages: [{ role: "user", content: prompt }],
+          max_tokens: 150,
+        }),
+      });
+
+      const data = await res.json();
+      if (!res.ok) {
+        throw new Error(data.error?.message || `OpenRouter returned HTTP ${res.status}`);
+      }
+      routedModel = data.model || actualModel;
+      reply = data.choices?.[0]?.message?.content?.trim() || "(No response content returned)";
+      usage = data.usage || null;
+    } else if (provider === "gemini") {
+      const key = process.env.GEMINI_API_KEY;
+      if (!key) throw new Error("GEMINI_API_KEY is not configured in .env");
+      const actualModel = model || process.env.GEMINI_MODEL || "gemini-2.5-flash";
+
+      const res = await fetch(`https://generativelanguage.googleapis.com/v1beta/models/${actualModel}:generateContent?key=${key}`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          contents: [{ parts: [{ text: prompt }] }],
+        }),
+      });
+
+      const data = await res.json();
+      if (!res.ok || data.error) {
+        throw new Error(data.error?.message || `Gemini returned HTTP ${res.status}`);
+      }
+      reply = data.candidates?.[0]?.content?.parts?.[0]?.text?.trim() || "(No response content returned)";
+    } else if (provider === "anthropic") {
+      const key = process.env.ANTHROPIC_API_KEY;
+      if (!key) throw new Error("ANTHROPIC_API_KEY is not configured in .env");
+      const actualModel = model || process.env.ANTHROPIC_MODEL || "claude-3-5-sonnet-20241022";
+
+      const res = await fetch("https://api.anthropic.com/v1/messages", {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          "x-api-key": key,
+          "anthropic-version": "2023-06-01",
+        },
+        body: JSON.stringify({
+          model: actualModel,
+          max_tokens: 150,
+          messages: [{ role: "user", content: prompt }],
+        }),
+      });
+
+      const data = await res.json();
+      if (!res.ok || data.error) {
+        throw new Error(data.error?.message || `Anthropic returned HTTP ${res.status}`);
+      }
+      reply = data.content?.[0]?.text?.trim() || "(No response content returned)";
+    } else {
+      throw new Error(`Testing for provider '${provider}' is not supported yet.`);
+    }
+
+    const elapsed = Date.now() - startTime;
+    return response.json({
+      ok: true,
+      provider,
+      model: routedModel,
+      reply,
+      latency_ms: elapsed,
+      usage,
+    });
+  } catch (error) {
+    const elapsed = Date.now() - startTime;
+    return response.status(200).json({
+      ok: false,
+      error: error.message || "Model test ping failed.",
+      latency_ms: elapsed,
+      model,
+      provider,
+    });
+  }
 });
 
 app.post("/api/email/test", async (request, response) => {

@@ -16,6 +16,7 @@ node_modules
 dist
 dist-ssr
 *.local
+*.zip
 
 # Editor directories and files
 .vscode/*
@@ -39,3 +40,7 @@ dist-ssr
 .impeccable/review/
 .impeccable/questions/
 .impeccable/mocks/
+
+# Root test document exports
+/*.docx
+!samples/**

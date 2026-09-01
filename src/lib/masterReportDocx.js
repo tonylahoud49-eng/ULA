@@ -115,6 +115,16 @@ const sourceLabel = (sources = []) => {
   return labels.length ? ` (Source: ${labels.join("; ")})` : "";
 };
 
+function cleanMsEntity(name, fallback = UNKNOWN_REPORT_VALUE) {
+  if (!isPresent(name)) return fallback;
+  const cleaned = cleanText(name);
+  if (/^(?:a\)\s*)?(?:the\s+)?reinsurer\s+shall\s+be\s+liable/i.test(cleaned)) return fallback;
+  if (/^m\/s\.?\s*/i.test(cleaned)) {
+    return `M/s. ${cleaned.replace(/^m\/s\.?\s*/i, "").trim()}`;
+  }
+  return `M/s. ${cleaned}`;
+}
+
 const fact = (record, name) => record?.facts?.[name] || { value: null, sources: [] };
 const factValue = (record, name) => valueOrUnknown(fact(record, name).value);
 const factWithSource = (record, name) => `${factValue(record, name)}${sourceLabel(fact(record, name).sources)}`;
@@ -129,7 +139,13 @@ function evidenceUnit(record, name) {
 }
 
 function chronologySentences(record) {
-  return (record?.chronology || []).map((event) => `${event.date}: ${event.label}.${sourceLabel(event.sources)}`);
+  const events = record?.chronology || [];
+  if (!events.length) return [];
+  return events.map((event, idx) => {
+    const label = cleanText(event.label);
+    const datePrefix = event.date ? `${event.date}: ` : "";
+    return `[${idx + 1}]. ${datePrefix}${label}${sourceLabel(event.sources)}`;
+  });
 }
 
 function findingSentences(record) {
@@ -266,7 +282,7 @@ export function buildMasterReportData({ report = {}, claim = {}, issueDate } = {
     `Insured Value / Limit: ${amount(policyValue, currency)}`,
     isPresent(policyTerms) ? cleanText(policyTerms) : "Policy wording was not established in the reviewed evidence",
     isPresent(fact(record, "valuation_basis").value) ? `Basis of Valuation: ${cleanText(fact(record, "valuation_basis").value)}` : null,
-    `Deductible / Excess: ${amount(financials.deductible, currency)}`,
+    `Deductible / Excess: ${isPresent(fact(record, "deductible").value) ? cleanText(fact(record, "deductible").value) : amount(financials.deductible, currency)}`,
   ].filter(Boolean).join("\n");
   const cargoParts = [fact(record, "container_numbers").value, fact(record, "quantity").value, commodity, fact(record, "gross_weight").value].filter(isPresent);
   const arrivalParts = [fact(record, "discharge_date").value && `Discharged ${fact(record, "discharge_date").value}`, fact(record, "arrival_date").value && `Arrived ${fact(record, "arrival_date").value}`, fact(record, "delivery_date").value && `Delivered ${fact(record, "delivery_date").value}`].filter(Boolean);
@@ -276,7 +292,14 @@ export function buildMasterReportData({ report = {}, claim = {}, issueDate } = {
   const adequacy = financials.insured_value !== null && financials.invoice_value !== null
     ? `The documented insured value / limit is ${amount(financials.insured_value, currency)} and the documented invoice value is ${amount(financials.invoice_value, currency)}. The difference is ${amount(financials.insured_value - financials.invoice_value, currency)}; the invoice represents ${(financials.invoice_value / financials.insured_value * 100).toFixed(2)}% of the insured value / limit. The applicable valuation basis remains subject to policy review.`
     : "The available evidence does not establish both a comparable insured value and invoice value; no underinsurance conclusion is made.";
-  const summaryIntro = `At the request of ${valueOrUnknown(applicant)} (the Applicant), ULA was requested to investigate a ${valueOrUnknown(record.business_line || report.business_line || claim.business_line)} claim for ${valueOrUnknown(insured)} (the Assured), establish the evidence-supported circumstances and extent of loss, and validate the claim presented under the policy. The insured interest is ${valueOrUnknown(commodity)}. Table 1 summarises the salient claim details.`;
+  
+  const applicantDisplay = cleanMsEntity(applicant, "Applicant");
+  const insuredDisplay = cleanMsEntity(insured, "Assured");
+  const subjectDisplay = cleanText(claim.title || fact(record, "cause_of_loss").value || commodity || "Cargo Claim Assessment");
+  const isNoClaim = financials.concluded_indemnity === 0 || /no[ -]?claim|sound condition|without damage/i.test(String(report.notes || claim.cause_of_loss || ""));
+  const defaultRevisionReason = isNoClaim ? "Issued – Final report – No claim" : "Issued – Preliminary report – Pending repair/replacement";
+
+  const summaryIntro = `At the request of ${applicantDisplay} (the Applicant), ULA was requested to investigate a ${valueOrUnknown(record.business_line || report.business_line || claim.business_line)} claim for ${insuredDisplay} (the Assured), establish the evidence-supported circumstances and extent of loss, and validate the claim presented under the policy. The insured interest is ${valueOrUnknown(commodity)}. Table 1 summarises the salient claim details.`;
   const noteIntro = `${summaryIntro} The following report and adjustment note is based on all uploaded evidence listed in the enclosure section. No historical template fact has been used as claim evidence.`;
   const invoiceComponents = [
     financials.fob_value !== null ? `FOB ${amount(financials.fob_value, currency)}` : null,
@@ -302,12 +325,12 @@ export function buildMasterReportData({ report = {}, claim = {}, issueDate } = {
 
   return {
     scalars: {
-      cover_title: `${valueOrUnknown(applicant)} - ${valueOrUnknown(insured)} - ${valueOrUnknown(claim.title || commodity)}`,
+      cover_title: `${applicantDisplay} – ${insuredDisplay} – ${subjectDisplay}`,
       claim_number: valueOrUnknown(report.claim_number || claim.claim_number),
       version_number: valueOrUnknown(report.version_number || 1),
-      insurer: valueOrUnknown(applicant),
-      actual_insurer: valueOrUnknown(insurer),
-      insured_name: valueOrUnknown(insured),
+      insurer: applicantDisplay,
+      actual_insurer: cleanMsEntity(insurer, UNKNOWN_REPORT_VALUE),
+      insured_name: insuredDisplay,
       policy_number: valueOrUnknown(policyNumber),
       issue_date: resolvedIssueDate,
       issue_year: String(new Date(report.approved_date || report.created_date || Date.now()).getFullYear()),
@@ -317,15 +340,15 @@ export function buildMasterReportData({ report = {}, claim = {}, issueDate } = {
       preparer_designation: assignmentOrUnassigned(assignments.preparer?.designation || report.preparer_designation),
       reviewer_designation: assignmentOrUnassigned(assignments.reviewer?.designation || report.reviewer_designation),
       approver_designation: assignmentOrUnassigned(assignments.approver?.designation || report.approver_designation),
-      revision_reason: valueOrUnknown(report.notes || "Initial controlled draft"),
-      summary_assured: valueOrUnknown(fact(record, "shipper").value || insured),
-      summary_consignee: valueOrUnknown(consignee),
+      revision_reason: isPresent(report.notes) && report.notes !== "Initial controlled draft" ? report.notes : defaultRevisionReason,
+      summary_assured: insuredDisplay,
+      summary_consignee: cleanMsEntity(consignee, UNKNOWN_REPORT_VALUE),
       summary_policy: policyDetails,
       policy_details: policyDetails,
       incoterm: factWithSource(record, "incoterm"),
       transport_document: `${transportLabel}: ${valueOrUnknown(transportReference)}${sourceLabel([...(fact(record, "bill_of_lading").sources || []), ...(fact(record, "air_waybill").sources || [])])}`,
-      shipper: factWithSource(record, "shipper"),
-      consignee: factWithSource(record, "consignee"),
+      shipper: cleanMsEntity(fact(record, "shipper").value, UNKNOWN_REPORT_VALUE),
+      consignee: cleanMsEntity(consignee, UNKNOWN_REPORT_VALUE),
       cargo_details: valueOrUnknown(cargoParts.join("; ")),
       routing_details: `${valueOrUnknown(from)} / ${valueOrUnknown(to)}`,
       carrier_details: valueOrUnknown([
@@ -340,12 +363,12 @@ export function buildMasterReportData({ report = {}, claim = {}, issueDate } = {
     },
     paragraphs: {
       report_summary_intro: [summaryIntro],
-      report_summary_findings: [...chronology.slice(0, 8), ...findings.slice(0, 8), ...validationFindings.filter((_, index) => index < 4)],
+      report_summary_findings: unique([...chronology.slice(0, 4), ...findings.slice(0, 5), ...validationFindings.slice(0, 3)]),
       report_summary_opinion: conclusions,
       document_sighting: [`We confirm review of the ${documentRegister.length} uploaded document(s) listed in "Enclosure to this report". Receipt of a file is not treated as proof that every substantive document requirement is complete.`],
       report_note_intro: [noteIntro],
       interest_insured: [`${valueOrUnknown(commodity)} was documented for transit from ${valueOrUnknown(from)} to ${valueOrUnknown(to)} under Policy No. ${valueOrUnknown(policyNumber)}.${sourceLabel([...(fact(record, "commodity").sources || []), ...(fact(record, "policy_number").sources || [])])}`],
-      surveyor_notes: [...chronology, ...findings, ...validationFindings],
+      surveyor_notes: unique([...chronology, ...findings, ...validationFindings]),
       cause_of_loss_section: causeSection,
       policy_conditions_section: policyParagraphs(record),
       adequacy_section: [adequacy],
@@ -430,6 +453,7 @@ export async function populateMasterReportDocx(templateData, context, { appendix
   documentXml = replaceDynamicTableRows(documentXml, "adjustment_description", data.adjustment_rows, ["adjustment_description", "adjustment_quantity", "adjustment_unit_price", "adjustment_value"]);
   documentXml = replaceAppendixArea(documentXml, data.appendices, resolvedImages);
   documentXml = replaceScalarTokens(documentXml, data.scalars);
+  documentXml = documentXml.replace(/<w:highlight\s+w:val="yellow"\s*\/>/g, "");
   zip.file("word/document.xml", documentXml);
 
   for (const name of Object.keys(zip.files).filter((entry) => /^word\/(?:header|footer)\d+\.xml$/i.test(entry))) {

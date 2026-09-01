@@ -1,5 +1,5 @@
 import React, { useEffect, useMemo, useState } from "react";
-import { useParams, Link } from "react-router-dom";
+import { useParams, Link, useSearchParams } from "react-router-dom";
 import remarkGfm from "remark-gfm";
 import ulaLogo from "@/assets/ula-logo.png";
 import ulaSkyscrapers from "@/assets/ula-skyscrapers.png";
@@ -23,7 +23,7 @@ import {
   AlertDialogHeader,
   AlertDialogTitle,
 } from "@/components/ui/alert-dialog";
-import { ArrowLeft, Download, FileText, Sparkles, AlertTriangle, Save, CheckCircle, ClipboardCheck, ShieldCheck, Trash2 } from "lucide-react";
+import { ArrowLeft, Download, FileText, Sparkles, AlertTriangle, Save, CheckCircle, ClipboardCheck, ShieldCheck, Trash2, FileCheck2, Loader2 } from "lucide-react";
 import DocumentUploader from "@/components/DocumentUploader";
 import ReactMarkdown from "react-markdown";
 import { toast } from "@/components/ui/use-toast";
@@ -86,13 +86,14 @@ const canvasBlob = (canvas, type = "image/jpeg", quality = 0.84) => new Promise(
 
 const collectAppendixImages = async (documents, normalizedRecord) => {
   const appendixIds = new Set((normalizedRecord?.appendices || []).map((item) => item.document_id));
-  const candidates = documents.filter((document) => appendixIds.has(document.id) && (
-    document.detected_categories?.includes("Photographs")
-    || document.file_type === "Photo"
-    || document.category === "Photo Evidence"
-    || /(?:photo|image|appendix)/i.test(document.file_name || "")
-    || /^image\//i.test(document.file_mime_type || "")
-  ));
+  const candidates = documents.filter((document) => {
+    const isExplicitPhoto = document.detected_categories?.includes("Photographs")
+      || document.file_type === "Photo"
+      || document.category === "Photo Evidence";
+    const isImageFile = /^image\//i.test(document.file_mime_type || "")
+      || /\.(?:png|jpe?g|webp|gif)$/i.test(document.file_name || "");
+    return (appendixIds.has(document.id) || isExplicitPhoto || isImageFile) && (isImageFile || isExplicitPhoto);
+  });
   const images = [];
   for (const document of candidates) {
     try {
@@ -158,11 +159,14 @@ const markdownComponents = {
 
 export default function ClaimDetail() {
   const { id } = useParams();
+  const [searchParams, setSearchParams] = useSearchParams();
+  const [activeTab, setActiveTab] = useState(searchParams.get("tab") || "overview");
   const [claim, setClaim] = useState(null);
   const [documents, setDocuments] = useState([]);
   const [reports, setReports] = useState([]);
   const [loading, setLoading] = useState(true);
   const [analyzing, setAnalyzing] = useState(false);
+  const [generatingDraft, setGeneratingDraft] = useState(false);
   const [analysisProgress, setAnalysisProgress] = useState({ active: false, progress: 0, stage: "", step: 1, totalSteps: 4 });
   const [preflightStats, setPreflightStats] = useState(null);
   const [analysis, setAnalysis] = useState(null);
@@ -172,6 +176,11 @@ export default function ClaimDetail() {
   const [editing, setEditing] = useState(false);
   const [form, setForm] = useState({});
   const readiness = useMemo(() => reportReadiness(claim || {}, documents), [claim, documents]);
+
+  const switchTab = (tab) => {
+    setActiveTab(tab);
+    setSearchParams({ tab });
+  };
 
   const load = async () => {
     try {
@@ -190,6 +199,33 @@ export default function ClaimDetail() {
   };
 
   useEffect(() => { load(); }, [id]);
+
+  useEffect(() => {
+    const tabParam = searchParams.get("tab");
+    if (tabParam && tabParam !== activeTab) {
+      setActiveTab(tabParam);
+    }
+  }, [searchParams]);
+
+  const cancelAnalysis = () => {
+    setAnalyzing(false);
+    setAnalysisProgress({ active: false, progress: 0, stage: "" });
+    setAnalysisError("Analysis was cancelled. You can pick another model and restart.");
+  };
+
+  const handleGenerateReportFromAI = async () => {
+    setGeneratingDraft(true);
+    try {
+      await appClient.functions.invoke("generateReport", { claim_id: id });
+      await load();
+      switchTab("report");
+      toast({ title: "Draft report generated", description: "Your report draft is ready for review and export." });
+    } catch (e) {
+      toast({ variant: "destructive", title: "Draft report could not be generated", description: e.response?.data?.error || e.message });
+    } finally {
+      setGeneratingDraft(false);
+    }
+  };
 
   const runAnalysis = async () => {
     setAnalyzing(true);
@@ -287,10 +323,10 @@ export default function ClaimDetail() {
       </div>
 
       {analysisProgress.active && (
-        <AIAnalysisProgressCard progress={analysisProgress} provider={selectedProvider} preflight={preflightStats} />
+        <AIAnalysisProgressCard progress={analysisProgress} provider={selectedProvider} preflight={preflightStats} onCancel={cancelAnalysis} />
       )}
 
-      <ReleaseChain claim={claim} documents={documents} reports={reports} readiness={readiness} />
+      <ReleaseChain claim={claim} documents={documents} reports={reports} readiness={readiness} onSelectTab={switchTab} />
 
       {analysis && (
         <section className="docket-surface overflow-hidden rounded-lg border border-border shadow-xs" aria-label="AI analysis summary">
@@ -312,14 +348,57 @@ export default function ClaimDetail() {
               </div>
             )}
           </div>
-          <div className="p-4 space-y-2">
+          <div className="p-4 space-y-3">
             <p className="text-xs leading-relaxed text-foreground">{analysis.summary}</p>
             {analysis.missing_documents && analysis.missing_documents.length > 0 && (
-              <div className="mt-2 flex items-start gap-2 rounded border border-amber-300 bg-amber-50/70 p-2 text-xs text-amber-800">
+              <div className="flex items-start gap-2 rounded border border-amber-300 bg-amber-50/70 p-2.5 text-xs text-amber-800">
                 <AlertTriangle className="h-4 w-4 shrink-0 mt-0.5" />
-                <span><strong>Action required:</strong> {analysis.missing_documents.join(", ")}</span>
+                <div>
+                  <strong>Action required / Outstanding items:</strong> {analysis.missing_documents.join(", ")}
+                  <p className="mt-0.5 text-[0.7rem] text-amber-700">You can proceed to generate the report draft; missing evidence remains flagged for confirmation.</p>
+                </div>
               </div>
             )}
+
+            {/* Prominent Next Step Action Bar */}
+            <div className="mt-3 flex flex-wrap items-center justify-between gap-3 rounded-md border border-primary/20 bg-primary/5 p-3.5">
+              <div className="flex items-center gap-2">
+                <Sparkles className="h-4 w-4 text-primary shrink-0" />
+                <span className="text-xs font-semibold text-foreground">
+                  {reports.length === 0
+                    ? "Evidence analysis complete. Ready to generate the controlled report draft."
+                    : `${reports.length} report version(s) on file. Latest: Version ${reports[reports.length - 1].version_number} (${reports[reports.length - 1].status})`}
+                </span>
+              </div>
+              <div className="flex items-center gap-2">
+                {reports.length > 0 && (
+                  <Button
+                    variant="outline"
+                    size="sm"
+                    onClick={() => switchTab("report")}
+                    className="text-xs font-medium"
+                  >
+                    <FileText className="mr-1.5 h-3.5 w-3.5" /> View Report Draft
+                  </Button>
+                )}
+                <Button
+                  onClick={handleGenerateReportFromAI}
+                  disabled={generatingDraft}
+                  size="sm"
+                  className="ula-gradient text-white hover:opacity-90 shadow-sm text-xs font-semibold"
+                >
+                  {generatingDraft ? (
+                    <>
+                      <Loader2 className="mr-1.5 h-3.5 w-3.5 animate-spin" /> Generating Draft…
+                    </>
+                  ) : (
+                    <>
+                      <FileCheck2 className="mr-1.5 h-3.5 w-3.5" /> {reports.length === 0 ? "Generate Draft Report (v1) →" : "Generate New Revision"}
+                    </>
+                  )}
+                </Button>
+              </div>
+            </div>
           </div>
         </section>
       )}
@@ -330,7 +409,7 @@ export default function ClaimDetail() {
         </Card>
       )}
 
-      <Tabs defaultValue="overview">
+      <Tabs value={activeTab} onValueChange={switchTab}>
         <TabsList className="w-full justify-start overflow-x-auto">
           <TabsTrigger value="overview">Overview</TabsTrigger>
           <TabsTrigger value="documents">Documents ({documents.length})</TabsTrigger>
@@ -366,9 +445,17 @@ export default function ClaimDetail() {
   );
 }
 
-function ReleaseChain({ claim, documents, reports, readiness }) {
+function ReleaseChain({ claim, documents, reports, readiness, onSelectTab }) {
   const hasFinal = reports.some((report) => report.status === "Final");
   const currentIndex = hasFinal ? 4 : reports.length ? 3 : claim.ai_confidence ? 2 : documents.length ? 1 : 0;
+
+  const stageTabMap = {
+    evidence: "documents",
+    analysis: "overview",
+    adjustment: "report",
+    review: "report",
+    approval: "report",
+  };
 
   return (
     <section className="docket-surface overflow-hidden rounded-lg" aria-label="Claim release progress">
@@ -377,8 +464,14 @@ function ReleaseChain({ claim, documents, reports, readiness }) {
           {REPORT_LIFECYCLE.map((stage, index) => {
             const complete = index < currentIndex || (hasFinal && index === currentIndex);
             const current = index === currentIndex && !hasFinal;
+            const targetTab = stageTabMap[stage.id] || "overview";
             return (
-              <div key={stage.id} className={`relative border-b p-4 last:border-b-0 sm:border-b-0 sm:border-r ${current ? "bg-primary/5" : ""}`}>
+              <button
+                type="button"
+                key={stage.id}
+                onClick={() => onSelectTab && onSelectTab(targetTab)}
+                className={`relative border-b p-4 text-left last:border-b-0 sm:border-b-0 sm:border-r hover:bg-muted/30 transition-colors cursor-pointer ${current ? "bg-primary/5" : ""}`}
+              >
                 <div className="flex items-center gap-2">
                   <span className={`flex h-6 w-6 items-center justify-center rounded-full border text-[0.68rem] font-semibold ${complete ? "border-primary bg-primary text-primary-foreground" : current ? "border-primary text-primary" : "border-border text-muted-foreground"}`}>
                     {complete ? <CheckCircle className="h-3.5 w-3.5" /> : index + 1}
@@ -386,17 +479,21 @@ function ReleaseChain({ claim, documents, reports, readiness }) {
                   <span className={`text-xs font-semibold ${complete || current ? "text-foreground" : "text-muted-foreground"}`}>{stage.label}</span>
                 </div>
                 <p className="mt-2 text-[0.68rem] leading-4 text-muted-foreground">{complete ? "Complete" : current ? "Current gate" : "Pending"}</p>
-              </div>
+              </button>
             );
           })}
         </div>
-        <div className="flex items-center justify-between gap-4 border-t bg-muted/35 px-4 py-3 lg:border-l lg:border-t-0">
+        <button
+          type="button"
+          onClick={() => onSelectTab && onSelectTab("report")}
+          className="flex items-center justify-between gap-4 border-t bg-muted/35 px-4 py-3 lg:border-l lg:border-t-0 hover:bg-muted/50 transition-colors cursor-pointer text-left"
+        >
           <div>
             <p className="docket-label">Template readiness</p>
             <p className="mt-1 font-heading text-2xl font-semibold">{readiness.overallProgress}%</p>
           </div>
           <div className="approval-stamp">{hasFinal ? <ShieldCheck className="h-5 w-5" /> : <ClipboardCheck className="h-5 w-5" />}<span className="sr-only">{hasFinal ? "Final" : "Controlled draft"}</span></div>
-        </div>
+        </button>
       </div>
     </section>
   );
