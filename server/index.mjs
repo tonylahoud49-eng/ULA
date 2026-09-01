@@ -102,7 +102,33 @@ app.post("/api/auth-db", (request, response) => {
   }
 });
 
-const AI_LOGS = [];
+const LOGS_FILE = path.join(DATA_DIR, "ai_logs.json");
+
+function loadAiLogs() {
+  ensureDataDir();
+  try {
+    if (fs.existsSync(LOGS_FILE)) {
+      const data = fs.readFileSync(LOGS_FILE, "utf-8");
+      const parsed = JSON.parse(data);
+      return Array.isArray(parsed) ? parsed : [];
+    }
+  } catch {
+    // fallback
+  }
+  return [];
+}
+
+const AI_LOGS = loadAiLogs();
+
+function persistAiLogs() {
+  ensureDataDir();
+  try {
+    fs.writeFileSync(LOGS_FILE, JSON.stringify(AI_LOGS, null, 2), "utf-8");
+  } catch {
+    // file write should not throw
+  }
+}
+
 export function logAiEvent(level, message, data = null) {
   const entry = {
     id: `${Date.now()}-${Math.random().toString(36).slice(2, 7)}`,
@@ -112,7 +138,8 @@ export function logAiEvent(level, message, data = null) {
     data: data ? JSON.parse(JSON.stringify(data)) : null,
   };
   AI_LOGS.unshift(entry);
-  if (AI_LOGS.length > 100) AI_LOGS.pop();
+  if (AI_LOGS.length > 200) AI_LOGS.pop();
+  persistAiLogs();
   try {
     console.log(`[AI ${level.toUpperCase()}] ${message}`, data ? JSON.stringify(data) : "");
   } catch {
@@ -123,6 +150,7 @@ export function logAiEvent(level, message, data = null) {
 app.get("/api/ai/logs", (_request, response) => response.json({ ok: true, logs: AI_LOGS }));
 app.delete("/api/ai/logs", (_request, response) => {
   AI_LOGS.length = 0;
+  persistAiLogs();
   return response.json({ ok: true });
 });
 

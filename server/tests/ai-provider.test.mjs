@@ -961,7 +961,7 @@ test("gemini provider sends a Chat Completions request with vision content", asy
   assert.equal(images.length, 1);
   assert.match(images[0].image_url.url, /^data:image\/jpeg;base64,/);
   // response_format should be set
-  assert.equal(request.response_format.type, "json_schema");
+  assert.equal(request.response_format.type, "json_object");
 });
 
 // --- Fallback behavior ---
