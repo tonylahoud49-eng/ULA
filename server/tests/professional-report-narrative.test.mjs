@@ -166,6 +166,112 @@ test("quotation evidence remains provisional and cannot become a presented or fa
   assert.match(data.paragraphs.conclusion_items[0], /cannot be stated as fair & reasonable.*quotation or estimate evidence/i);
 });
 
+test("surveyor estimates, extrapolations, and miscellaneous schedules remain provisional", () => {
+  const surveySource = { ...source(8, "Surveyor's estimated amount of loss EUR 39,222 by extrapolation from a 10% sample; miscellaneous expenses subject to verification"), document_name: "survey-report.pdf" };
+  const analysis = {
+    business_line: "Marine Cargo (Reefer)",
+    extracted_fields: [field("currency", "EUR")],
+    adjustment_line_items: [{
+      description: "Estimated cargo loss and miscellaneous expenses",
+      quantity: "1 schedule",
+      unit_price: "39222",
+      adjusted_value: "39222",
+      currency: "EUR",
+      basis: "Surveyor's estimate by extrapolation; subject to verification",
+      confidence: 0.98,
+      sources: [surveySource],
+    }],
+    document_types: [], evidence_findings: [],
+  };
+  const draft = createUnifiedReportDraft({ claim: { business_line: "Marine Cargo (Reefer)" }, documents: [], versions: [], generatedBy: "Test", analysis, evidence: [] });
+  const data = buildMasterReportData({ report: { normalized_claim_record: draft.normalizedRecord }, claim: {} });
+
+  assert.equal(draft.normalizedRecord.financials.itemized_evidence_basis, "provisional");
+  assert.equal(draft.normalizedRecord.financials.presented_claim, null);
+  assert.equal(draft.normalizedRecord.financials.concluded_indemnity, null);
+  assert.match(data.paragraphs.adjustment_intro.join(" "), /extrapolated.*provisional evidence/i);
+  assert.match(data.paragraphs.conclusion_items[0], /cannot be stated as fair & reasonable.*provisional evidence/i);
+});
+
+test("a surveyor's qualified cause opinion is not promoted to an express source fact", () => {
+  const opinion = "We are led to believe that frost-related airflow restriction likely contributed to deterioration";
+  const analysis = {
+    business_line: "Marine Cargo (Reefer)",
+    extracted_fields: [field("cause_of_loss", opinion)],
+    adjustment_line_items: [], document_types: [], evidence_findings: [],
+  };
+  const draft = createUnifiedReportDraft({ claim: { business_line: "Marine Cargo (Reefer)" }, documents: [], versions: [], generatedBy: "Test", analysis, evidence: [] });
+  const data = buildMasterReportData({ report: { normalized_claim_record: draft.normalizedRecord }, claim: {} });
+
+  assert.equal(draft.normalizedRecord.cause_assessment.explicit_cause, null);
+  assert.ok(draft.normalizedRecord.cause_assessment.hypotheses.some((item) => item.status === "reasoned_professional_opinion"));
+  assert.match(data.paragraphs.cause_of_loss_section[0], /not expressly established as a source fact/i);
+  assert.doesNotMatch(data.paragraphs.cause_of_loss_section[0], /^The proximate cause of loss is frost/i);
+});
+
+test("plain CIF is not treated as an insurance valuation basis", () => {
+  const cifSource = { ...source(2, "Incoterm: CIF"), document_name: "commercial-invoice.pdf" };
+  const analysis = {
+    business_line: "Marine Cargo (Reefer)",
+    extracted_fields: [
+      field("currency", "EUR"),
+      field("invoice_total", "64800"),
+      field("insured_value", "99195"),
+      { ...field("valuation_basis", "CIF"), sources: [cifSource] },
+    ],
+    adjustment_line_items: [], document_types: [], evidence_findings: [],
+  };
+  const draft = createUnifiedReportDraft({ claim: { business_line: "Marine Cargo (Reefer)" }, documents: [], versions: [], generatedBy: "Test", analysis, evidence: [] });
+  const data = buildMasterReportData({ report: { normalized_claim_record: draft.normalizedRecord }, claim: {} });
+
+  assert.equal(draft.normalizedRecord.facts.valuation_basis.value, null);
+  assert.match(data.paragraphs.adequacy_section[0], /cannot be established from the available evidence/i);
+  assert.doesNotMatch(data.paragraphs.adequacy_section[0], /no underinsurance/i);
+});
+
+test("report parties require evidence and reject bill-of-lading OCR labels", () => {
+  const analysis = {
+    business_line: "Marine Cargo (Reefer)",
+    extracted_fields: [field("consignee", "WOODEN PACKAGE: NOT APPLICABLE (NOT USED)")],
+    adjustment_line_items: [], document_types: [], evidence_findings: [],
+  };
+  const claim = { business_line: "Marine Cargo (Reefer)", applicant: "ULA" };
+  const draft = createUnifiedReportDraft({ claim, documents: [], versions: [], generatedBy: "Test", analysis, evidence: [] });
+  const data = buildMasterReportData({ report: { normalized_claim_record: draft.normalizedRecord }, claim });
+
+  assert.equal(draft.normalizedRecord.facts.applicant.value, null);
+  assert.equal(draft.normalizedRecord.facts.consignee.value, null);
+  assert.doesNotMatch(JSON.stringify(data), /WOODEN PACKAGE|At the request of ULA/i);
+});
+
+test("conflicting salient dates are withheld from chronology and client arrival wording", () => {
+  const analysis = {
+    business_line: "Marine Cargo (Reefer)",
+    extracted_fields: [field("arrival_date", "25 March 2026", 2), field("arrival_date", "19 April 2026", 3)],
+    adjustment_line_items: [], document_types: [], evidence_findings: [],
+  };
+  const draft = createUnifiedReportDraft({ claim: { business_line: "Marine Cargo (Reefer)" }, documents: [], versions: [], generatedBy: "Test", analysis, evidence: [] });
+  const data = buildMasterReportData({ report: { normalized_claim_record: draft.normalizedRecord }, claim: {} });
+
+  assert.equal(draft.normalizedRecord.facts.arrival_date.status, "conflict");
+  assert.ok(!draft.normalizedRecord.chronology.some((event) => event.field === "arrival_date"));
+  assert.doesNotMatch(String(data.scalars.arrival_delivery_details), /25 March 2026|19 April 2026/i);
+});
+
+test("container merging removes duplicates and invalid OCR check-digit variants", () => {
+  const analysis = {
+    business_line: "Marine Cargo (Reefer)",
+    extracted_fields: [
+      field("container_numbers", "MNBU3108501, MNBU4309901"),
+      field("container_numbers", "MNBU3108501, MNBU3100850"),
+    ],
+    adjustment_line_items: [], document_types: [], evidence_findings: [],
+  };
+  const draft = createUnifiedReportDraft({ claim: { business_line: "Marine Cargo (Reefer)" }, documents: [], versions: [], generatedBy: "Test", analysis, evidence: [] });
+
+  assert.equal(draft.normalizedRecord.facts.container_numbers.value, "MNBU3108501, MNBU4309901");
+});
+
 test("transport conflicts, invoice words conflicts, and policy categories remain visible", () => {
   const evidence = [{
     document_id: "combined", document_name: "combined.pdf", mime_type: "application/pdf", extraction_status: "extracted",
@@ -255,6 +361,11 @@ test("production analysis performs a Director-grade evidence challenge before st
   assert.match(prompt, /loss rows separate from deductible, salvage, recovery, and depreciation/is);
   assert.match(prompt, /cause_of_loss is only one concise express source-stated mechanism/is);
   assert.match(prompt, /Follow clauses across line or page breaks.*return null/is);
+  assert.match(prompt, /Produce client-ready synthesis, not an extraction dump/i);
+  assert.match(prompt, /preserve draft\/original transport status/i);
+  assert.match(prompt, /reconcile quotation lines, ancillary charges, VAT\/tax and deductible separately/i);
+  assert.match(prompt, /enforce the same parties, chronology, currency, claim status, cause qualification, cover and liability position across summary, analysis, adjustment and conclusion/i);
+  assert.match(prompt, /make each evidence gap specific to the decision it would resolve/i);
 });
 
 test("professional report narrative remains grounded, analytical, concise, and deterministic", async () => {
@@ -504,6 +615,9 @@ test("non-reefer regression keeps composite evidence, deductions, cause, policy,
     document_types: [],
     extracted_fields: [
       extractedField("currency", "USD"),
+      extractedField("insured", "Example Imports Ltd"),
+      extractedField("shipper", "Example Export Cooperative"),
+      extractedField("consignee", "Example Destination SARL"),
       extractedField("quantity", "1,045 cartons / 915 pcs", 18),
       extractedField("affected_quantity", "30 surveyed; 26 damaged + 1 missing in claim schedule", 31),
       extractedField("gross_claim_amount", "471.40", 31),
@@ -513,6 +627,11 @@ test("non-reefer regression keeps composite evidence, deductions, cause, policy,
       extractedField("recovery_amount", "0.00", 31),
       extractedField("depreciation_amount", "0.00", 31),
       extractedField("valuation_uplift_percent", "10", 2),
+      extractedField("policy_inception_date", "2025-11-03", 2),
+      extractedField("invoice_date", "2026-03-06", 12),
+      extractedField("packing_list_date", "2026-03-06", 18),
+      extractedField("departure_date", "2026-05-20", 20),
+      extractedField("shipment_date", "2026-05-20", 20),
       extractedField("policy_warranties", "Warranted Independent Satisfactory Pre-Shipment Loading, Stowage,", 2),
       extractedField("policy_exclusions", "Excluded Countries Clause: This Policy does not Cover Shipments To and/or", 3),
       extractedField("cause_of_loss", "Physical breakage was observed; packing was described without foam; no impact damage was recorded; damage was discovered after delivery.", 30),
@@ -559,6 +678,9 @@ test("non-reefer regression keeps composite evidence, deductions, cause, policy,
   assert.equal(record.financials.provisional_indemnity, 268.54);
   assert.equal(record.financials.concluded_indemnity, null);
   assert.equal(record.financials.arithmetic_valid, false);
+  assert.deepEqual(record.chronology.map((event) => event.field), [
+    "policy_inception_date", "packing_list_date", "invoice_date", "departure_date", "shipment_date",
+  ]);
   assert.equal(record.facts.quantity.status, "conflict");
   assert.equal(record.facts.affected_quantity.status, "conflict");
   assert.ok(record.conflicts.some((item) => item.field === "quantity"));
@@ -567,11 +689,20 @@ test("non-reefer regression keeps composite evidence, deductions, cause, policy,
   assert.equal(record.facts.policy_warranties.value, null);
   assert.equal(record.facts.policy_exclusions.value, null);
   assert.equal(record.cause_assessment.explicit_cause, null);
+  assert.equal(record.cause_assessment.assessment_level, "provisional_evidence_based_opinion");
   assert.ok(!record.cause_assessment.hypotheses.some((item) => /sealed transit|pre-shipment quantity/i.test(item.hypothesis)));
+  assert.match(data.paragraphs.cause_of_loss_section[0], /not expressly established as a source fact/i);
+  assert.match(data.paragraphs.cause_of_loss_section.join(" "), /consistent with handling impact or cargo movement/i);
+  assert.match(data.paragraphs.conclusion_items[0], /cannot be stated as fair & reasonable/i);
+  assert.doesNotMatch(data.paragraphs.conclusion_items[0], /USD 471\.40 is considered fair/i);
+  assert.doesNotMatch(data.paragraphs.report_summary_opinion.join(" "), /471\.\s+40/);
   assert.match(data.paragraphs.conclusion_items[2], /deductible and valuation provision may apply/i);
   assert.doesNotMatch(data.paragraphs.conclusion_items[2], /claimed quantity is covered/i);
   assert.match(data.scalars.transport_document, /^Bill of Lading: Not established/i);
+  assert.match(data.scalars.summary_assured, /Example Imports Ltd \(Assured\).*Example Export Cooperative \(Shipper\)/i);
+  assert.match(data.paragraphs.report_summary_intro[1], /Example Imports Ltd as the Assured.*Example Export Cooperative as the shipper/i);
   assert.equal(data.scalars.approval_date, "Pending professional approval");
+  assert.doesNotMatch(data.scalars.policy_details, /Warranted Independent Satisfactory Pre-Shipment Loading, Stowage,|Excluded Countries Clause: This Policy does not Cover Shipments To and\/or/i);
   assert.doesNotMatch(JSON.stringify(data.paragraphs), /\(Source:/);
 });
 

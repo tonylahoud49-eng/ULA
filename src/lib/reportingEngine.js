@@ -119,7 +119,24 @@ const parseAtomicQuantity = (value) => {
 const entityFields = new Set([
   "applicant", "insured", "insurer", "reassured", "reinsurer", "broker", "shipper", "consignee", "carrier", "surveyor",
 ]);
-const entityContaminationPattern = /(?:carrier'?s? agents? endorsements?|place\s+of\s+del\s*iv\s*ery|multimodal\s+t\s*r\s*ansport|applicable\s+only\s+when|terms?\s+and\s+conditions?|warrant(?:ed|y|ies)?|exclud(?:ed|ing|sion)|bill\s+of\s+lading\s+(?:terms?|conditions?)|received\s+for\s+shipment|freight\s+(?:payable|prepaid)|copy\s+non-negotiable|original\s+bill|^(?:[a-z]|\d+)[.)]\s+|\b(?:shall|must|may)\s+(?:be|have|pay|remain)\b|\b(?:even though|provided that|in the event that|subject to the following)\b|\b(?:bairro|cep|exported by|export references|phone|fax|e-?mail|address)\b\s*:)/i;
+const ISO_6346_LETTER_VALUES = {
+  A: 10, B: 12, C: 13, D: 14, E: 15, F: 16, G: 17, H: 18, I: 19, J: 20, K: 21, L: 23, M: 24,
+  N: 25, O: 26, P: 27, Q: 28, R: 29, S: 30, T: 31, U: 32, V: 34, W: 35, X: 36, Y: 37, Z: 38,
+};
+const normalizeContainerNumber = (value) => String(value || "").toUpperCase().replace(/[^A-Z0-9]/g, "");
+const validContainerNumber = (value) => {
+  const token = normalizeContainerNumber(value);
+  if (!/^[A-Z]{4}\d{7}$/.test(token)) return false;
+  const weighted = token.slice(0, 10).split("").reduce((total, character, index) => {
+    const numeric = /\d/.test(character) ? Number(character) : ISO_6346_LETTER_VALUES[character];
+    return total + numeric * (2 ** index);
+  }, 0);
+  return (weighted % 11) % 10 === Number(token.at(-1));
+};
+const extractContainerNumbers = (value) => unique(
+  String(value || "").toUpperCase().match(/\b[A-Z]{4}[\s-]*\d{7}\b/g)?.map(normalizeContainerNumber) || [],
+);
+const entityContaminationPattern = /(?:wooden\s+pack(?:age|ing)|not\s+applicable\s*\(?(?:not\s+used)?\)?|carrier'?s? agents? endorsements?|place\s+of\s+del\s*iv\s*ery|multimodal\s+t\s*r\s*ansport|applicable\s+only\s+when|terms?\s+and\s+conditions?|warrant(?:ed|y|ies)?|exclud(?:ed|ing|sion)|bill\s+of\s+lading\s+(?:terms?|conditions?)|received\s+for\s+shipment|freight\s+(?:payable|prepaid)|copy\s+non-negotiable|original\s+bill|^(?:[a-z]|\d+)[.)]\s+|\b(?:shall|must|may)\s+(?:be|have|pay|remain)\b|\b(?:even though|provided that|in the event that|subject to the following)\b|\b(?:bairro|cep|exported by|export references|phone|fax|e-?mail|address)\b\s*:)/i;
 const normalizedCandidate = (candidate) => {
   const policyValue = String(candidate.normalized_value ?? candidate.value ?? "").replace(/\s+/g, " ").trim();
   if (candidate.field === "policy_exclusions" && /^warrant(?:ed|y|ies)\b/i.test(policyValue)) {
@@ -140,6 +157,14 @@ const normalizedCandidate = (candidate) => {
       return { ...candidate, value: null, normalized_value: null, requires_confirmation: true, _rejected_reason: "terms of sale field contained a numbered document heading" };
     }
     return { ...candidate, value: rawValue, normalized_value: rawValue };
+  }
+  if (candidate.field === "valuation_basis") {
+    const rawValue = String(candidate.normalized_value ?? candidate.value ?? "").replace(/\s+/g, " ").trim();
+    const sourceText = (candidate.sources || []).map((source) => source.supporting_text || "").join(" ");
+    if (/^(?:CIF|FOB|CFR|EXW|FCA|CPT|CIP|DAP|DPU|DDP|FAS)$/i.test(rawValue)
+      && !/\b(?:basis\s+of\s+valuation|valu(?:ation|ed)|invoice\s+value\s+plus|uplift)\b/i.test(sourceText)) {
+      return { ...candidate, value: null, normalized_value: null, requires_confirmation: true, _rejected_reason: "Incoterm was not treated as an insurance valuation basis" };
+    }
   }
   if (!entityFields.has(candidate.field)) return candidate;
   const rawValue = candidate.normalized_value ?? candidate.value;
@@ -170,7 +195,14 @@ const validAdjustmentLineItem = (item) => {
 };
 
 const quotationEvidencePattern = /\b(?:quotation|quote|estimate|estimated|pro[ -]?forma|proposal|supplier offer|repair offer)\b/i;
+const provisionalEvidencePattern = /\b(?:provisional|subject to (?:verification|reconciliation)|survey(?:or)?(?:'s)? estimate|estimated amount of loss|by extrapolation|not independently (?:verified|counted)|miscellaneous expenses?)\b/i;
 const quotationBasedItem = (item) => quotationEvidencePattern.test([
+  item?.description,
+  item?.basis,
+  ...(item?.sources || []).flatMap((source) => [source.document_name, source.supporting_text]),
+].filter(Boolean).join(" "));
+
+const provisionalItem = (item) => provisionalEvidencePattern.test([
   item?.description,
   item?.basis,
   ...(item?.sources || []).flatMap((source) => [source.document_name, source.supporting_text]),
@@ -178,6 +210,9 @@ const quotationBasedItem = (item) => quotationEvidencePattern.test([
 
 const factBasedOnlyOnQuotation = (fact) => Boolean((fact?.sources || []).length)
   && (fact.sources || []).every((source) => quotationEvidencePattern.test(`${source.document_name || ""} ${source.supporting_text || ""}`));
+
+const factBasedOnlyOnProvisionalEvidence = (fact) => Boolean((fact?.sources || []).length)
+  && (fact.sources || []).every((source) => provisionalEvidencePattern.test(`${source.document_name || ""} ${source.supporting_text || ""}`));
 
 const normalizedAdjustmentUnit = (value) => {
   const text = String(value || "").toLowerCase();
@@ -896,7 +931,9 @@ const MONTHS = new Map([
 
 function dateSortValue(value) {
   const text = String(value || "").trim().replace(/(\d)(?:st|nd|rd|th)\b/gi, "$1");
-  let match = text.match(/\b(\d{1,2})[/-]([A-Za-z]{3,9}|\d{1,2})[/-](\d{2,4})\b/);
+  let match = text.match(/\b(\d{4})-(\d{2})-(\d{2})\b/);
+  if (match) return Date.UTC(Number(match[1]), Number(match[2]) - 1, Number(match[3]));
+  match = text.match(/\b(\d{1,2})[/-]([A-Za-z]{3,9}|\d{1,2})[/-](\d{2,4})\b/);
   if (match) {
     const year = Number(match[3]) < 100 ? 2000 + Number(match[3]) : Number(match[3]);
     const month = /^\d+$/.test(match[2]) ? Number(match[2]) - 1 : MONTHS.get(match[2].toLowerCase());
@@ -925,7 +962,7 @@ const uniqueSources = (sources = []) => {
 function buildChronology(facts) {
   return DATE_FIELDS.flatMap(([field, label], sequence) => {
     const fact = facts[field];
-    if (!fact || !isPresent(fact.value)) return [];
+    if (!fact || fact.status === "conflict" || !isPresent(fact.value)) return [];
     return [{
       field,
       label,
@@ -1044,14 +1081,20 @@ function buildCauseAssessment(facts, findings) {
   const causeFindingRecords = hasDomainLabels
     ? findingRecords.filter((finding) => causeDomains.has(finding.analysis_domain))
     : findingRecords;
-  const reasonedOpinionFindings = causeFindingRecords.filter((finding) => /in our opinion|on balance|more consistent|comparatively more plausible|appear(?:s)? consistent|likely attributable|most probable|available circumstances suggest|we consider|cannot be excluded|plausible (?:cause|mechanism|explanation)/i.test(finding.finding));
+  const reasonedOpinionFindings = causeFindingRecords.filter((finding) => /in our opinion|on balance|more consistent|comparatively more plausible|(?:appear(?:s)?\s+)?consistent with|likely attributable|most probable|available circumstances suggest|we consider|cannot be excluded|plausible (?:cause|mechanism|explanation)/i.test(finding.finding));
   const observed = causeFindingRecords.filter((finding) => /damage|deteriorat|unfit|broken|wet|water|defrost|temperature|shortage|missing|odor|mould|rust|dent|crush/i.test(finding.finding));
   const indicators = causeFindingRecords.filter((finding) => /temperature|logger|defrost|water ingress|impact|packing|seal|container|handling|delay|weather|leak/i.test(finding.finding));
   const supportedCause = facts.cause_of_loss.status === "supported" && isPresent(facts.cause_of_loss.value)
     ? facts.cause_of_loss
     : null;
   const supportedCauseText = String(supportedCause?.value || "");
+  const supportedCauseSourceText = (supportedCause?.sources || [])
+    .map((source) => source.supporting_text || "")
+    .join(" ");
+  const causeIsQualifiedOpinion = /\b(?:we are led to believe|in our opinion|on balance|likely|probably|appears?|suggests?|may|might|could|consistent with|estimated)\b/i
+    .test(`${supportedCauseText} ${supportedCauseSourceText}`);
   const explicitCause = supportedCause
+    && !causeIsQualifiedOpinion
     && supportedCauseText.length <= 240
     && (supportedCauseText.match(/;/g) || []).length <= 1
     && !/\b(?:packing described|damage discovered|became visible|no impact damage|survey scope|not independently|however|but)\b/i.test(supportedCauseText)
@@ -1091,6 +1134,15 @@ function buildCauseAssessment(facts, findings) {
       supporting_sources: uniqueSources(explicitCause.sources),
       contrary_sources: [],
       missing_evidence: ["Independent evidence confirming the stated causal mechanism and excluding material alternatives"],
+    });
+  } else if (supportedCause && causeIsQualifiedOpinion) {
+    hypotheses.push({
+      hypothesis: String(supportedCause.value),
+      status: "reasoned_professional_opinion",
+      assessment: "The source presents this as a qualified opinion rather than an established fact. It is retained with that qualification and remains subject to testing against the complete technical record and material alternatives.",
+      supporting_sources: uniqueSources(supportedCause.sources),
+      contrary_sources: [],
+      missing_evidence: ["Independent technical evidence capable of confirming the proposed causal mechanism and excluding material alternatives"],
     });
   }
   for (const opinion of reasonedOpinionFindings) {
@@ -1184,7 +1236,7 @@ function buildCauseAssessment(facts, findings) {
     assessment_level: explicitCause
       ? "evidence_stated_not_independently_determined"
       : reasonedShortageInference ? "provisional_comparative_assessment"
-        : reasonedOpinionFindings.length ? "provisional_evidence_based_opinion" : "not_established",
+        : reasonedOpinionFindings.length || causeIsQualifiedOpinion ? "provisional_evidence_based_opinion" : "not_established",
     explicit_cause: explicitCause,
     observations: observed,
     indicators,
@@ -1199,7 +1251,7 @@ function buildCauseAssessment(facts, findings) {
     evidence_gap: explicitCause
       ? null
       : reasonedShortageInference
-        || (reasonedOpinionFindings.length
+        || (reasonedOpinionFindings.length || causeIsQualifiedOpinion
           ? "A qualified professional opinion is available from the cited evidence; final proximate-cause and coverage conclusions remain subject to review of its stated limitations and alternatives."
           : "The evidence records condition and possible causal indicators but does not establish a definitive proximate cause."),
   };
@@ -1646,9 +1698,10 @@ export function buildNormalizedClaimRecord({ claim = {}, documents = [], analysi
     }).filter(isPresent);
     const hasEvidenceConflict = distinct.length > 1;
     const selectedCandidate = resolution.selectedCandidate;
+    const metadataFallbackAllowed = !entityFields.has(field);
     let selected = selectedCandidate
       ? selectedCandidate.normalized_value ?? selectedCandidate.value
-      : claimValue;
+      : metadataFallbackAllowed ? claimValue : null;
     if (selectedCandidate && monetaryClaimFields.has(field) && parseNumber(selected) === 0 && rawClaimValue === 0 && hasEvidenceConfirmedZero) selected = rawClaimValue;
     const sources = resolution.selectedGroup?.items.flatMap((candidate) => candidate.sources || []) || [];
     const metadataMismatch = selectedCandidate && claimComparable && claimComparable !== resolution.selectedGroup?.comparable;
@@ -1673,7 +1726,11 @@ export function buildNormalizedClaimRecord({ claim = {}, documents = [], analysi
       selected_value: selected,
       resolution: selectedCandidate
         ? hasEvidenceConflict ? "highest-supported evidence candidate; conflicting evidence retained for review" : "evidence-supported candidate"
-        : isPresent(claimValue) ? "claim metadata fallback; no evidence candidate was available" : "not established after reviewing all evidence candidates",
+        : isPresent(claimValue) && metadataFallbackAllowed
+          ? "claim metadata fallback; no evidence candidate was available"
+          : isPresent(claimValue)
+            ? "claim metadata retained as context only; no evidence candidate established the report fact"
+            : "not established after reviewing all evidence candidates",
       final_status: facts[field].status,
     };
     if (hasEvidenceConflict) conflicts.push({ field, values: displayedEvidenceValues, message: `Conflicting evidence values were found for ${field.replaceAll("_", " ")}: ${displayedEvidenceValues.join(" / ")}. The highest-supported value (${selected}) was retained and all alternatives remain in the field trace.` });
@@ -1709,11 +1766,18 @@ export function buildNormalizedClaimRecord({ claim = {}, documents = [], analysi
     if (currency) facts.currency = { ...facts.currency, value: currency, status: "supported" };
   } else facts.currency.value = currencyCode(facts.currency.value) || facts.currency.value;
   for (const field of ["container_numbers", "seal_numbers"]) {
-    const values = unique(allCandidates
+    const fieldCandidates = allCandidates
       .filter((candidate) => candidate.field === field && !candidate.requires_confirmation)
+      .filter((candidate) => isPresent(candidate.normalized_value ?? candidate.value));
+    const rawValues = unique(fieldCandidates
       .flatMap((candidate) => String((candidate.normalized_value ?? candidate.value) || "").split(/\s*,\s*/)));
+    const containerTokens = field === "container_numbers" ? unique(rawValues.flatMap(extractContainerNumbers)) : [];
+    const validContainerTokens = containerTokens.filter(validContainerNumber);
+    const values = field === "container_numbers"
+      ? validContainerTokens.length ? validContainerTokens : containerTokens
+      : rawValues;
     if (values.length) {
-      facts[field] = { ...facts[field], value: values.join(", "), status: "supported", candidate_values: values };
+      facts[field] = { ...facts[field], value: values.join(", "), status: "supported", sources: fieldCandidates.flatMap((candidate) => candidate.sources || []), candidate_values: values };
       fieldTrace[field] = { ...fieldTrace[field], selected_value: facts[field].value, resolution: "merged all evidence-supported identifiers", final_status: "supported" };
       const conflictIndex = conflicts.findIndex((conflict) => conflict.field === field);
       if (conflictIndex >= 0) conflicts.splice(conflictIndex, 1);
@@ -1793,7 +1857,7 @@ export function buildNormalizedClaimRecord({ claim = {}, documents = [], analysi
         ? `${isPresent(item.basis) ? `${String(item.basis).trim()}; ` : ""}deterministically calculated from the cited quantity/conversion and matching unit rate`
         : isPresent(item.basis) ? String(item.basis).trim() : null,
       line_kind: deductionLineKind(item) || "loss",
-      evidence_basis: quotationBasedItem(item) ? "quotation" : "claim_or_incurred_evidence",
+      evidence_basis: provisionalItem(item) ? "provisional" : quotationBasedItem(item) ? "quotation" : "claim_or_incurred_evidence",
       confidence: item.confidence ?? null,
       sources: item.sources,
     }];
@@ -1837,11 +1901,11 @@ export function buildNormalizedClaimRecord({ claim = {}, documents = [], analysi
   }
   let explicitPresentedClaim = parseNumber(facts.gross_claim_amount.value) ?? parseNumber(facts.claim_amount.value);
   const presentedClaimFact = parseNumber(facts.gross_claim_amount.value) !== null ? facts.gross_claim_amount : facts.claim_amount;
-  if (explicitPresentedClaim !== null && factBasedOnlyOnQuotation(presentedClaimFact)) {
+  if (explicitPresentedClaim !== null && (factBasedOnlyOnQuotation(presentedClaimFact) || factBasedOnlyOnProvisionalEvidence(presentedClaimFact))) {
     conflicts.push({
       field: "gross_claim_amount",
       values: [String(explicitPresentedClaim)],
-      message: "The only source for the stated amount is a quotation, estimate, pro-forma invoice, or proposal. It is retained as provisional valuation evidence and is not treated as a claim presented or an incurred cost.",
+      message: "The only source for the stated amount is a quotation, estimate, extrapolation, miscellaneous schedule, or otherwise provisional evidence. It is retained as provisional valuation evidence and is not treated as a claim presented or an incurred cost.",
     });
     explicitPresentedClaim = null;
   }
@@ -1867,14 +1931,26 @@ export function buildNormalizedClaimRecord({ claim = {}, documents = [], analysi
       fieldTrace[field] = { ...fieldTrace[field], selected_value: itemizedClaimTotal.toFixed(2), resolution: "excluded a non-claim valuation from the presented quantum", final_status: "conflict" };
     }
   }
-  const allLossItemsAreQuotations = adjustmentLineItems.length > 0 && adjustmentLineItems.every((item) => item.evidence_basis === "quotation");
-  const presentedClaim = explicitPresentedClaim ?? (allLossItemsAreQuotations ? null : itemizedClaimTotal);
-  if (explicitPresentedClaim === null && itemizedClaimTotal !== null && !allLossItemsAreQuotations) {
+  const itemEvidenceBases = unique(adjustmentLineItems.map((item) => item.evidence_basis));
+  const itemizedEvidenceBasis = itemEvidenceBases.length === 1
+    ? itemEvidenceBases[0]
+    : itemEvidenceBases.length ? "mixed_provisional" : null;
+  const itemizedScheduleCanEvidencePresentedClaim = adjustmentLineItems.length > 0
+    && adjustmentLineItems.every((item) => item.evidence_basis === "claim_or_incurred_evidence");
+  const presentedClaim = explicitPresentedClaim ?? (itemizedScheduleCanEvidencePresentedClaim ? itemizedClaimTotal : null);
+  if (explicitPresentedClaim === null && itemizedClaimTotal !== null && itemizedScheduleCanEvidencePresentedClaim) {
     const formattedTotal = itemizedClaimTotal.toFixed(2);
     for (const field of ["claim_amount", "gross_claim_amount"]) {
       facts[field] = { ...facts[field], value: formattedTotal, status: "supported", sources: adjustmentLineItems.flatMap((item) => item.sources), derived_from: "adjustment_line_items" };
       fieldTrace[field] = { ...fieldTrace[field], selected_value: formattedTotal, resolution: "deterministic sum of evidence-supported adjustment line items", final_status: "supported" };
     }
+  }
+  if (explicitPresentedClaim === null && itemizedClaimTotal !== null && !itemizedScheduleCanEvidencePresentedClaim) {
+    conflicts.push({
+      field: "gross_claim_amount",
+      values: [String(itemizedClaimTotal)],
+      message: "The itemized schedule contains quotation, estimate, extrapolated, miscellaneous, or otherwise provisional evidence. It is retained for review but is not treated automatically as the presented claim or a reconciled incurred amount.",
+    });
   }
   const deductionAmount = (kind, factName) => {
     const factAmount = parseNumber(facts[factName].value);
@@ -1970,7 +2046,10 @@ export function buildNormalizedClaimRecord({ claim = {}, documents = [], analysi
   });
   const explicitAdjustedReconciled = explicitAdjustedNonNegative !== null && (!canCalculateWithoutExplicit || knownCalculated === null || arithmeticValid);
   const itemizedQuantityConflict = itemizedClaimTotal !== null && conflicts.some((conflict) => ["quantity", "affected_quantity", "shortage_breakdown"].includes(conflict.field));
-  const concludedIndemnity = explicitAdjusted !== null
+  const provisionalItemizedSchedule = itemizedClaimTotal !== null && !itemizedScheduleCanEvidencePresentedClaim;
+  const concludedIndemnity = provisionalItemizedSchedule
+    ? null
+    : explicitAdjusted !== null
     ? explicitAdjustedReconciled ? explicitAdjustedNonNegative : null
     : canCalculateWithoutExplicit && !itemizedQuantityConflict ? knownCalculated : null;
   const reconciledItemizedAdjustment = itemizedClaimTotal !== null && explicitAdjusted !== null && arithmeticValid;
@@ -1978,7 +2057,7 @@ export function buildNormalizedClaimRecord({ claim = {}, documents = [], analysi
     currency: facts.currency.value || null,
     presented_claim: presentedClaim,
     itemized_claim_total: itemizedClaimTotal,
-    itemized_evidence_basis: allLossItemsAreQuotations ? "quotation" : adjustmentLineItems.length ? "claim_or_incurred_evidence" : null,
+    itemized_evidence_basis: itemizedEvidenceBasis,
     adjusted_claim_amount: adjustedClaimAmount,
     valuation_adjustment: valuationAdjustment,
     valuation_basis: isPresent(facts.valuation_basis.value) ? facts.valuation_basis.value : null,
@@ -2010,6 +2089,7 @@ export function buildNormalizedClaimRecord({ claim = {}, documents = [], analysi
       recovery === null && !reconciledItemizedAdjustment ? "Recovery credit or explicit confirmation that none applies" : null,
       depreciation === null && !reconciledItemizedAdjustment ? "Depreciation or explicit confirmation that none applies" : null,
       concludedIndemnity === null ? "Concluded indemnity" : null,
+      provisionalItemizedSchedule ? "Verification and reconciliation of provisional itemized loss evidence" : null,
       explicitAdjusted !== null && !arithmeticValid ? "Complete adjustment components needed to reconcile the source-stated concluded indemnity" : null,
     ].filter(Boolean),
   };

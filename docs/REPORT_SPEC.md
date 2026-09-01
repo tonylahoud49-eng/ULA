@@ -56,6 +56,10 @@ The master report uses this order:
 
 The Appendix contains photographs, not document reproductions or lists of supporting documents.
 
+## DOCX paragraph formatting
+
+Generated narrative paragraphs use justified alignment and single line spacing. In WordprocessingML this is represented by `w:jc w:val="both"` and `w:spacing w:line="240" w:lineRule="auto"`. The rule applies to generated report narrative, while headings, cover-page typography, document-control layout, tables, signatures, photographs, headers, and footers retain their approved alignment and layout.
+
 ## The five Director requirements
 
 The current tests treat the following as the five Director-controlled requirements.
@@ -281,6 +285,10 @@ Claude must analyze the complete current-claim evidence set together, including 
 16. Classify policy wording by its evidenced function. `Warranted` wording belongs under warranties, procedural or precedent wording under conditions, and `Excluding` wording under exclusions; their possible coverage effect does not permit category mixing.
 17. Compare a printed invoice total with an amount-in-words on the same invoice. Any mismatch is a material financial conflict and prevents definitive adequacy, underinsurance, or final-quantum use until reconciled.
 18. Return complete professional sentences and remove repeated propositions. Client narrative must not end at a dangling connector, colon, opening parenthesis, `p.`, or `pp.`.
+19. Produce client-ready synthesis rather than an extraction dump. Each material section selects the decisive evidence, explains its significance, gives the proportionate professional conclusion, and removes raw OCR, page-reference fragments, repetitive source descriptions, and generic filler while retaining provenance internally.
+20. Enforce cross-section consistency. Party roles, transport references and document status, chronology, currency, claim-presentation status, quotation/estimate status, deductible treatment, adjusted amount, cause qualification, cover advice, and liable-party position must retain the same meaning in the summary, detailed sections, adjustment, and conclusion.
+21. Make each evidence gap decision-specific by identifying the exact document, test, record, witness, approval, or reconciliation needed and the cause, coverage, quantum, mitigation, liability, recovery, or outcome question it would resolve.
+22. Preserve whether a transport record is an original, sea waybill, copy, or draft; reconcile quotation lines, ancillary charges, VAT/tax, and deductible components separately; and keep raw page references in structured provenance rather than client wording.
 
 PDF extraction must not assume that a page with searchable text is visually irrelevant. A searchable page containing a materially sized raster image may also be rendered for Claude vision so that captioned photographs, OCR overlays, logger screens, scans, and mixed text/photo survey pages are not omitted. Additional searchable visual pages are bounded locally; ordinary text pages, logos, and decorative marks must not flood the request. The extracted text remains the verification source for textual facts, while genuinely visual findings use visual provenance.
 
@@ -298,6 +306,7 @@ Before returning the structured result, Claude performs a Director-grade interna
 10. Distinguish every plausible liable or recovery party and test custody, contract, causation, notice, evidence preservation, defences, limitation or time bar, and recovery economics before recommending pursuit.
 11. Select the strongest supported outcome branch permitted by the applicable profile, or state which branches remain open and what evidence separates them.
 12. Audit the final structured result for unsupported assertions, missed evidence, generic filler, one-sided conflicts, repeated findings, conflated financial concepts, and conclusions that are stronger or weaker than the evidence.
+13. Confirm cross-section consistency and client readiness: no summary or conclusion may upgrade a provisional quotation, unresolved conflict, qualified cause, unconfirmed cover position, or unestablished liable party beyond the detailed evidence-led analysis.
 
 Material findings may use a compact analytical paragraph of up to four sentences when needed to connect fact, significance, counterevidence or alternatives, and a proportionate provisional assessment. Concision must not reduce a material issue to a bare observation or generic review warning.
 
@@ -412,6 +421,10 @@ The Marine Non-Reefer methodology requires:
 14. Current-evidence recovery analysis distinguishing every candidate and testing transport terms, custody, receipt condition, reservations, notice, survey invitation, causation, equipment condition, limitation, jurisdiction, time bar, security, evidence preservation and recovery economics.
 15. Selection of the supported outcome branch: no established loss, partial breakage or damage, repairable machinery or component loss, evidenced total loss, wetting or contamination, shortage or non-delivery, packing or handling-related loss, an excluded or warranty-affected claim, or a covered loss below the deductible.
 16. Current-claim photographs only, prioritising material loading, packing, stowage, lashing, container, roof or door defects, seals, delivery condition, affected and sound comparisons, testing, segregation, repair, salvage and destruction under the global Appendix limits.
+17. Role-complete summary presentation. When the Assured and shipper differ, show both with their exact roles rather than replacing one with the other. Preserve separately evidenced master- and house-bill parties where the current documents establish those distinctions.
+18. Explicit transport-document status and conflict treatment. Identify an original, sea waybill or draft as shown by the current document, compare master and house bills with carrier tracking, retain vessel, voyage, party, date and route conflicts, and request final documents instead of silently selecting a version.
+19. Provisional quotation treatment that reconciles each replacement or repair line, ancillary charge and VAT or tax separately, keeps recoverability open where unresolved, and applies any percentage/minimum/maximum deductible only as a clearly labelled provisional calculation. A quotation alone does not establish a presented claim or concluded indemnity.
+20. Concise breakage reasoning that moves from observed condition to compatible mechanisms, viable packing/pre-shipment/port/sea/inland/unloading alternatives, and the exact transport, stuffing, delivery, survey, notice, crate-design and lashing evidence needed to strengthen the conclusion. Raw OCR and truncated photo-page references are not client narrative.
 
 The global Director wording, approved section order, empty Enclosure and Outstanding sections, Appendix limits, no-fabrication rules, deterministic calculations, citation requirements, and human approval gates override every unsupported cause or liability statement, unreconciled quantity, screening-test overstatement, arbitrary recovery deduction, line-item arithmetic error, conclusion order, or legacy appendix practice in a historical Non-Reefer report.
 

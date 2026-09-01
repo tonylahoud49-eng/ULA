@@ -19,6 +19,10 @@ test("approved Non-Reefer profile contains methodology only and no supplied hist
   assert.match(text, /compare repair, cleaning, testing, replacement-part/i);
   assert.match(text, /Calculate quantum locally line by line/i);
   assert.match(text, /Do not apply a hypothetical or percentage recovery deduction/i);
+  assert.match(text, /Assured and shipper differ, show both/i);
+  assert.match(text, /original, sea waybill or draft/i);
+  assert.match(text, /VAT or tax separately/i);
+  assert.match(text, /observed condition; mechanism-compatible interpretation/i);
   assert.doesNotMatch(text, /AROPE|Lia Assurex|Fidelity Insurance|Maersk|MSC|CMA CGM|Saga Cosmetics|Alusteel|Almaza|Kinshasa|Cyprus|Canada|250742|250745|250901|251122|18,773|2,904|22,641|697\.00/i);
 });
 

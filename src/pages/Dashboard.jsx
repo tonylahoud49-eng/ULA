@@ -3,7 +3,6 @@ import { Link } from "react-router-dom";
 import {
   AlertTriangle,
   ArrowRight,
-  CircleDollarSign,
   FileCheck2,
   FileStack,
   FolderOpen,
@@ -50,11 +49,10 @@ export default function Dashboard() {
   }, []);
 
   const stats = useMemo(() => {
-    const totalValue = claims.reduce((sum, claim) => sum + (Number(claim.claim_amount) || 0), 0);
     const open = claims.filter((claim) => claim.status !== "Closed").length;
     const pendingDocs = claims.filter((claim) => claim.missing_documents?.length).length;
     const drafts = claims.filter((claim) => claim.status === "Report Draft").length;
-    return { totalValue, open, pendingDocs, drafts, total: claims.length };
+    return { open, pendingDocs, drafts, total: claims.length };
   }, [claims]);
 
   const byLine = useMemo(() => {
@@ -98,11 +96,10 @@ export default function Dashboard() {
         </Button>
       </div>
 
-      <section aria-label="Portfolio summary" className="metric-strip sm:grid-cols-2 xl:grid-cols-4">
+      <section aria-label="Portfolio summary" className="metric-strip sm:grid-cols-2 xl:grid-cols-3">
         <Metric icon={FolderOpen} label="Open claims" value={stats.open} detail={`${stats.total} total registered`} />
         <Metric icon={AlertTriangle} label="Evidence gaps" value={stats.pendingDocs} detail="Claims missing required sources" tone="amber" />
         <Metric icon={FileStack} label="Draft reports" value={stats.drafts} detail="Awaiting professional action" tone="blue" />
-        <Metric icon={CircleDollarSign} label="Claimed exposure" value={`$${(stats.totalValue / 1_000_000).toFixed(2)}M`} detail="Across the current register" />
       </section>
 
       <div className="grid gap-6 xl:grid-cols-[minmax(0,1.65fr)_minmax(340px,0.85fr)]">

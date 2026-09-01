@@ -77,6 +77,12 @@ test("DOCX export preserves the approved master structure and replaces only clai
   assert.match(text, /Adjusted Claim Value in USD/);
   assert.doesNotMatch(text, /\{\{[^}]+\}\}/);
   assert.doesNotMatch(documentXml, /<w:highlight\b/i);
+  const generatedNarrative = [...documentXml.matchAll(/<w:p\b[\s\S]*?<\/w:p>/g)]
+    .map((match) => match[0])
+    .find((paragraph) => /^At the request of /i.test(textOf(paragraph)));
+  assert.ok(generatedNarrative);
+  assert.match(generatedNarrative, /<w:spacing\b[^>]*w:line="240"[^>]*w:lineRule="auto"[^>]*\/>/i);
+  assert.match(generatedNarrative, /<w:jc w:val="both"\/>/i);
   assert.doesNotMatch(text, /Victoire|Judi Lebanon|DamasGate|MC\/0002606|MSNU7244246|MEDULB209962|13,552\.80|Best Air|Wazen Trading|Bechara|HO-MAP-0103552/i);
 
   const footer = await archive.file("word/footer1.xml").async("string");
