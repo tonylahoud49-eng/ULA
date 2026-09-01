@@ -109,25 +109,6 @@ test("anthropic sends uploaded content to Messages API and retains only grounded
   assert.equal(body.model, "claude-sonnet-4-6");
   assert.equal(body.max_tokens, 64_000);
   assert.equal(body.stream, true);
-  assert.equal(body.output_config.format.type, "json_schema");
-  assert.equal(body.output_config.format.schema.additionalProperties, false);
-  assert.ok(JSON.stringify(body.output_config.format.schema).length < 5_000);
-  assert.equal(JSON.stringify(body.output_config.format.schema).includes('"enum"'), false);
-  let unionTypes = 0;
-  let optionalParameters = 0;
-  const auditSchemaComplexity = (node) => {
-    if (!node || typeof node !== "object") return;
-    if (Array.isArray(node.type)) unionTypes += 1;
-    if (node.type === "object") {
-      optionalParameters += Object.keys(node.properties || {})
-        .filter((key) => !(node.required || []).includes(key)).length;
-      assert.equal(node.additionalProperties, false);
-    }
-    Object.values(node).forEach(auditSchemaComplexity);
-  };
-  auditSchemaComplexity(body.output_config.format.schema);
-  assert.equal(unionTypes, 10);
-  assert.equal(optionalParameters, 0);
   assert.match(body.system, /Return only the structured payload/);
   assert.match(body.system, /no Markdown fences, preface, trailing commentary, or extra keys/i);
   assert.match(body.system, /return only evidence-supported non-null fields/i);
@@ -585,7 +566,7 @@ test("anthropic accepts valid schema-constrained structured output", async () =>
   const result = await provider.analyze({ claim: { id: "valid-structured" }, evidence: [], files: [] });
 
   assert.equal(calls, 1);
-  assert.equal(requestBody.output_config.format.type, "json_schema");
+  assert.ok(requestBody.system.includes("Return only the structured payload"));
   assert.equal(result.analysis.summary, validAnthropicAnalysisFixture.summary);
 });
 

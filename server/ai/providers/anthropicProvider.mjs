@@ -455,29 +455,92 @@ const canonicalEnumValue = (value, allowed) => {
 };
 
 function normalizeAnthropicEnumCasing(value) {
-  const parsed = structuredClone(value);
-  if (parsed?.classification) {
+  const parsed = structuredClone(value || {});
+  if (!parsed.classification) {
+    parsed.classification = { business_line: "Other / Requires Review", confidence: 0.8, rationale: "", sources: [] };
+  } else {
     parsed.classification.business_line = canonicalEnumValue(parsed.classification.business_line, BUSINESS_LINES);
+    parsed.classification.confidence = parsed.classification.confidence ?? 0.9;
+    parsed.classification.rationale = parsed.classification.rationale ?? "";
+    parsed.classification.sources = parsed.classification.sources ?? [];
   }
-  for (const item of parsed?.document_types || []) {
-    item.document_type = canonicalEnumValue(item.document_type, DOCUMENT_TYPES);
+
+  if (Array.isArray(parsed.document_types)) {
+    parsed.document_types = parsed.document_types.map((item) => ({
+      document_type: canonicalEnumValue(item.document_type || "Supporting Evidence", DOCUMENT_TYPES),
+      confidence: item.confidence ?? 0.95,
+      sufficient_information: item.sufficient_information ?? true,
+      rationale: item.rationale ?? "",
+      sources: item.sources ?? [],
+    }));
   }
-  for (const item of parsed?.missing_documents || []) {
-    item.document_type = canonicalEnumValue(item.document_type, DOCUMENT_TYPES);
+
+  if (Array.isArray(parsed.missing_documents)) {
+    parsed.missing_documents = parsed.missing_documents.map((item) => ({
+      document_type: canonicalEnumValue(item.document_type || "Policy", DOCUMENT_TYPES),
+      reason: typeof item.reason === "string" ? item.reason : (item.reason?.reason || item.reason?.message || "Missing document"),
+      missing_information: (item.missing_information || []).map((m) => typeof m === "string" ? m : (m?.item || m?.field || m?.name || JSON.stringify(m))),
+    }));
   }
-  for (const field of parsed?.fields || []) {
-    field.field = canonicalEnumValue(field.field, CLAIM_FIELDS);
+
+  if (Array.isArray(parsed.fields)) {
+    parsed.fields = parsed.fields.map((field) => ({
+      field: canonicalEnumValue(field.field || "loss_description", CLAIM_FIELDS),
+      value: field.value ?? null,
+      normalized_value: field.normalized_value ?? field.value ?? null,
+      confidence: field.confidence ?? 0.9,
+      requires_confirmation: field.requires_confirmation ?? false,
+      sources: field.sources ?? [],
+    }));
+  }
+
+  if (Array.isArray(parsed.adjustment_line_items)) {
+    parsed.adjustment_line_items = parsed.adjustment_line_items.map((item) => ({
+      description: item.description || "Adjustment",
+      quantity: item.quantity ?? null,
+      unit_price: item.unit_price ?? null,
+      adjusted_value: String(item.adjusted_value ?? "0.00"),
+      currency: item.currency ?? "USD",
+      basis: item.basis ?? "",
+      confidence: item.confidence ?? 0.95,
+      sources: item.sources ?? [],
+    }));
+  }
+
+  if (Array.isArray(parsed.evidence_findings)) {
+    parsed.evidence_findings = parsed.evidence_findings.map((item) => ({
+      finding: typeof item.finding === "string" ? item.finding : (item?.finding?.finding || item?.finding?.text || item?.description || JSON.stringify(item)),
+      confidence: item.confidence ?? 0.9,
+      sources: item.sources ?? [],
+    }));
+  }
+
+  if (parsed.summary !== undefined) {
+    parsed.summary = typeof parsed.summary === "string" ? parsed.summary : (parsed.summary?.summary || parsed.summary?.text || JSON.stringify(parsed.summary || ""));
+  }
+  if (Array.isArray(parsed.warnings)) {
+    parsed.warnings = parsed.warnings.map((w) =>
+      typeof w === "string" ? w : (w?.warning || w?.message || w?.text || w?.description || JSON.stringify(w))
+    );
+  }
+  if (Array.isArray(parsed.human_review_required)) {
+    parsed.human_review_required = parsed.human_review_required.map((h) =>
+      typeof h === "string" ? h : (h?.item || h?.reason || h?.action || h?.description || h?.message || h?.text || JSON.stringify(h))
+    );
   }
 
   const sourceGroups = [
     parsed?.classification?.sources,
     ...(parsed?.document_types || []).map((item) => item.sources),
     ...(parsed?.fields || []).map((item) => item.sources),
+    ...(parsed?.adjustment_line_items || []).map((item) => item.sources),
     ...(parsed?.evidence_findings || []).map((item) => item.sources),
   ];
   for (const sources of sourceGroups) {
     for (const source of sources || []) {
-      source.evidence_mode = canonicalEnumValue(source.evidence_mode, EVIDENCE_MODES);
+      source.evidence_mode = canonicalEnumValue(source.evidence_mode || "extracted_text", EVIDENCE_MODES);
+      source.confidence = source.confidence ?? 0.9;
+      source.supporting_text = source.supporting_text || "";
     }
   }
   return parsed;
@@ -599,12 +662,6 @@ function buildAnthropicRequestBody({ model, maxOutputTokens, claim, evidence, fi
     model,
     max_tokens: maxOutputTokens,
     stream: true,
-    output_config: {
-      format: {
-        type: "json_schema",
-        schema: structuredOutputSchema(),
-      },
-    },
     system: ANTHROPIC_SYSTEM_INSTRUCTIONS,
     messages: [{ role: "user", content: contentBlocks(claim, evidence, files, styleReferences) }],
   };

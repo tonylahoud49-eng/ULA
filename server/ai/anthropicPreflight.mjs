@@ -155,9 +155,9 @@ function fullRequestBody(model, maxOutputTokens, claim, evidence, files, styleRe
 }
 
 function estimateInputTokens(requestBody, evidence) {
-  const textCharacters = requestBody.system.length
-    + JSON.stringify(requestBody.output_config).length
-    + requestBody.messages[0].content
+  const textCharacters = (requestBody.system?.length || 0)
+    + (requestBody.output_config ? JSON.stringify(requestBody.output_config).length : 0)
+    + (requestBody.messages?.[0]?.content || [])
       .filter((block) => block.type === "text")
       .reduce((total, block) => total + String(block.text || "").length, 0);
   const images = evidence.reduce((total, item) => total
@@ -278,7 +278,7 @@ export async function validateAnthropicClaimLocally({
     claim_context_fields: Object.keys(claimContext),
     system_instruction_characters: requestBody.system.length,
     json_contract_characters: anthropicProviderInternals.jsonContract.length,
-    json_schema_characters: JSON.stringify(requestBody.output_config.format.schema).length,
+    json_schema_characters: requestBody.output_config?.format?.schema ? JSON.stringify(requestBody.output_config.format.schema).length : 0,
     limits,
     local_reduction: prepared.stats,
     payload_summary: prepared.evidence.map((item) => ({

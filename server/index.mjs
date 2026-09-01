@@ -113,7 +113,11 @@ export function logAiEvent(level, message, data = null) {
   };
   AI_LOGS.unshift(entry);
   if (AI_LOGS.length > 100) AI_LOGS.pop();
-  console.log(`[AI ${level.toUpperCase()}] ${message}`, data ? JSON.stringify(data) : "");
+  try {
+    console.log(`[AI ${level.toUpperCase()}] ${message}`, data ? JSON.stringify(data) : "");
+  } catch {
+    // Console logging must never affect request processing
+  }
 }
 
 app.get("/api/ai/logs", (_request, response) => response.json({ ok: true, logs: AI_LOGS }));

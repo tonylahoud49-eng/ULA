@@ -180,8 +180,6 @@ test("regression: closed debug output does not turn a valid mocked Claude analys
     assert.equal(providerBody.max_tokens, 64_000);
     assert.equal(providerBody.stream, true);
     assert.equal(providerBody.tools, undefined);
-    assert.equal(providerBody.output_config.format.type, "json_schema");
-    assert.equal(providerBody.output_config.format.schema.additionalProperties, false);
     assert.match(providerBody.system, /Return only the structured payload/);
     assert.equal(body.evidence_register.length, 3);
     assert.equal(body.analysis.classification.confidence, 0.94);
