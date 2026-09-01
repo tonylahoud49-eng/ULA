@@ -39,18 +39,25 @@ export function createGeminiProvider({ apiKey, model, client } = {}) {
             type: "image_url",
             image_url: { url: toDataUrl(file), detail: "high" },
           });
-        } else if (item.kind === "pdf") {
-          // Gemini handles PDF vision natively through the OpenAI-compatible endpoint.
-          userContent.push({
-            type: "image_url",
-            image_url: { url: toDataUrl(file), detail: "auto" },
-          });
         }
         (item.embedded_images || []).forEach((embedded) => {
           userContent.push({
             type: "image_url",
             image_url: {
               url: `data:${embedded.mime_type};base64,${embedded.buffer.toString("base64")}`,
+              detail: "high",
+            },
+          });
+        });
+        (item.vision_images || []).forEach((pageImage) => {
+          userContent.push({
+            type: "text",
+            text: `[Vision page: ${item.document_name}, page ${pageImage.page}]`,
+          });
+          userContent.push({
+            type: "image_url",
+            image_url: {
+              url: `data:${pageImage.mime_type};base64,${pageImage.buffer.toString("base64")}`,
               detail: "high",
             },
           });
