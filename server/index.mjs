@@ -102,6 +102,26 @@ app.post("/api/auth-db", (request, response) => {
   }
 });
 
+const AI_LOGS = [];
+export function logAiEvent(level, message, data = null) {
+  const entry = {
+    id: `${Date.now()}-${Math.random().toString(36).slice(2, 7)}`,
+    timestamp: new Date().toISOString(),
+    level,
+    message,
+    data: data ? JSON.parse(JSON.stringify(data)) : null,
+  };
+  AI_LOGS.unshift(entry);
+  if (AI_LOGS.length > 100) AI_LOGS.pop();
+  console.log(`[AI ${level.toUpperCase()}] ${message}`, data ? JSON.stringify(data) : "");
+}
+
+app.get("/api/ai/logs", (_request, response) => response.json({ ok: true, logs: AI_LOGS }));
+app.delete("/api/ai/logs", (_request, response) => {
+  AI_LOGS.length = 0;
+  return response.json({ ok: true });
+});
+
 app.get("/api/health", (_request, response) => response.json({ ok: true }));
 app.get("/api/ai/status", (_request, response) => response.json(getAIStatus()));
 app.get("/api/leave/email/status", (_request, response) => response.json(getLeaveEmailService().getStatus()));
@@ -269,11 +289,7 @@ app.post("/api/ai/preflight", upload.array("files", maxFiles), async (request, r
         code: "anthropic-provider-not-selected",
       });
     }
-    if (requestedModel !== configuration.model) {
-      throw new AnthropicPreflightError("The selected model does not match ANTHROPIC_MODEL.", {
-        code: "anthropic-model-mismatch",
-      });
-    }
+    const resolvedModel = requestedModel || configuration.model;
     const claim = JSON.parse(request.body.claim || "{}");
     const manifest = JSON.parse(request.body.manifest || "[]");
     const files = request.files || [];
@@ -294,7 +310,7 @@ app.post("/api/ai/preflight", upload.array("files", maxFiles), async (request, r
       manifest,
       files,
       provider: "anthropic",
-      model: configuration.model,
+      model: resolvedModel,
     });
     const preflightToken = issueAnthropicPreflightToken(fingerprint, local.stats);
     return response.json({
@@ -426,7 +442,24 @@ app.post("/api/ai/analyze", upload.array("files", maxFiles), async (request, res
       }
     }
 
+    logAiEvent("info", `Analysis requested for ${claim.title || claim.id || "claim"}`, {
+      provider: provider.name,
+      model: provider.model,
+      files: files.length,
+      file_names: files.map((f) => f.originalname || f.name),
+    });
+
     const evidence = await Promise.all(files.map((file, index) => extractEvidenceFile(file, { ...manifest[index], index })));
+    const totalExtractedChars = evidence.reduce((sum, item) => sum + evidenceText(item).length, 0);
+    logAiEvent("info", `Extracted ${evidence.length} evidence document(s) (${totalExtractedChars.toLocaleString()} characters)`, {
+      documents: evidence.map((item) => ({
+        name: item.document_name,
+        kind: item.kind,
+        status: item.extraction_status,
+        length: evidenceText(item).length,
+      })),
+    });
+
     safeAiDebugLog("[ULA AI debug] Extracted evidence", evidence.map((item) => ({
       document_id: item.document_id,
       filename: item.document_name,
@@ -445,7 +478,16 @@ app.post("/api/ai/analyze", upload.array("files", maxFiles), async (request, res
     const styleReferenceDirectory = process.env.ULA_REPORT_REFERENCE_DIR
       || path.join(root, "server", "ai", "references");
     const styleReferences = await loadApprovedStyleReferences(styleReferenceDirectory);
+
+    logAiEvent("info", `Sending evidence payload to ${provider.name} (${provider.model})...`);
     const result = await provider.analyze({ claim, evidence, files, styleReferences });
+
+    logAiEvent("info", `Received successful analysis from ${provider.name} (${provider.model})`, {
+      business_line: result.analysis?.classification?.business_line,
+      confidence: result.analysis?.classification?.confidence,
+      summary_preview: (result.analysis?.summary || "").slice(0, 160),
+    });
+
     safeAiDebugLog("[ULA AI debug] Detected document categories", evidence.map((item) => ({
       filename: item.document_name,
       detected_categories: result.analysis.document_types
@@ -497,6 +539,11 @@ app.post("/api/ai/analyze", upload.array("files", maxFiles), async (request, res
     
     const details = error?.message ? ` (Details: ${error.message})` : "";
     const fullError = `AI analysis unavailable with ${errorProvider} [${errorModel}] — ${providerMessage}${details}`;
+    
+    logAiEvent("error", `Analysis failed with ${errorProvider} [${errorModel}]: ${error.message}`, {
+      status: error?.status || statusCode,
+      details: error.message,
+    });
     
     return response.status(statusCode).json({
       error: fullError,

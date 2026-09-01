@@ -11,7 +11,8 @@ import {
   DialogTrigger,
 } from "@/components/ui/dialog";
 import { Input } from "@/components/ui/input";
-import { Sparkles, Activity, CheckCircle2, AlertCircle, Loader2, Send } from "lucide-react";
+import { Sparkles, Activity, CheckCircle2, AlertCircle, Loader2, Send, Terminal } from "lucide-react";
+import AILogsModal from "@/components/AILogsModal";
 
 export const POPULAR_MODELS = [
   { value: "gemini", label: "Gemini 3.6 Flash", provider: "gemini", model: "gemini-3.6-flash" },
@@ -255,6 +256,20 @@ export default function AIModelSelector({
           </div>
         </DialogContent>
       </Dialog>
+
+      <AILogsModal
+        triggerButton={
+          <Button
+            variant="outline"
+            size="sm"
+            className="h-9 gap-1.5 text-xs font-medium border-border hover:bg-muted/80 shadow-xs"
+            title="View real-time server AI analysis logs and diagnostics"
+          >
+            <Terminal className="h-3.5 w-3.5 text-primary" />
+            <span>AI Logs</span>
+          </Button>
+        }
+      />
     </div>
   );
 }

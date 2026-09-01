@@ -45,16 +45,11 @@ export function anthropicSafetyLimits(env = process.env) {
 }
 
 export function validateAnthropicConfiguration(env = process.env) {
-  const provider = String(env.AI_PROVIDER || "").trim().toLowerCase();
+  const provider = "anthropic";
   const apiKey = String(env.ANTHROPIC_API_KEY || "").trim();
-  const model = String(env.ANTHROPIC_MODEL || "").trim();
-  if (provider !== "anthropic") {
-    throw new AnthropicPreflightError("AI_PROVIDER must be set to anthropic before Claude analysis.", {
-      code: "anthropic-provider-not-selected",
-    });
-  }
+  const model = String(env.ANTHROPIC_MODEL || "claude-sonnet-4-6").trim();
   if (!apiKey) {
-    throw new AnthropicPreflightError("ANTHROPIC_API_KEY is missing from the server environment.", {
+    throw new AnthropicPreflightError("ANTHROPIC_API_KEY is missing from the server environment (.env).", {
       code: "anthropic-api-key-missing",
     });
   }

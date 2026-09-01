@@ -279,10 +279,15 @@ export function createOpenRouterProvider({
       if (!parsed) {
         try {
           const content = response?.choices?.[0]?.message?.content;
-          parsed = normalizePartialAnalysis(JSON.parse(content || ""));
+          if (content) {
+            parsed = normalizePartialAnalysis(parseStructuredJson(content));
+          }
         } catch {
-          throw lastParseError;
+          // If partial rescue fails, throw the original error
         }
+      }
+      if (!parsed) {
+        throw lastParseError;
       }
 
       return {
