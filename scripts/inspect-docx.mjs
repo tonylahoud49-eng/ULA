@@ -9,10 +9,9 @@ async function inspectDocx(filePath) {
     if (name.startsWith("word/media/")) {
       const buffer = await file.async("nodebuffer");
       console.log("Media file:", name, "Size:", buffer.length, "bytes");
-      // Save media file to .tmp directory
-      await fs.mkdir(".tmp", { recursive: true });
+      // Let's save each media file with its original size
       const outName = name.replace("word/media/", "extracted_");
-      await fs.writeFile(`.tmp/${outName}`, buffer);
+      await fs.writeFile(`samples/${outName}`, buffer);
     }
   }
   const relsXml = await zip.file("word/_rels/document.xml.rels")?.async("string");

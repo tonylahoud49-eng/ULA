@@ -37,9 +37,6 @@ function normalizeMaxCompletionTokens(value) {
 
 function isRetryableRequestError(error) {
   const status = Number(error?.status);
-  if (status === 400 && /maximum context length|requested about.*tokens|reduce the length/i.test(error?.message || "")) {
-    return true;
-  }
   if ([404, 408, 409, 425, 429, 500, 502, 503, 504].includes(status)) return true;
   const code = String(error?.code || error?.cause?.code || "").toUpperCase();
   if (["ECONNRESET", "ECONNREFUSED", "ETIMEDOUT", "UND_ERR_CONNECT_TIMEOUT", "UND_ERR_SOCKET"].includes(code)) {
@@ -152,7 +149,6 @@ export function createOpenRouterProvider({
     resolvedModel,
     resolvedModel.endsWith(":free") ? resolvedModel.replace(/:free$/, "") : null,
     resolvedModel.includes(":free") ? DEFAULT_MODEL : null,
-    resolvedModel === "openrouter/auto" ? "minimax/minimax-m3:free" : null,
   ].filter(Boolean))];
   const resolvedFallbackModels = normalizeFallbackModels(fallbackModels, resolvedModel);
   const resolvedMaxCompletionTokens = normalizeMaxCompletionTokens(maxCompletionTokens);
@@ -225,7 +221,6 @@ export function createOpenRouterProvider({
         stream: false,
         max_completion_tokens: resolvedMaxCompletionTokens,
         plugins: [{ id: "response-healing" }],
-        transforms: ["middle-out"],
       };
       const attempts = [
         {

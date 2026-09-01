@@ -157,16 +157,9 @@ async function analyzeClaimWithProviderOnce({ claim, documents, provider, model,
     throw createRequestError("AI analysis unavailable â€” the local analysis server health check failed.", 503, "ai-server-unavailable");
   }
   const status = await statusResponse.json();
-  let requestedProvider = provider;
-  let requestedModel = model;
-  if (provider && String(provider).includes(":")) {
-    const parts = String(provider).split(":");
-    requestedProvider = parts[0];
-    requestedModel = parts.slice(1).join(":");
-  }
-  const resolvedProvider = requestedProvider || status.provider;
+  const resolvedProvider = provider || status.provider;
   const configuredSelection = status.configured_providers?.find((item) => item.provider === resolvedProvider);
-  const resolvedModel = requestedModel || model || configuredSelection?.model || (resolvedProvider === status.provider ? status.model : null);
+  const resolvedModel = model || configuredSelection?.model || (resolvedProvider === status.provider ? status.model : null);
   const manifest = [];
   const storedFiles = [];
 

@@ -18,47 +18,11 @@ const uniqueSections = (sections) => sections.filter((section, index, items) =>
 const parseNumber = (value) => {
   if (typeof value === "number") return Number.isFinite(value) ? value : null;
   if (!isPresent(value)) return null;
-  const str = String(value).trim();
-  const negative = /^\s*\(/.test(str);
-  // If string contains a percentage with a separate minimum/maximum (e.g. "10% ... min 750"), do not concatenate numbers
-  if (/\d+%\s*.*?\b(?:min|max|minimum|maximum)\b/i.test(str)) {
-    return null;
-  }
-  const parsed = Number(str.replace(/[^0-9.-]/g, ""));
+  const negative = /^\s*\(/.test(String(value));
+  const parsed = Number(String(value).replace(/[^0-9.-]/g, ""));
   if (!Number.isFinite(parsed)) return null;
   return negative ? -Math.abs(parsed) : parsed;
 };
-
-export function evaluateCompoundDeductible(deductibleRaw, claimAmount) {
-  if (typeof deductibleRaw === "number") return Number.isFinite(deductibleRaw) ? deductibleRaw : null;
-  if (!isPresent(deductibleRaw)) return null;
-  const text = String(deductibleRaw).trim();
-
-  // Match compound percentage with minimum/maximum, e.g. "10% of claim value, minimum EUR 750.00"
-  const percentMatch = text.match(/(\d+(?:\.\d+)?)\s*%/);
-  const minMatch = text.match(/\bmin(?:imum)?\.?\s*(?:of\s*)?(?:[A-Z]{3}\s*)?(\d+(?:,\d{3})*(?:\.\d+)?)/i);
-  const maxMatch = text.match(/\bmax(?:imum)?\.?\s*(?:of\s*)?(?:[A-Z]{3}\s*)?(\d+(?:,\d{3})*(?:\.\d+)?)/i);
-
-  if (percentMatch) {
-    const percent = parseFloat(percentMatch[1]);
-    const minCap = minMatch ? parseFloat(minMatch[1].replace(/,/g, "")) : null;
-    const maxCap = maxMatch ? parseFloat(maxMatch[1].replace(/,/g, "")) : null;
-
-    if (claimAmount !== null && Number.isFinite(claimAmount)) {
-      let calculated = claimAmount * (percent / 100);
-      if (minCap !== null && Number.isFinite(minCap)) {
-        calculated = Math.max(calculated, minCap);
-      }
-      if (maxCap !== null && Number.isFinite(maxCap)) {
-        calculated = Math.min(calculated, maxCap);
-      }
-      return Number(calculated.toFixed(2));
-    }
-    if (minCap !== null) return minCap;
-  }
-
-  return parseNumber(text);
-}
 
 const normalizeComparable = (value) => {
   const text = String(value || "").trim();
