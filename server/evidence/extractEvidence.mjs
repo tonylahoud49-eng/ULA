@@ -229,6 +229,9 @@ async function extractEmail(buffer) {
   return [{ page: null, text: normalizeWhitespace(`${headers}\n\n${message.text || message.html || ""}`) }];
 }
 
+const EVIDENCE_CACHE = new Map();
+const MAX_CACHE_ENTRIES = 50;
+
 export async function extractEvidenceFile(file, metadata = {}) {
   const extension = path.extname(file.originalname || metadata.file_name || "").toLowerCase();
   const mimeType = String(file.mimetype || metadata.file_mime_type || "application/octet-stream").toLowerCase();
@@ -240,11 +243,23 @@ export async function extractEvidenceFile(file, metadata = {}) {
     size: file.size,
   };
 
+  const cacheKey = file.buffer ? `${file.buffer.length}:${base.document_name}` : null;
+  if (cacheKey && EVIDENCE_CACHE.has(cacheKey)) {
+    const cached = EVIDENCE_CACHE.get(cacheKey);
+    return {
+      ...cached,
+      document_id: base.document_id,
+      category: base.category,
+      document_name: base.document_name,
+    };
+  }
+
+  let result;
   try {
     if (mimeType === "application/pdf" || extension === ".pdf") {
       const { pages, visionImages } = await extractPdf(file.buffer);
       const searchablePageCount = pages.filter((page) => page.text).length;
-      return {
+      result = {
         ...base,
         kind: "pdf",
         pages,
@@ -254,10 +269,9 @@ export async function extractEvidenceFile(file, metadata = {}) {
         vision_image_count: visionImages.length,
         extraction_status: searchablePageCount ? "extracted" : "vision-required",
       };
-    }
-    if (mimeType.includes("wordprocessingml") || extension === ".docx") {
+    } else if (mimeType.includes("wordprocessingml") || extension === ".docx") {
       const extracted = await extractDocx(file.buffer);
-      return {
+      result = {
         ...base,
         kind: "document",
         pages: extracted.pages,
@@ -265,28 +279,37 @@ export async function extractEvidenceFile(file, metadata = {}) {
         embedded_image_count: extracted.embeddedImages.length,
         extraction_status: extracted.pages[0].text || extracted.embeddedImages.length ? "extracted" : "vision-required",
       };
+    } else if (mimeType.includes("spreadsheetml") || extension === ".xlsx") {
+      result = { ...base, kind: "spreadsheet", pages: await extractWorkbook(file.buffer), extraction_status: "extracted" };
+    } else if (mimeType === "message/rfc822" || extension === ".eml") {
+      result = { ...base, kind: "email", pages: await extractEmail(file.buffer), extraction_status: "extracted" };
+    } else if (mimeType.startsWith("image/") || IMAGE_EXTENSIONS.has(extension)) {
+      result = { ...base, kind: "image", pages: [], extraction_status: "vision-required" };
+    } else if (mimeType.startsWith("text/") || TEXT_EXTENSIONS.has(extension)) {
+      result = { ...base, kind: "text", pages: [{ page: null, text: normalizeWhitespace(file.buffer.toString("utf8")) }], extraction_status: "extracted" };
+    } else {
+      result = { ...base, kind: "unsupported", pages: [], extraction_status: "unsupported", warning: `No text extractor is configured for ${extension || mimeType}.` };
     }
-    if (mimeType.includes("spreadsheetml") || extension === ".xlsx") {
-      return { ...base, kind: "spreadsheet", pages: await extractWorkbook(file.buffer), extraction_status: "extracted" };
+
+    if (cacheKey && result && result.extraction_status !== "failed" && result.extraction_status !== "unsupported") {
+      if (EVIDENCE_CACHE.size >= MAX_CACHE_ENTRIES) {
+        const oldestKey = EVIDENCE_CACHE.keys().next().value;
+        EVIDENCE_CACHE.delete(oldestKey);
+      }
+      EVIDENCE_CACHE.set(cacheKey, result);
     }
-    if (mimeType === "message/rfc822" || extension === ".eml") {
-      return { ...base, kind: "email", pages: await extractEmail(file.buffer), extraction_status: "extracted" };
-    }
-    if (mimeType.startsWith("image/") || IMAGE_EXTENSIONS.has(extension)) {
-      return { ...base, kind: "image", pages: [], extraction_status: "vision-required" };
-    }
-    if (mimeType.startsWith("text/") || TEXT_EXTENSIONS.has(extension)) {
-      return { ...base, kind: "text", pages: [{ page: null, text: normalizeWhitespace(file.buffer.toString("utf8")) }], extraction_status: "extracted" };
-    }
-    return { ...base, kind: "unsupported", pages: [], extraction_status: "unsupported", warning: `No text extractor is configured for ${extension || mimeType}.` };
+    return result;
   } catch (error) {
     return { ...base, kind: mimeType.startsWith("image/") ? "image" : "unreadable", pages: [], extraction_status: "failed", warning: error.message || "Evidence extraction failed." };
   }
 }
 
 export function evidenceText(evidence) {
-  return evidence.pages
-    .filter((part) => part.text)
+  if (typeof evidence?.extracted_text === "string" && (!evidence.pages || !evidence.pages.length)) {
+    return evidence.extracted_text;
+  }
+  return (evidence?.pages || [])
+    .filter((part) => part?.text)
     .map((part) => `${part.page ? `[Page ${part.page}]` : part.section ? `[${part.section}]` : "[Extracted text]"}\n${part.text}`)
     .join("\n\n");
 }

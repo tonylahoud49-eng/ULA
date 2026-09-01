@@ -8,8 +8,8 @@ async function extractFidelity() {
   for (const [name, file] of Object.entries(zip.files)) {
     if (name.startsWith("word/media/")) {
       const buffer = await file.async("nodebuffer");
-      console.log("File:", name, "Size:", buffer.length, "bytes");
-      const outPath = "samples/fidelity_" + name.replace("word/media/", "");
+      await fs.mkdir(".tmp", { recursive: true });
+      const outPath = ".tmp/fidelity_" + name.replace("word/media/", "");
       await fs.writeFile(outPath, buffer);
     }
   }

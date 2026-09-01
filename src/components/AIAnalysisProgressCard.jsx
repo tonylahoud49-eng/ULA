@@ -2,28 +2,9 @@ import React, { useEffect, useState } from "react";
 import { CheckCircle2 } from "lucide-react";
 
 export function formatModelDisplayName(provider, model) {
-  const p = String(provider || "").toLowerCase();
-  const m = String(model || "").toLowerCase();
-
-  if (p === "anthropic" || m.includes("claude") || m.includes("sonnet")) {
-    return `Anthropic · ${model || "Claude"}`;
-  }
-  if (p === "gemini" || m.includes("gemini")) {
-    if (m.includes("2.5-flash") || m.includes("2.5")) return "Gemini 2.5 Flash";
-    if (m.includes("1.5-pro") || m.includes("pro")) return "Gemini 1.5 Pro";
-    return `Gemini (${model || "Flash"})`;
-  }
-  if (p === "openai" || m.includes("gpt")) {
-    if (m.includes("5.6-terra") || m.includes("5.6")) return "GPT-5.6 Terra";
-    if (m.includes("4o-mini")) return "GPT-4o Mini";
-    if (m.includes("4o")) return "GPT-4o";
-    return `OpenAI (${model || "GPT-4o"})`;
-  }
-  if (p === "openrouter") {
-    const clean = String(model || "").split("/").pop() || model || "Gemma 4";
-    return `OpenRouter · ${clean}`;
-  }
-  return provider && model ? `${provider} / ${model}` : "Claude 3.5 Sonnet";
+  if (model && String(model).trim()) return String(model).trim();
+  if (provider && String(provider).trim()) return String(provider).trim();
+  return "AI Model";
 }
 
 const STAGES = [
@@ -40,7 +21,7 @@ const formatBytes = (value) => {
   return `${(bytes / (1024 * 1024)).toFixed(1)} MB`;
 };
 
-export default function AIAnalysisProgressCard({ progress, provider, model, preflight, className = "" }) {
+export default function AIAnalysisProgressCard({ progress, provider, model, preflight, onCancel, className = "" }) {
   const [aiStatus, setAiStatus] = useState(null);
 
   useEffect(() => {
@@ -93,6 +74,15 @@ export default function AIAnalysisProgressCard({ progress, provider, model, pref
             <span className="font-mono text-[0.72rem] font-semibold text-foreground">{modelLabel}</span>
           </div>
           <span className="font-mono text-sm font-bold text-primary">{percentage}%</span>
+          {onCancel && (
+            <button
+              type="button"
+              onClick={onCancel}
+              className="ml-2 inline-flex items-center rounded border border-destructive/30 bg-destructive/10 px-2 py-1 text-[0.68rem] font-semibold text-destructive hover:bg-destructive/20 focus:outline-hidden transition-colors"
+            >
+              Cancel
+            </button>
+          )}
         </div>
       </div>
 
