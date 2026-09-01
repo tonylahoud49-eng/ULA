@@ -14,12 +14,13 @@ import { Input } from "@/components/ui/input";
 import { Sparkles, Activity, CheckCircle2, AlertCircle, Loader2, Send } from "lucide-react";
 
 export const POPULAR_MODELS = [
+  { value: "openrouter:openrouter/auto", label: "openrouter/auto (Auto-route)", provider: "openrouter", model: "openrouter/auto", org: "OpenRouter" },
+  { value: "openrouter:meta-llama/llama-3.3-70b-instruct", label: "llama-3.3-70b-instruct", provider: "openrouter", model: "meta-llama/llama-3.3-70b-instruct", org: "OpenRouter" },
+  { value: "openrouter:deepseek/deepseek-chat", label: "deepseek-chat", provider: "openrouter", model: "deepseek/deepseek-chat", org: "OpenRouter" },
+  { value: "groq:openai/gpt-oss-120b", label: "gpt-oss-120b (Ultra-fast)", provider: "groq", model: "openai/gpt-oss-120b", org: "Groq" },
   { value: "gemini:gemini-3.6-flash", label: "gemini-3.6-flash", provider: "gemini", model: "gemini-3.6-flash", org: "Google" },
-  { value: "openrouter:openrouter/auto", label: "openrouter/auto", provider: "openrouter", model: "openrouter/auto", org: "OpenRouter" },
-  { value: "openrouter:minimax/minimax-m3:free", label: "minimax/minimax-m3:free", provider: "openrouter", model: "minimax/minimax-m3:free", org: "OpenRouter" },
   { value: "anthropic:claude-sonnet-4-6", label: "claude-sonnet-4-6", provider: "anthropic", model: "claude-sonnet-4-6", org: "Anthropic" },
   { value: "openai:gpt-4o", label: "gpt-4o", provider: "openai", model: "gpt-4o", org: "OpenAI" },
-  { value: "groq:llama-3.3-70b-versatile", label: "llama-3.3-70b-versatile", provider: "groq", model: "llama-3.3-70b-versatile", org: "Groq" },
   { value: "ollama:llama3.3", label: "llama3.3", provider: "ollama", model: "llama3.3", org: "Ollama" },
 ];
 
@@ -108,6 +109,9 @@ export default function AIModelSelector({
     setTesting(true);
     setTestResult(null);
 
+    const controller = new AbortController();
+    const timeoutId = setTimeout(() => controller.abort(), 10000);
+
     try {
       const res = await fetch("/api/ai/test-chat", {
         method: "POST",
@@ -117,14 +121,19 @@ export default function AIModelSelector({
           model: selectedItem.model,
           prompt: promptToSend,
         }),
+        signal: controller.signal,
       });
+      clearTimeout(timeoutId);
       const data = await res.json();
       setTestResult(data);
     } catch (err) {
+      clearTimeout(timeoutId);
       setTestResult({
         ok: false,
-        error: err.message || "Failed to reach AI server.",
-        latency_ms: 0,
+        error: err.name === "AbortError"
+          ? `Connection timed out after 10s. The model '${selectedItem.model}' is unreachable or rate-limited.`
+          : (err.message || "Failed to reach AI server."),
+        latency_ms: 10000,
       });
     } finally {
       setTesting(false);

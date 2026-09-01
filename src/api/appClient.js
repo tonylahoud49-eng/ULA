@@ -134,7 +134,7 @@ const syncToServer = () => {
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify(memoryDatabase),
     }).catch(() => {});
-  }, 200);
+  }, 50);
 };
 
 let authSyncTimer = null;
@@ -147,36 +147,44 @@ const syncAuthToServer = () => {
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify(memoryAuth),
     }).catch(() => {});
-  }, 200);
+  }, 50);
 };
 
-let serverDbLoaded = false;
 const loadFromServer = async () => {
-  if (typeof fetch === "undefined" || serverDbLoaded) return;
+  if (typeof fetch === "undefined") return;
   try {
     const res = await fetch("/api/db");
     if (res.ok) {
       const serverData = await res.json();
-      if (serverData && typeof serverData === "object" && Object.keys(serverData).length > 0) {
+      if (serverData && typeof serverData === "object") {
         if (!memoryDatabase) memoryDatabase = getMemoryDatabase();
-        let updated = false;
         for (const key of Object.keys(entityDefaults)) {
-          if (Array.isArray(serverData[key]) && serverData[key].length > 0) {
-            if (!memoryDatabase[key] || memoryDatabase[key].length === 0) {
-              memoryDatabase[key] = serverData[key];
-              rebuildEntityIndex(key);
-              updated = true;
-            }
+          if (Array.isArray(serverData[key])) {
+            memoryDatabase[key] = serverData[key];
+            rebuildEntityIndex(key);
           }
         }
-        if (updated) {
-          writeJson(DATABASE_KEY, memoryDatabase);
-        }
+        writeJson(DATABASE_KEY, memoryDatabase);
       }
     }
-    serverDbLoaded = true;
   } catch {
-    // Continue with local storage
+    // Continue with local storage if server offline
+  }
+};
+
+const loadAuthFromServer = async () => {
+  if (typeof fetch === "undefined") return;
+  try {
+    const res = await fetch("/api/auth-db");
+    if (res.ok) {
+      const serverAuth = await res.json();
+      if (serverAuth && typeof serverAuth === "object" && Array.isArray(serverAuth.accounts)) {
+        memoryAuth = serverAuth;
+        writeJson(AUTH_KEY, memoryAuth);
+      }
+    }
+  } catch {
+    // Continue with local
   }
 };
 
@@ -293,6 +301,7 @@ const prepareDatabase = () => {
   if (!databasePreparation) {
     databasePreparation = (async () => {
       await loadFromServer();
+      await loadAuthFromServer();
       await migrateLegacyDocumentContent();
     })().catch((error) => {
       databasePreparation = undefined;

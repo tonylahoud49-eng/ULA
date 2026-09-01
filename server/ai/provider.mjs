@@ -16,7 +16,7 @@ const PROVIDER_CONFIGS = {
   groq: {
     keyVar: "GROQ_API_KEY",
     modelVar: "GROQ_MODEL",
-    defaultModel: "llama-3.3-70b-versatile",
+    defaultModel: "openai/gpt-oss-120b",
     factory: createGroqProvider,
   },
   gemini: {
@@ -29,7 +29,7 @@ const PROVIDER_CONFIGS = {
   openrouter: {
     keyVar: "OPENROUTER_API_KEY",
     modelVar: "OPENROUTER_MODEL",
-    defaultModel: "openrouter/auto",
+    defaultModel: "meta-llama/llama-3.3-70b-instruct",
     factory: createOpenRouterProvider,
   },
   ollama: {
@@ -48,7 +48,7 @@ const PROVIDER_CONFIGS = {
 };
 
 /** Default fallback order for cloud providers. */
-const CLOUD_FALLBACK_ORDER = ["anthropic", "gemini", "openrouter", "openai"];
+const CLOUD_FALLBACK_ORDER = ["openrouter", "groq", "gemini", "anthropic", "openai"];
 
 function statusForProvider(name, env) {
   const config = PROVIDER_CONFIGS[name];

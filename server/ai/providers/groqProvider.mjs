@@ -13,7 +13,7 @@ import { SYSTEM_INSTRUCTIONS, promptText, toDataUrl, enforceGrounding, parseStru
  */
 
 const GROQ_BASE_URL = "https://api.groq.com/openai/v1";
-const DEFAULT_MODEL = "llama-3.3-70b-versatile";
+const DEFAULT_MODEL = "openai/gpt-oss-120b";
 
 export function createGroqProvider({ apiKey, model, client } = {}) {
   const resolvedModel = model || DEFAULT_MODEL;

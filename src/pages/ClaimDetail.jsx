@@ -144,16 +144,38 @@ const collectAppendixImages = async (documents, normalizedRecord) => {
   return images;
 };
 
+const renderHighlightedOutput = (children) => {
+  if (typeof children === "string") {
+    if (/not established from reviewed evidence|requires confirmation|not testable from current evidence|insufficient substantive|not established across/i.test(children)) {
+      return (
+        <span className="inline-flex items-center gap-1.5 rounded border border-amber-300 bg-amber-50 px-2 py-0.5 text-xs font-semibold text-amber-900">
+          <span className="inline-block h-1.5 w-1.5 rounded-full bg-amber-500 shrink-0" />
+          {children}
+        </span>
+      );
+    }
+    if (/\[Conflict|human review required|withheld because/i.test(children)) {
+      return (
+        <span className="inline-flex items-center gap-1.5 rounded border border-rose-300 bg-rose-50 px-2 py-0.5 text-xs font-semibold text-rose-900">
+          <span className="inline-block h-1.5 w-1.5 rounded-full bg-rose-500 shrink-0" />
+          {children}
+        </span>
+      );
+    }
+  }
+  return children;
+};
+
 const markdownComponents = {
-  p: ({node, ...props}) => <p dir="auto" {...props} />,
+  p: ({node, children, ...props}) => <p dir="auto" {...props}>{renderHighlightedOutput(children)}</p>,
   h1: ({node, ...props}) => <h1 dir="auto" {...props} />,
   h2: ({node, ...props}) => <h2 dir="auto" {...props} />,
   h3: ({node, ...props}) => <h3 dir="auto" {...props} />,
   h4: ({node, ...props}) => <h4 dir="auto" {...props} />,
   h5: ({node, ...props}) => <h5 dir="auto" {...props} />,
   h6: ({node, ...props}) => <h6 dir="auto" {...props} />,
-  li: ({node, ...props}) => <li dir="auto" {...props} />,
-  td: ({node, ...props}) => <td dir="auto" {...props} />,
+  li: ({node, children, ...props}) => <li dir="auto" {...props}>{renderHighlightedOutput(children)}</li>,
+  td: ({node, children, ...props}) => <td dir="auto" {...props}>{renderHighlightedOutput(children)}</td>,
   th: ({node, ...props}) => <th dir="auto" {...props} />
 };
 
@@ -941,25 +963,6 @@ function ReportSection({ claimId, claim, documents, reports, onChanged }) {
                 listWrap.appendChild(li.cloneNode(true));
                 units.push({ node: listWrap });
               }
-            } else if (child.tagName === "TABLE" || child.querySelector("table")) {
-              const table = child.tagName === "TABLE" ? child : child.querySelector("table");
-              const rows = Array.from(table.querySelectorAll("tbody tr"));
-              if (rows.length > 5) {
-                const thead = table.querySelector("thead")?.cloneNode(true);
-                for (const tr of rows) {
-                  const tableWrap = document.createElement("table");
-                  tableWrap.className = table.className || "report-table";
-                  tableWrap.style.width = "100%";
-                  tableWrap.style.margin = "4px 0";
-                  if (thead) tableWrap.appendChild(thead.cloneNode(true));
-                  const tbody = document.createElement("tbody");
-                  tbody.appendChild(tr.cloneNode(true));
-                  tableWrap.appendChild(tbody);
-                  units.push({ node: tableWrap });
-                }
-                continue;
-              }
-              units.push({ node: child.cloneNode(true) });
             } else {
               units.push({ node: child.cloneNode(true) });
             }
@@ -1370,27 +1373,27 @@ function ReportSection({ claimId, claim, documents, reports, onChanged }) {
                     <tbody>
                       <tr>
                         <td style={{ width: "30%", fontWeight: "bold", background: "#f3f7f4" }}>Insurer / Applicant</td>
-                        <td>{getReportData(exportReport).insurer}</td>
+                        <td>{renderHighlightedOutput(getReportData(exportReport).insurer || "Not established from reviewed evidence")}</td>
                       </tr>
                       <tr>
                         <td style={{ fontWeight: "bold", background: "#f3f7f4" }}>Insured / Assured</td>
-                        <td>{getReportData(exportReport).insured_name}</td>
+                        <td>{renderHighlightedOutput(getReportData(exportReport).insured_name || "Not established from reviewed evidence")}</td>
                       </tr>
                       <tr>
                         <td style={{ fontWeight: "bold", background: "#f3f7f4" }}>Broker / Agent</td>
-                        <td>{getReportData(exportReport).broker || "Direct"}</td>
+                        <td>{renderHighlightedOutput(getReportData(exportReport).broker || "Direct")}</td>
                       </tr>
                       <tr>
                         <td style={{ fontWeight: "bold", background: "#f3f7f4" }}>Business Line</td>
-                        <td>{getReportData(exportReport).business_line}</td>
+                        <td>{renderHighlightedOutput(getReportData(exportReport).business_line || "Not established from reviewed evidence")}</td>
                       </tr>
                       <tr>
                         <td style={{ fontWeight: "bold", background: "#f3f7f4" }}>Claimed Amount</td>
-                        <td>{formatCurrencyAmount(getReportData(exportReport).currency, getReportData(exportReport).claimed_amount)}</td>
+                        <td>{renderHighlightedOutput(formatCurrencyAmount(getReportData(exportReport).currency, getReportData(exportReport).claimed_amount))}</td>
                       </tr>
                       <tr>
                         <td style={{ fontWeight: "bold", background: "#f3f7f4" }}>Net Adjusted Amount</td>
-                        <td>{formatCurrencyAmount(getReportData(exportReport).currency, getReportData(exportReport).adjusted_amount)}</td>
+                        <td>{renderHighlightedOutput(formatCurrencyAmount(getReportData(exportReport).currency, getReportData(exportReport).adjusted_amount))}</td>
                       </tr>
                     </tbody>
                   </table>

@@ -44,34 +44,195 @@ const anthropicAnalysisCacheMs = Number(process.env.ANTHROPIC_DUPLICATE_CACHE_MS
 app.disable("x-powered-by");
 app.use(express.json({ limit: "50mb" }));
 
-const DATA_DIR = path.resolve(root, ".data");
-const DB_FILE = path.join(DATA_DIR, "claims_db.json");
-const AUTH_FILE = path.join(DATA_DIR, "auth_db.json");
+import { diskDb, UPLOADS_DIR, DATA_DIR, ensureDirectories, ENTITY_NAMES } from "./db/diskDb.mjs";
 
-function ensureDataDir() {
-  if (!fs.existsSync(DATA_DIR)) {
-    fs.mkdirSync(DATA_DIR, { recursive: true });
+ensureDirectories();
+
+const diskStorage = multer.diskStorage({
+  destination: (_req, _file, cb) => {
+    ensureDirectories();
+    cb(null, UPLOADS_DIR);
+  },
+  filename: (_req, file, cb) => {
+    const unique = `${Date.now()}_${Math.random().toString(36).slice(2, 8)}`;
+    const safeName = (file.originalname || "document").replace(/[^a-zA-Z0-9._-]/g, "_");
+    cb(null, `${unique}_${safeName}`);
+  },
+});
+const diskUpload = multer({ storage: diskStorage, limits: { fileSize: maxFileBytes, files: maxFiles } });
+
+// --- Entity REST Endpoints ---
+app.get("/api/entities/:entity", (request, response) => {
+  const { entity } = request.params;
+  if (!ENTITY_NAMES.includes(entity)) {
+    return response.status(400).json({ error: `Unknown entity: ${entity}` });
   }
-}
-
-app.get("/api/db", (_request, response) => {
-  ensureDataDir();
   try {
-    if (fs.existsSync(DB_FILE)) {
-      const data = fs.readFileSync(DB_FILE, "utf-8");
-      return response.json(JSON.parse(data));
+    const items = diskDb.list(entity, request.query);
+    return response.json(items);
+  } catch (err) {
+    return response.status(500).json({ error: err.message });
+  }
+});
+
+app.get("/api/entities/:entity/:id", (request, response) => {
+  const { entity, id } = request.params;
+  if (!ENTITY_NAMES.includes(entity)) {
+    return response.status(400).json({ error: `Unknown entity: ${entity}` });
+  }
+  try {
+    const item = diskDb.get(entity, id);
+    if (!item) return response.status(404).json({ error: `Not found` });
+    return response.json(item);
+  } catch (err) {
+    return response.status(500).json({ error: err.message });
+  }
+});
+
+app.post("/api/entities/:entity", (request, response) => {
+  const { entity } = request.params;
+  if (!ENTITY_NAMES.includes(entity)) {
+    return response.status(400).json({ error: `Unknown entity: ${entity}` });
+  }
+  try {
+    const created = diskDb.create(entity, request.body || {});
+    return response.status(201).json(created);
+  } catch (err) {
+    return response.status(500).json({ error: err.message });
+  }
+});
+
+app.put("/api/entities/:entity/:id", (request, response) => {
+  const { entity, id } = request.params;
+  if (!ENTITY_NAMES.includes(entity)) {
+    return response.status(400).json({ error: `Unknown entity: ${entity}` });
+  }
+  try {
+    const updated = diskDb.update(entity, id, request.body || {});
+    return response.json(updated);
+  } catch (err) {
+    return response.status(500).json({ error: err.message });
+  }
+});
+
+app.delete("/api/entities/:entity/:id", (request, response) => {
+  const { entity, id } = request.params;
+  if (!ENTITY_NAMES.includes(entity)) {
+    return response.status(400).json({ error: `Unknown entity: ${entity}` });
+  }
+  try {
+    const deleted = diskDb.delete(entity, id);
+    if (!deleted) return response.status(404).json({ error: "Not found" });
+    return response.json(deleted);
+  } catch (err) {
+    return response.status(500).json({ error: err.message });
+  }
+});
+
+// --- Document Physical Storage Endpoints ---
+app.post("/api/documents/upload", diskUpload.single("file"), (request, response) => {
+  if (!request.file) {
+    return response.status(400).json({ error: "No file provided in request" });
+  }
+
+  const { filename, originalname, mimetype, size } = request.file;
+  const storageKey = filename;
+  const fileUrl = `/api/documents/file/${filename}`;
+
+  return response.status(201).json({
+    storage_key: storageKey,
+    file_url: fileUrl,
+    file_name: originalname,
+    file_size: size,
+    file_mime_type: mimetype,
+    storage_provider: "server_disk",
+    reference: `server-document:${storageKey}`,
+  });
+});
+
+app.get("/api/documents/file/:filename", (request, response) => {
+  try {
+    const { filename } = request.params;
+    const safeFilename = path.basename(filename);
+    const filePath = path.resolve(UPLOADS_DIR, safeFilename);
+
+    if (!fs.existsSync(filePath)) {
+      return response.status(404).json({ error: "Document file not found on server" });
     }
-    return response.json({});
+
+    const stat = fs.statSync(filePath);
+    response.setHeader("Content-Length", stat.size);
+    response.setHeader("Cache-Control", "public, max-age=86400");
+    if (safeFilename.endsWith(".pdf")) {
+      response.setHeader("Content-Type", "application/pdf");
+    } else if (safeFilename.endsWith(".docx")) {
+      response.setHeader("Content-Type", "application/vnd.openxmlformats-officedocument.wordprocessingml.document");
+    } else if (safeFilename.endsWith(".xlsx")) {
+      response.setHeader("Content-Type", "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet");
+    } else if (safeFilename.endsWith(".png")) {
+      response.setHeader("Content-Type", "image/png");
+    } else if (safeFilename.endsWith(".jpg") || safeFilename.endsWith(".jpeg")) {
+      response.setHeader("Content-Type", "image/jpeg");
+    }
+
+    const stream = fs.createReadStream(filePath);
+    stream.on("error", (streamErr) => {
+      if (!response.headersSent) {
+        response.status(500).json({ error: streamErr.message });
+      }
+    });
+    return stream.pipe(response);
+  } catch (err) {
+    return response.status(500).json({ error: err.message });
+  }
+});
+
+app.get("/api/documents/:key", (request, response) => {
+  const { key } = request.params;
+  const safeKey = path.basename(key);
+  const filePath = path.join(UPLOADS_DIR, safeKey);
+
+  if (!fs.existsSync(filePath)) {
+    return response.status(404).json({ error: "Document not found" });
+  }
+
+  const stats = fs.statSync(filePath);
+  return response.json({
+    storage_key: safeKey,
+    file_url: `/api/documents/file/${safeKey}`,
+    size: stats.size,
+    updated_at: stats.mtime.toISOString(),
+  });
+});
+
+app.delete("/api/documents/:key", (request, response) => {
+  const { key } = request.params;
+  const safeKey = path.basename(key);
+  const filePath = path.join(UPLOADS_DIR, safeKey);
+
+  try {
+    if (fs.existsSync(filePath)) {
+      fs.unlinkSync(filePath);
+    }
+    return response.json({ ok: true, deleted: safeKey });
+  } catch (err) {
+    return response.status(500).json({ error: err.message });
+  }
+});
+
+// Full DB sync backward compatibility
+app.get("/api/db", (_request, response) => {
+  try {
+    return response.json(diskDb.getClaimsDb());
   } catch (err) {
     return response.status(500).json({ error: err.message });
   }
 });
 
 app.post("/api/db", (request, response) => {
-  ensureDataDir();
   try {
     const payload = request.body || {};
-    fs.writeFileSync(DB_FILE, JSON.stringify(payload, null, 2), "utf-8");
+    diskDb.setFullClaimsDb(payload);
     return response.json({ ok: true, timestamp: Date.now() });
   } catch (err) {
     return response.status(500).json({ error: err.message });
@@ -79,23 +240,17 @@ app.post("/api/db", (request, response) => {
 });
 
 app.get("/api/auth-db", (_request, response) => {
-  ensureDataDir();
   try {
-    if (fs.existsSync(AUTH_FILE)) {
-      const data = fs.readFileSync(AUTH_FILE, "utf-8");
-      return response.json(JSON.parse(data));
-    }
-    return response.json({});
+    return response.json(diskDb.getAuthDb());
   } catch (err) {
     return response.status(500).json({ error: err.message });
   }
 });
 
 app.post("/api/auth-db", (request, response) => {
-  ensureDataDir();
   try {
     const payload = request.body || {};
-    fs.writeFileSync(AUTH_FILE, JSON.stringify(payload, null, 2), "utf-8");
+    diskDb.setFullAuthDb(payload);
     return response.json({ ok: true });
   } catch (err) {
     return response.status(500).json({ error: err.message });
@@ -105,7 +260,7 @@ app.post("/api/auth-db", (request, response) => {
 const LOGS_FILE = path.join(DATA_DIR, "ai_logs.json");
 
 function loadAiLogs() {
-  ensureDataDir();
+  ensureDirectories();
   try {
     if (fs.existsSync(LOGS_FILE)) {
       const data = fs.readFileSync(LOGS_FILE, "utf-8");
@@ -121,7 +276,7 @@ function loadAiLogs() {
 const AI_LOGS = loadAiLogs();
 
 function persistAiLogs() {
-  ensureDataDir();
+  ensureDirectories();
   try {
     fs.writeFileSync(LOGS_FILE, JSON.stringify(AI_LOGS, null, 2), "utf-8");
   } catch {

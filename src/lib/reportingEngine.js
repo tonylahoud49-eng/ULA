@@ -225,12 +225,12 @@ function deterministicEvidenceCandidates(evidence = []) {
       capture("insured", /Assured\s+Name\s*:\s*(.+?)(?=\n|\s+(?:Reassured|Period)\s*:)/i, normalizeEntityName);
       capture("insured", /(?:^|\n)Insured\s+((?!(?:commences|attaches|continues|is|shall|means)\b).+?)(?=\n|\s+Address\s)/i, normalizeEntityName);
       capture("insured", /Policy Holder\s+(M\/s\..+?)(?=\s+Cargo Insurance)/i, normalizeEntityName);
-      capture("insurer", /Insurer\s*:\s*(.+?)(?=\n|\s+(?:Broker|Assured|Policy))/i);
-      capture("reassured", /Reassured\s*:\s*(.+?)(?=\n|\s+(?:Period|Type)\s*:)/i, normalizeEntityName);
-      capture("reinsurer", /Reinsurer\s*:\s*(.+?)(?=\n|\s+(?:Reassured|Assured|Period|Policy)\s*:)/i, normalizeEntityName);
+      capture("insurer", /\bInsurer\s*:\s*([A-Za-z0-9 &.,'-]+?)(?=\n|\s+(?:Broker|Assured|Policy))/i, normalizeEntityName);
+      capture("reassured", /\bReassured\s*:\s*([A-Za-z0-9 &.,'-]+?)(?=\n|\s+(?:Period|Type)\s*:)/i, normalizeEntityName);
+      capture("reinsurer", /\bReinsurer\s*:\s*([A-Za-z0-9 &.,'-]+?)(?=\n|\s+(?:Reassured|Assured|Period|Policy)\s*:)/i, normalizeEntityName);
       capture("insurer", /\bWe,\s+([A-Z][A-Za-z &.-]+Insurance(?:\s+[A-Z.]+)?)/i);
       capture("insurer", /\b(VICTOIRE)\s+(?:sal\s+)?Compagnie d['â€™]assurances/i);
-      capture("broker", /Broker\s*:\s*(.+?)(?=\n|\s+(?:Assured|Period|Policy))/i);
+      capture("broker", /\bBroker\s*:\s*([A-Za-z0-9 &.,'-]+?)(?=\n|\s+(?:Assured|Period|Policy))/i, normalizeEntityName);
       capture("policy_period", /Period of Insurance\s*:\s*(.+?)(?=\n|\s+(?:Conveyance|Coverage|Deductible))/i);
       capture("policy_period", /(?:^|\n)Period\s*:\s*(.+?)(?=\n|\s+Cancellation Provision\s*:)/i);
       capture("conveyance_mode", /Conveyances?\s*:\s*([^\n]+)/i);

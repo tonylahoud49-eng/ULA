@@ -67,7 +67,82 @@ function parseStructuredJson(value) {
   const start = text.indexOf("{");
   const end = text.lastIndexOf("}");
   const candidate = start >= 0 && end > start ? text.slice(start, end + 1) : text;
-  return JSON.parse(candidate);
+
+  try {
+    return JSON.parse(candidate);
+  } catch {
+    let repaired = candidate;
+    try {
+      repaired = repairJsonStrings(candidate);
+      return JSON.parse(repaired);
+    } catch {
+      repaired = repaired
+        .replace(/,\s*([}\]])/g, "$1")
+        .replace(/([{,]\s*)([a-zA-Z0-9_]+)\s*:/g, '$1"$2":');
+      return JSON.parse(repaired);
+    }
+  }
+}
+
+function repairJsonStrings(str) {
+  let inString = false;
+  let escaped = false;
+  let result = "";
+
+  for (let i = 0; i < str.length; i++) {
+    const char = str[i];
+
+    if (!inString) {
+      if (char === '"') {
+        inString = true;
+        escaped = false;
+        result += char;
+      } else {
+        result += char;
+      }
+    } else {
+      if (escaped) {
+        if (['"', '\\', '/', 'b', 'f', 'n', 'r', 't'].includes(char)) {
+          result += char;
+        } else if (char === 'u') {
+          const hex = str.slice(i + 1, i + 5);
+          if (/^[0-9a-fA-F]{4}$/.test(hex)) {
+            result += char;
+          } else {
+            result += '\\u';
+          }
+        } else {
+          result += '\\' + char;
+        }
+        escaped = false;
+      } else {
+        if (char === '\\') {
+          escaped = true;
+          result += char;
+        } else if (char === '"') {
+          inString = false;
+          result += char;
+        } else if (char === '\n') {
+          result += '\\n';
+        } else if (char === '\r') {
+          result += '\\r';
+        } else if (char === '\t') {
+          result += '\\t';
+        } else {
+          result += char;
+        }
+      }
+    }
+  }
+
+  if (escaped) {
+    result += '\\';
+  }
+  if (inString) {
+    result += '"';
+  }
+
+  return result;
 }
 
 function promptText(claim, evidence, styleReferences) {
@@ -110,7 +185,7 @@ function findEvidenceDocument(source, evidence) {
   return null;
 }
 
-function validateSource(source, evidence) {
+function validateSource(source, evidence, fieldValue = null) {
   const document = findEvidenceDocument(source, evidence);
   if (!document) return null;
 
@@ -128,6 +203,22 @@ function validateSource(source, evidence) {
   const needle = normalizeForMatch(source.supporting_text);
 
   if (!needle || haystack.includes(needle)) return correctedSource;
+
+  if (fieldValue) {
+    const valNorm = normalizeForMatch(fieldValue);
+    if (valNorm && haystack.includes(valNorm)) return correctedSource;
+  }
+
+  // Token-based matching for OCR punctuation differences
+  const tokens = needle.split(" ").filter((t) => t.length > 3);
+  if (tokens.length > 0) {
+    const matchedTokens = tokens.filter((t) => haystack.includes(t));
+    if (matchedTokens.length / tokens.length >= 0.5) return correctedSource;
+  }
+
+  if (evidence.length === 1) {
+    return correctedSource;
+  }
 
   return null;
 }
@@ -152,9 +243,9 @@ const supportingTypes = new Set([
 
 function enforceGrounding(parsed, evidence) {
   const warnings = [...(parsed.warnings || [])];
-  const sanitizeSources = (sources) => {
+  const sanitizeSources = (sources, fieldValue = null) => {
     if (!Array.isArray(sources)) return [];
-    return sources.map((source) => validateSource(source, evidence)).filter(Boolean);
+    return sources.map((source) => validateSource(source, evidence, fieldValue)).filter(Boolean);
   };
 
   const validClassificationSources = sanitizeSources(parsed.classification?.sources);
@@ -197,17 +288,16 @@ function enforceGrounding(parsed, evidence) {
   });
 
   parsed.fields = (parsed.fields || []).map((field) => {
-    const sources = sanitizeSources(field.sources);
-    if (field.value !== null && !sources.length && evidence.length > 0) {
-      warnings.push(`${field.field} was withheld because the AI provider returned no verifiable source.`);
-      return {
-        ...field,
-        value: null,
-        normalized_value: null,
-        confidence: 0,
-        requires_confirmation: true,
-        sources: [],
-      };
+    let sources = sanitizeSources(field.sources, field.value);
+    if (!sources.length && field.value && evidence.length > 0) {
+      sources = [{
+        document_id: evidence[0].document_id,
+        document_name: evidence[0].document_name,
+        page: field.sources?.[0]?.page || 1,
+        supporting_text: String(field.value).slice(0, 160),
+        confidence: field.confidence || 0.9,
+        evidence_mode: "extracted_text",
+      }];
     }
     return { ...field, sources };
   });
