@@ -4,22 +4,72 @@ import { appClient } from "@/api/appClient";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
-import { LogIn, Mail, Lock, Loader2 } from "lucide-react";
+import { LogIn, Mail, Lock, Loader2, Users, UserCheck, CheckCircle2 } from "lucide-react";
 import AuthLayout from "@/components/AuthLayout";
-import GoogleIcon from "@/components/GoogleIcon";
 import { safeReturnTo } from "@/lib/authReturnTo";
+
+const TEST_TEAM_MEMBERS = [
+  {
+    name: "Petro Zaarour",
+    designation: "Director",
+    email: "petro.zaarour@unitedlossadjusters.com",
+    role: "Admin",
+    roleColor: "bg-amber-50 text-amber-800 border-amber-300",
+  },
+  {
+    name: "Annie Abdel Massih",
+    designation: "Claims Director",
+    email: "annie.abdelmassih@unitedlossadjusters.com",
+    role: "Admin",
+    roleColor: "bg-amber-50 text-amber-800 border-amber-300",
+  },
+  {
+    name: "Estefani Haddad",
+    designation: "Claims Handler",
+    email: "estefani.haddad@unitedlossadjusters.com",
+    role: "Handler",
+    roleColor: "bg-emerald-50 text-emerald-800 border-emerald-300",
+  },
+  {
+    name: "Hovig Kalandjian",
+    designation: "Marine & Cargo Senior Surveyor",
+    email: "hovig.kalandjian@unitedlossadjusters.com",
+    role: "Senior Surveyor",
+    roleColor: "bg-blue-50 text-blue-800 border-blue-300",
+  },
+  {
+    name: "Feyez Dghayli",
+    designation: "Technical Specialist",
+    email: "feyez.dghayli@unitedlossadjusters.com",
+    role: "Specialist",
+    roleColor: "bg-indigo-50 text-indigo-800 border-indigo-300",
+  },
+  {
+    name: "Rana Rizk",
+    designation: "Claims Handler",
+    email: "Rana.Rizk@unitedlossadjusters.com",
+    role: "Handler",
+    roleColor: "bg-emerald-50 text-emerald-800 border-emerald-300",
+  },
+  {
+    name: "Fares Fares",
+    designation: "Surveyor",
+    email: "Fares.Fares@unitedlossadjusters.com",
+    role: "Surveyor",
+    roleColor: "bg-blue-50 text-blue-800 border-blue-300",
+  },
+];
 
 export default function Login() {
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
   const [error, setError] = useState("");
   const [loading, setLoading] = useState(false);
-  const [showGoogleMock, setShowGoogleMock] = useState(false);
-  const [customGoogleEmail, setCustomGoogleEmail] = useState("");
-  const [customGoogleName, setCustomGoogleName] = useState("");
-  
-  // Post-login destination (e.g. the MCP OAuth consent page sends users here
-  // with returnTo so the grant flow can resume). Same-origin paths only.
+  const [showTeamModal, setShowTeamModal] = useState(false);
+  const [customName, setCustomName] = useState("");
+  const [customEmail, setCustomEmail] = useState("");
+
+  // Post-login destination
   const returnTo = safeReturnTo();
 
   const handleSubmit = async (e) => {
@@ -36,15 +86,15 @@ export default function Login() {
     }
   };
 
-  const handleGoogleLogin = (selectedEmail, selectedName) => {
-    appClient.auth.loginWithProvider("google", returnTo, selectedEmail, selectedName);
+  const handleQuickLogin = (selectedEmail, selectedName) => {
+    appClient.auth.loginWithProvider("quick_test", returnTo, selectedEmail, selectedName);
   };
 
   return (
     <AuthLayout
       icon={LogIn}
       title="Welcome back"
-      subtitle="Log in to your account"
+      subtitle="Log in to United Loss Adjusters & Surveyors"
       footer={
         <>
           Don't have an account?{" "}
@@ -59,93 +109,86 @@ export default function Login() {
     >
       <Button
         variant="outline"
-        className="w-full h-12 text-sm font-medium mb-6"
-        onClick={() => setShowGoogleMock(true)}
+        className="w-full h-12 text-sm font-semibold mb-6 border-primary/40 hover:bg-primary/5 text-primary flex items-center justify-center gap-2"
+        onClick={() => setShowTeamModal(true)}
       >
-        <GoogleIcon className="w-5 h-5 mr-2" />
-        Continue with Google
+        <Users className="w-5 h-5 text-primary" />
+        Test Sign In (Team Members)
       </Button>
 
-      {showGoogleMock && (
+      {showTeamModal && (
         <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 backdrop-blur-sm p-4">
-          <div className="bg-card border w-full max-w-md rounded-lg shadow-xl p-6 relative">
-            <h3 className="font-heading text-xl font-bold mb-2">Google Single Sign-On</h3>
-            <p className="text-xs text-muted-foreground mb-4">Choose a mock identity to simulate the Google workspace sign-in flow.</p>
-            
-            <div className="space-y-2 mb-6">
+          <div className="bg-card border w-full max-w-lg rounded-xl shadow-2xl p-6 relative max-h-[90vh] flex flex-col">
+            <div className="flex items-center justify-between pb-3 border-b mb-4">
+              <div>
+                <h3 className="font-heading text-xl font-bold flex items-center gap-2">
+                  <UserCheck className="h-5 w-5 text-primary" />
+                  Test Sign In · ULA Team Members
+                </h3>
+                <p className="text-xs text-muted-foreground mt-0.5">Select any team member to sign in immediately.</p>
+              </div>
               <button
                 type="button"
-                onClick={() => handleGoogleLogin("admin@ula.com", "ULA Administrator")}
-                className="w-full text-left p-3 border rounded-md hover:bg-muted/50 transition-colors flex justify-between items-center"
+                onClick={() => setShowTeamModal(false)}
+                className="text-muted-foreground hover:text-foreground text-sm font-semibold px-2 py-1 rounded-md hover:bg-muted"
               >
-                <div>
-                  <div className="font-semibold text-sm">Sign in as Administrator</div>
-                  <div className="text-xs text-muted-foreground">admin@ula.com (Pre-approved Admin)</div>
-                </div>
-                <span className="text-[10px] bg-amber-50 text-amber-700 font-semibold px-2 py-0.5 border border-amber-200 rounded">Admin</span>
+                ✕
               </button>
+            </div>
 
-              <button
-                type="button"
-                onClick={() => handleGoogleLogin("john.doe@ula.com", "John Doe")}
-                className="w-full text-left p-3 border rounded-md hover:bg-muted/50 transition-colors flex justify-between items-center"
-              >
-                <div>
-                  <div className="font-semibold text-sm">Sign in with Corporate Account</div>
-                  <div className="text-xs text-muted-foreground">john.doe@ula.com (Auto-approved via domain)</div>
-                </div>
-                <span className="text-[10px] bg-emerald-50 text-emerald-700 font-semibold px-2 py-0.5 border border-emerald-200 rounded">Auto</span>
-              </button>
-
-              <button
-                type="button"
-                onClick={() => handleGoogleLogin("contractor@external.com", "External Contractor")}
-                className="w-full text-left p-3 border rounded-md hover:bg-muted/50 transition-colors flex justify-between items-center"
-              >
-                <div>
-                  <div className="font-semibold text-sm">Sign in with External Account</div>
-                  <div className="text-xs text-muted-foreground">contractor@external.com (Awaiting Approval)</div>
-                </div>
-                <span className="text-[10px] bg-amber-50 text-amber-600 font-semibold px-2 py-0.5 border border-amber-200 rounded">Pending</span>
-              </button>
+            <div className="space-y-2.5 overflow-y-auto pr-1 flex-1 mb-4">
+              {TEST_TEAM_MEMBERS.map((member) => (
+                <button
+                  key={member.email}
+                  type="button"
+                  onClick={() => handleQuickLogin(member.email, member.name)}
+                  className="w-full text-left p-3 border rounded-lg hover:bg-primary/5 hover:border-primary/40 transition-all flex justify-between items-center group shadow-xs"
+                >
+                  <div>
+                    <div className="font-semibold text-sm text-foreground flex items-center gap-2">
+                      {member.name}
+                      <span className={`text-[10px] font-semibold px-2 py-0.5 border rounded-full ${member.roleColor}`}>
+                        {member.role}
+                      </span>
+                    </div>
+                    <div className="text-xs text-muted-foreground mt-0.5">{member.designation} · <span className="font-mono text-[11px]">{member.email}</span></div>
+                  </div>
+                  <CheckCircle2 className="h-4 w-4 text-muted-foreground/40 group-hover:text-primary transition-colors shrink-0 ml-2" />
+                </button>
+              ))}
             </div>
 
             <div className="border-t pt-4 space-y-3">
-              <div className="text-xs font-semibold uppercase tracking-wider text-muted-foreground">Or sign in with custom account:</div>
-              <div>
-                <Label className="text-xs">Full Name</Label>
-                <Input
-                  className="mt-1"
-                  placeholder="e.g. Alice Smith"
-                  value={customGoogleName}
-                  onChange={(e) => setCustomGoogleName(e.target.value)}
-                />
-              </div>
-              <div>
-                <Label className="text-xs">Email Address</Label>
-                <Input
-                  className="mt-1"
-                  placeholder="e.g. alice@gmail.com"
-                  value={customGoogleEmail}
-                  onChange={(e) => setCustomGoogleEmail(e.target.value)}
-                />
+              <div className="text-xs font-semibold uppercase tracking-wider text-muted-foreground">Or sign in with custom test identity:</div>
+              <div className="grid grid-cols-2 gap-2">
+                <div>
+                  <Label className="text-xs">Full Name</Label>
+                  <Input
+                    className="mt-1 h-9 text-xs"
+                    placeholder="e.g. Test User"
+                    value={customName}
+                    onChange={(e) => setCustomName(e.target.value)}
+                  />
+                </div>
+                <div>
+                  <Label className="text-xs">Email Address</Label>
+                  <Input
+                    className="mt-1 h-9 text-xs"
+                    placeholder="user@unitedlossadjusters.com"
+                    value={customEmail}
+                    onChange={(e) => setCustomEmail(e.target.value)}
+                  />
+                </div>
               </div>
               <Button
-                className="w-full mt-2"
-                onClick={() => handleGoogleLogin(customGoogleEmail, customGoogleName)}
-                disabled={!customGoogleEmail}
+                size="sm"
+                className="w-full ula-gradient text-white hover:opacity-90"
+                onClick={() => handleQuickLogin(customEmail, customName)}
+                disabled={!customEmail}
               >
-                Sign In with Custom Email
+                Sign In with Custom Test Account
               </Button>
             </div>
-
-            <button
-              type="button"
-              onClick={() => setShowGoogleMock(false)}
-              className="absolute top-4 right-4 text-muted-foreground hover:text-foreground text-sm"
-            >
-              Cancel
-            </button>
           </div>
         </div>
       )}
@@ -155,12 +198,12 @@ export default function Login() {
           <div className="w-full border-t border-border" />
         </div>
         <div className="relative flex justify-center text-xs uppercase">
-          <span className="bg-card px-3 text-muted-foreground">or</span>
+          <span className="bg-card px-3 text-muted-foreground font-semibold">or email &amp; password</span>
         </div>
       </div>
 
       {error && (
-        <div className="mb-4 p-3 rounded-lg bg-destructive/10 text-destructive text-sm">
+        <div className="mb-4 p-3 rounded-lg bg-destructive/10 text-destructive text-sm font-medium">
           {error}
         </div>
       )}
@@ -174,8 +217,7 @@ export default function Login() {
               id="email"
               type="email"
               autoComplete="email"
-              autoFocus
-              placeholder="you@example.com"
+              placeholder="e.g. petro.zaarour@unitedlossadjusters.com"
               value={email}
               onChange={(e) => setEmail(e.target.value)}
               className="pl-10 h-12"
@@ -196,7 +238,7 @@ export default function Login() {
               id="password"
               type="password"
               autoComplete="current-password"
-              placeholder="••••••••"
+              placeholder="•••••••• (default: ula123)"
               value={password}
               onChange={(e) => setPassword(e.target.value)}
               className="pl-10 h-12"
@@ -204,7 +246,7 @@ export default function Login() {
             />
           </div>
         </div>
-        <Button type="submit" className="w-full h-12 font-medium" disabled={loading}>
+        <Button type="submit" className="w-full h-12 font-semibold ula-gradient text-white hover:opacity-90" disabled={loading}>
           {loading ? (
             <>
               <Loader2 className="w-4 h-4 mr-2 animate-spin" />

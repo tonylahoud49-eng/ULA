@@ -7,7 +7,6 @@ import { Label } from "@/components/ui/label";
 import { UserPlus, Mail, Lock, Loader2 } from "lucide-react";
 import { InputOTP, InputOTPGroup, InputOTPSlot } from "@/components/ui/input-otp";
 import AuthLayout from "@/components/AuthLayout";
-import GoogleIcon from "@/components/GoogleIcon";
 import { toast } from "@/components/ui/use-toast";
 import { safeReturnTo } from "@/lib/authReturnTo";
 
@@ -67,10 +66,6 @@ export default function Register() {
     } catch (err) {
       setError(err.message || "Failed to resend code");
     }
-  };
-
-  const handleGoogle = () => {
-    appClient.auth.loginWithProvider("google", safeReturnTo());
   };
 
   if (showOtp) {
@@ -146,11 +141,12 @@ export default function Register() {
     >
       <Button
         variant="outline"
-        className="w-full h-12 text-sm font-medium mb-6"
-        onClick={handleGoogle}
+        className="w-full h-12 text-sm font-semibold mb-6 border-primary/40 hover:bg-primary/5 text-primary"
+        onClick={() => {
+          window.location.href = "/login" + (safeReturnTo() !== "/" ? "?returnTo=" + encodeURIComponent(safeReturnTo()) : "");
+        }}
       >
-        <GoogleIcon className="w-5 h-5 mr-2" />
-        Continue with Google
+        Use Existing ULA Team Account (Test Sign In)
       </Button>
 
       <div className="relative mb-6">
@@ -158,7 +154,7 @@ export default function Register() {
           <div className="w-full border-t border-border" />
         </div>
         <div className="relative flex justify-center text-xs uppercase">
-          <span className="bg-card px-3 text-muted-foreground">or</span>
+          <span className="bg-card px-3 text-muted-foreground font-semibold">or register new account</span>
         </div>
       </div>
 

@@ -17,6 +17,7 @@
     "test:anthropic-preflight": "node server/tests/run-anthropic-preflight-test.mjs",
     "preview:anthropic-payload": "node server/tests/run-anthropic-payload-preview.mjs",
     "templates": "node scripts/generate-report-templates.mjs",
+    "seed": "node server/db/seed.mjs",
     "preview": "vite preview"
   },
   "dependencies": {
