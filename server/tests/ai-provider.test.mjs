@@ -883,7 +883,7 @@ test("gemini status reports configured with key and default model", () => {
   const status = getAIStatus({ AI_PROVIDER: "gemini", GEMINI_API_KEY: "test-key" });
   assert.equal(status.configured, true);
   assert.equal(status.provider, "gemini");
-  assert.equal(status.model, "gemini-2.5-flash");
+  assert.equal(status.model, "gemini-3.6-flash");
 });
 
 // --- OpenRouter provider status ---

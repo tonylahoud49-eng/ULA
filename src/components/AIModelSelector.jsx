@@ -14,9 +14,9 @@ import { Input } from "@/components/ui/input";
 import { Sparkles, Activity, CheckCircle2, AlertCircle, Loader2, Send } from "lucide-react";
 
 export const POPULAR_MODELS = [
+  { value: "gemini", label: "Gemini 3.6 Flash", provider: "gemini", model: "gemini-3.6-flash" },
   { value: "openrouter:openrouter/auto", label: "Auto-Router (Best per Task)", provider: "openrouter", model: "openrouter/auto" },
   { value: "openrouter:minimax/minimax-m3:free", label: "MiniMax M3 (Free · 1M Context)", provider: "openrouter", model: "minimax/minimax-m3:free" },
-  { value: "gemini", label: "Gemini 2.5 Flash", provider: "gemini", model: "gemini-2.5-flash" },
   { value: "anthropic", label: "Claude 3.5 Sonnet", provider: "anthropic", model: "claude-3-5-sonnet-20241022" },
   { value: "openai", label: "GPT-4o", provider: "openai", model: "gpt-4o" },
   { value: "groq", label: "Groq · Llama 3.3 70B", provider: "groq", model: "llama-3.3-70b-versatile" },
@@ -31,7 +31,7 @@ export default function AIModelSelector({
   enableFallback = true,
   onEnableFallbackChange,
 }) {
-  const [modelList] = useState(POPULAR_MODELS);
+  const [modelList, setModelList] = useState(POPULAR_MODELS);
   const [isTestOpen, setIsTestOpen] = useState(false);
   const [testPrompt, setTestPrompt] = useState("Hello! Acknowledge this test and state your model name.");
   const [testing, setTesting] = useState(false);
@@ -44,6 +44,16 @@ export default function AIModelSelector({
       .then((data) => {
         if (!active || !data) return;
         
+        if (data.provider === "gemini" && data.model) {
+          setModelList((prev) =>
+            prev.map((item) =>
+              item.provider === "gemini"
+                ? { ...item, model: data.model, label: `Gemini (${data.model})` }
+                : item
+            )
+          );
+        }
+
         if (!value) {
           const saved = localStorage.getItem("ula_ai_selected_provider");
           const found = POPULAR_MODELS.find((p) => p.value === saved || p.provider === saved);

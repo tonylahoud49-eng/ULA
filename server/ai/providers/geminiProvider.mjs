@@ -15,7 +15,7 @@ import { SYSTEM_INSTRUCTIONS, promptText, toDataUrl, enforceGrounding, parseStru
  */
 
 const GEMINI_BASE_URL = "https://generativelanguage.googleapis.com/v1beta/openai/";
-const DEFAULT_MODEL = "gemini-2.5-flash";
+const DEFAULT_MODEL = "gemini-3.6-flash";
 
 export function createGeminiProvider({ apiKey, model, client } = {}) {
   const resolvedModel = model || DEFAULT_MODEL;

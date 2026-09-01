@@ -23,7 +23,7 @@ const PROVIDER_CONFIGS = {
     keyVar: "GEMINI_API_KEY",
     fallbackKeyVars: ["GEMINI_API_KEY_2"],
     modelVar: "GEMINI_MODEL",
-    defaultModel: "gemini-2.5-flash",
+    defaultModel: "gemini-3.6-flash",
     factory: createGeminiProvider,
   },
   openrouter: {

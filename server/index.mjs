@@ -89,7 +89,7 @@ app.post("/api/ai/test-chat", async (request, response) => {
     } else if (provider === "gemini") {
       const key = process.env.GEMINI_API_KEY;
       if (!key) throw new Error("GEMINI_API_KEY is not configured in .env");
-      const actualModel = model || process.env.GEMINI_MODEL || "gemini-2.5-flash";
+      const actualModel = model || process.env.GEMINI_MODEL || "gemini-3.6-flash";
 
       const res = await fetch(`https://generativelanguage.googleapis.com/v1beta/models/${actualModel}:generateContent?key=${key}`, {
         method: "POST",
