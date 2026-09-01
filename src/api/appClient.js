@@ -124,9 +124,66 @@ const getMemoryDatabase = () => {
   return memoryDatabase;
 };
 
+let serverSyncTimer = null;
+const syncToServer = () => {
+  if (typeof fetch === "undefined" || !memoryDatabase) return;
+  clearTimeout(serverSyncTimer);
+  serverSyncTimer = setTimeout(() => {
+    fetch("/api/db", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(memoryDatabase),
+    }).catch(() => {});
+  }, 200);
+};
+
+let authSyncTimer = null;
+const syncAuthToServer = () => {
+  if (typeof fetch === "undefined" || !memoryAuth) return;
+  clearTimeout(authSyncTimer);
+  authSyncTimer = setTimeout(() => {
+    fetch("/api/auth-db", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(memoryAuth),
+    }).catch(() => {});
+  }, 200);
+};
+
+let serverDbLoaded = false;
+const loadFromServer = async () => {
+  if (typeof fetch === "undefined" || serverDbLoaded) return;
+  try {
+    const res = await fetch("/api/db");
+    if (res.ok) {
+      const serverData = await res.json();
+      if (serverData && typeof serverData === "object" && Object.keys(serverData).length > 0) {
+        if (!memoryDatabase) memoryDatabase = getMemoryDatabase();
+        let updated = false;
+        for (const key of Object.keys(entityDefaults)) {
+          if (Array.isArray(serverData[key]) && serverData[key].length > 0) {
+            if (!memoryDatabase[key] || memoryDatabase[key].length === 0) {
+              memoryDatabase[key] = serverData[key];
+              rebuildEntityIndex(key);
+              updated = true;
+            }
+          }
+        }
+        if (updated) {
+          writeJson(DATABASE_KEY, memoryDatabase);
+        }
+      }
+    }
+    serverDbLoaded = true;
+  } catch {
+    // Continue with local storage
+  }
+};
+
 const saveMemoryDatabase = () => {
   if (memoryDatabase) {
     writeJson(DATABASE_KEY, memoryDatabase);
+    syncToServer();
   }
 };
 
@@ -140,6 +197,7 @@ const getMemoryAuth = () => {
 const saveMemoryAuth = () => {
   if (memoryAuth) {
     writeJson(AUTH_KEY, memoryAuth);
+    syncAuthToServer();
   }
 };
 
@@ -233,7 +291,10 @@ const migrateLegacyDocumentContent = async () => {
 
 const prepareDatabase = () => {
   if (!databasePreparation) {
-    databasePreparation = migrateLegacyDocumentContent().catch((error) => {
+    databasePreparation = (async () => {
+      await loadFromServer();
+      await migrateLegacyDocumentContent();
+    })().catch((error) => {
       databasePreparation = undefined;
       throw error;
     });

@@ -42,7 +42,66 @@ const anthropicAnalysisRequests = new Map();
 const anthropicAnalysisCacheMs = Number(process.env.ANTHROPIC_DUPLICATE_CACHE_MS || 10 * 60 * 1000);
 
 app.disable("x-powered-by");
-app.use(express.json({ limit: "64kb" }));
+app.use(express.json({ limit: "50mb" }));
+
+const DATA_DIR = path.resolve(root, ".data");
+const DB_FILE = path.join(DATA_DIR, "claims_db.json");
+const AUTH_FILE = path.join(DATA_DIR, "auth_db.json");
+
+function ensureDataDir() {
+  if (!fs.existsSync(DATA_DIR)) {
+    fs.mkdirSync(DATA_DIR, { recursive: true });
+  }
+}
+
+app.get("/api/db", (_request, response) => {
+  ensureDataDir();
+  try {
+    if (fs.existsSync(DB_FILE)) {
+      const data = fs.readFileSync(DB_FILE, "utf-8");
+      return response.json(JSON.parse(data));
+    }
+    return response.json({});
+  } catch (err) {
+    return response.status(500).json({ error: err.message });
+  }
+});
+
+app.post("/api/db", (request, response) => {
+  ensureDataDir();
+  try {
+    const payload = request.body || {};
+    fs.writeFileSync(DB_FILE, JSON.stringify(payload, null, 2), "utf-8");
+    return response.json({ ok: true, timestamp: Date.now() });
+  } catch (err) {
+    return response.status(500).json({ error: err.message });
+  }
+});
+
+app.get("/api/auth-db", (_request, response) => {
+  ensureDataDir();
+  try {
+    if (fs.existsSync(AUTH_FILE)) {
+      const data = fs.readFileSync(AUTH_FILE, "utf-8");
+      return response.json(JSON.parse(data));
+    }
+    return response.json({});
+  } catch (err) {
+    return response.status(500).json({ error: err.message });
+  }
+});
+
+app.post("/api/auth-db", (request, response) => {
+  ensureDataDir();
+  try {
+    const payload = request.body || {};
+    fs.writeFileSync(AUTH_FILE, JSON.stringify(payload, null, 2), "utf-8");
+    return response.json({ ok: true });
+  } catch (err) {
+    return response.status(500).json({ error: err.message });
+  }
+});
+
 app.get("/api/health", (_request, response) => response.json({ ok: true }));
 app.get("/api/ai/status", (_request, response) => response.json(getAIStatus()));
 app.get("/api/leave/email/status", (_request, response) => response.json(getLeaveEmailService().getStatus()));
