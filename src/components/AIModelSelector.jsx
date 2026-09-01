@@ -15,13 +15,13 @@ import { Sparkles, Activity, CheckCircle2, AlertCircle, Loader2, Send, Terminal 
 import AILogsModal from "@/components/AILogsModal";
 
 export const POPULAR_MODELS = [
-  { value: "gemini", label: "Gemini 3.6 Flash", provider: "gemini", model: "gemini-3.6-flash" },
-  { value: "openrouter:openrouter/auto", label: "Auto-Router (Best per Task)", provider: "openrouter", model: "openrouter/auto" },
-  { value: "openrouter:minimax/minimax-m3:free", label: "MiniMax M3 (Free · 1M Context)", provider: "openrouter", model: "minimax/minimax-m3:free" },
-  { value: "anthropic", label: "Claude Sonnet (4.6)", provider: "anthropic", model: "claude-sonnet-4-6" },
-  { value: "openai", label: "GPT-4o", provider: "openai", model: "gpt-4o" },
-  { value: "groq", label: "Groq · Llama 3.3 70B", provider: "groq", model: "llama-3.3-70b-versatile" },
-  { value: "ollama", label: "Ollama (Local)", provider: "ollama", model: "llama3.3" },
+  { value: "gemini:gemini-3.6-flash", label: "gemini-3.6-flash", provider: "gemini", model: "gemini-3.6-flash", org: "Google" },
+  { value: "openrouter:openrouter/auto", label: "openrouter/auto", provider: "openrouter", model: "openrouter/auto", org: "OpenRouter" },
+  { value: "openrouter:minimax/minimax-m3:free", label: "minimax/minimax-m3:free", provider: "openrouter", model: "minimax/minimax-m3:free", org: "OpenRouter" },
+  { value: "anthropic:claude-sonnet-4-6", label: "claude-sonnet-4-6", provider: "anthropic", model: "claude-sonnet-4-6", org: "Anthropic" },
+  { value: "openai:gpt-4o", label: "gpt-4o", provider: "openai", model: "gpt-4o", org: "OpenAI" },
+  { value: "groq:llama-3.3-70b-versatile", label: "llama-3.3-70b-versatile", provider: "groq", model: "llama-3.3-70b-versatile", org: "Groq" },
+  { value: "ollama:llama3.3", label: "llama3.3", provider: "ollama", model: "llama3.3", org: "Ollama" },
 ];
 
 export default function AIModelSelector({
@@ -45,19 +45,28 @@ export default function AIModelSelector({
       .then((data) => {
         if (!active || !data) return;
         
-        if (data.model) {
-          setModelList((prev) =>
-            prev.map((item) =>
-              item.provider === data.provider
-                ? { ...item, model: data.model }
-                : item
-            )
-          );
+        if (data.configured_providers && data.configured_providers.length > 0) {
+          setModelList((prev) => {
+            const updated = [...prev];
+            data.configured_providers.forEach((cp) => {
+              const key = `${cp.provider}:${cp.model}`;
+              if (!updated.some((item) => item.value === key || item.model === cp.model)) {
+                updated.unshift({
+                  value: key,
+                  label: cp.model,
+                  provider: cp.provider,
+                  model: cp.model,
+                  org: cp.provider.toUpperCase(),
+                });
+              }
+            });
+            return updated;
+          });
         }
 
         if (!value) {
           const saved = localStorage.getItem("ula_ai_selected_provider");
-          const found = POPULAR_MODELS.find((p) => p.value === saved || p.provider === saved);
+          const found = POPULAR_MODELS.find((p) => p.value === saved || p.model === saved || p.provider === saved);
           const initial = found ? found.value : POPULAR_MODELS[0].value;
           onChange(initial);
         }
@@ -87,7 +96,13 @@ export default function AIModelSelector({
     }
   };
 
-  const selectedItem = modelList.find((p) => p.value === value || p.provider === value) || modelList[0];
+  const selectedItem = modelList.find((p) => p.value === value || p.provider === value || p.model === value) || {
+    value: value || "gemini:gemini-3.6-flash",
+    label: value || "gemini-3.6-flash",
+    provider: (value || "").split(":")[0] || "gemini",
+    model: (value || "").includes(":") ? (value || "").split(":").slice(1).join(":") : (value || "gemini-3.6-flash"),
+    org: "Configured",
+  };
 
   const handleRunTest = async (overridePrompt) => {
     const promptToSend = overridePrompt || testPrompt;
@@ -120,20 +135,20 @@ export default function AIModelSelector({
   return (
     <div className={`flex flex-wrap items-center gap-3 ${className}`}>
       <Select value={selectedItem.value} onValueChange={handleSelect} disabled={disabled}>
-        <SelectTrigger className="h-9 min-w-[230px] max-w-[300px] bg-background text-xs font-medium border-border shadow-xs hover:border-primary/40 focus:ring-1 focus:ring-primary">
+        <SelectTrigger className="h-9 min-w-[240px] max-w-[320px] bg-background text-xs font-medium border-border shadow-xs hover:border-primary/40 focus:ring-1 focus:ring-primary">
           <div className="flex items-center gap-2 truncate">
-            <span className="docket-label text-[0.62rem] text-muted-foreground">Model</span>
-            <span className="font-mono text-[0.73rem] truncate font-semibold text-foreground">
-              {selectedItem.label}
+            <span className="docket-label text-[0.62rem] text-muted-foreground uppercase font-semibold">{selectedItem.provider}</span>
+            <span className="font-mono text-[0.75rem] truncate font-semibold text-foreground">
+              {selectedItem.model}
             </span>
           </div>
         </SelectTrigger>
-        <SelectContent align="end" className="min-w-[270px]">
+        <SelectContent align="end" className="min-w-[300px]">
           {modelList.map((p) => (
             <SelectItem key={p.value} value={p.value} className="text-xs">
-              <div className="flex flex-col py-0.5">
-                <span className="font-semibold text-foreground">{p.label}</span>
-                <span className="font-mono text-[0.68rem] text-muted-foreground">{p.model}</span>
+              <div className="flex items-center justify-between gap-3 w-full py-0.5">
+                <span className="font-mono font-semibold text-foreground text-xs">{p.model}</span>
+                <span className="text-[0.62rem] font-sans px-1.5 py-0.5 rounded bg-muted text-muted-foreground uppercase font-medium">{p.org || p.provider}</span>
               </div>
             </SelectItem>
           ))}
