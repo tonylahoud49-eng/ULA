@@ -465,8 +465,9 @@ function normalizeAnthropicEnumCasing(value) {
     parsed.classification.sources = parsed.classification.sources ?? [];
   }
 
-  if (Array.isArray(parsed.document_types)) {
-    parsed.document_types = parsed.document_types.map((item) => ({
+  if (parsed.document_types !== undefined || parsed.documents !== undefined) {
+    const rawDocumentTypes = Array.isArray(parsed.document_types) ? parsed.document_types : (Array.isArray(parsed.documents) ? parsed.documents : []);
+    parsed.document_types = rawDocumentTypes.map((item) => ({
       document_type: canonicalEnumValue(item.document_type || "Supporting Evidence", DOCUMENT_TYPES),
       confidence: item.confidence ?? 0.95,
       sufficient_information: item.sufficient_information ?? true,
@@ -475,16 +476,18 @@ function normalizeAnthropicEnumCasing(value) {
     }));
   }
 
-  if (Array.isArray(parsed.missing_documents)) {
-    parsed.missing_documents = parsed.missing_documents.map((item) => ({
+  if (parsed.missing_documents !== undefined || parsed.missing !== undefined) {
+    const rawMissing = Array.isArray(parsed.missing_documents) ? parsed.missing_documents : (Array.isArray(parsed.missing) ? parsed.missing : []);
+    parsed.missing_documents = rawMissing.map((item) => ({
       document_type: canonicalEnumValue(item.document_type || "Policy", DOCUMENT_TYPES),
       reason: typeof item.reason === "string" ? item.reason : (item.reason?.reason || item.reason?.message || "Missing document"),
       missing_information: (item.missing_information || []).map((m) => typeof m === "string" ? m : (m?.item || m?.field || m?.name || JSON.stringify(m))),
     }));
   }
 
-  if (Array.isArray(parsed.fields)) {
-    parsed.fields = parsed.fields.map((field) => ({
+  if (parsed.fields !== undefined) {
+    const rawFields = Array.isArray(parsed.fields) ? parsed.fields : [];
+    parsed.fields = rawFields.map((field) => ({
       field: canonicalEnumValue(field.field || "loss_description", CLAIM_FIELDS),
       value: field.value ?? null,
       normalized_value: field.normalized_value ?? field.value ?? null,
@@ -494,8 +497,11 @@ function normalizeAnthropicEnumCasing(value) {
     }));
   }
 
-  if (Array.isArray(parsed.adjustment_line_items)) {
-    parsed.adjustment_line_items = parsed.adjustment_line_items.map((item) => ({
+  if (parsed.adjustment_line_items !== undefined || parsed.adjustments !== undefined || parsed.line_items !== undefined) {
+    const rawAdjustments = Array.isArray(parsed.adjustment_line_items)
+      ? parsed.adjustment_line_items
+      : (Array.isArray(parsed.adjustments) ? parsed.adjustments : (Array.isArray(parsed.line_items) ? parsed.line_items : []));
+    parsed.adjustment_line_items = rawAdjustments.map((item) => ({
       description: item.description || "Adjustment",
       quantity: item.quantity ?? null,
       unit_price: item.unit_price ?? null,
@@ -507,27 +513,28 @@ function normalizeAnthropicEnumCasing(value) {
     }));
   }
 
-  if (Array.isArray(parsed.evidence_findings)) {
-    parsed.evidence_findings = parsed.evidence_findings.map((item) => ({
-      finding: typeof item.finding === "string" ? item.finding : (item?.finding?.finding || item?.finding?.text || item?.description || JSON.stringify(item)),
+  if (parsed.evidence_findings !== undefined || parsed.findings !== undefined || parsed.facts !== undefined) {
+    const rawFindings = Array.isArray(parsed.evidence_findings)
+      ? parsed.evidence_findings
+      : (Array.isArray(parsed.findings) ? parsed.findings : (Array.isArray(parsed.facts) ? parsed.facts : []));
+    parsed.evidence_findings = rawFindings.map((item) => ({
+      finding: typeof item.finding === "string" ? item.finding : (item?.finding?.finding || item?.finding?.text || item?.description || (typeof item === "string" ? item : JSON.stringify(item))),
       confidence: item.confidence ?? 0.9,
       sources: item.sources ?? [],
     }));
   }
 
-  if (parsed.summary !== undefined) {
-    parsed.summary = typeof parsed.summary === "string" ? parsed.summary : (parsed.summary?.summary || parsed.summary?.text || JSON.stringify(parsed.summary || ""));
-  }
-  if (Array.isArray(parsed.warnings)) {
-    parsed.warnings = parsed.warnings.map((w) =>
-      typeof w === "string" ? w : (w?.warning || w?.message || w?.text || w?.description || JSON.stringify(w))
-    );
-  }
-  if (Array.isArray(parsed.human_review_required)) {
-    parsed.human_review_required = parsed.human_review_required.map((h) =>
-      typeof h === "string" ? h : (h?.item || h?.reason || h?.action || h?.description || h?.message || h?.text || JSON.stringify(h))
-    );
-  }
+  parsed.summary = typeof parsed.summary === "string" ? parsed.summary : (parsed.summary?.summary || parsed.summary?.text || "");
+  const rawWarnings = Array.isArray(parsed.warnings) ? parsed.warnings : [];
+  parsed.warnings = rawWarnings.map((w) =>
+    typeof w === "string" ? w : (w?.warning || w?.message || w?.text || w?.description || JSON.stringify(w))
+  );
+  const rawReview = Array.isArray(parsed.human_review_required)
+    ? parsed.human_review_required
+    : (Array.isArray(parsed.review_required) ? parsed.review_required : []);
+  parsed.human_review_required = rawReview.map((h) =>
+    typeof h === "string" ? h : (h?.item || h?.reason || h?.action || h?.description || h?.message || h?.text || JSON.stringify(h))
+  );
 
   const sourceGroups = [
     parsed?.classification?.sources,
