@@ -23,6 +23,22 @@ const formatBytes = (value) => {
 
 export default function AIAnalysisProgressCard({ progress, provider, model, preflight, onCancel, className = "" }) {
   const [aiStatus, setAiStatus] = useState(null);
+  const [elapsedSeconds, setElapsedSeconds] = useState(0);
+
+  useEffect(() => {
+    let interval;
+    if (progress?.active) {
+      setElapsedSeconds(0);
+      interval = setInterval(() => {
+        setElapsedSeconds((prev) => prev + 1);
+      }, 1000);
+    } else {
+      setElapsedSeconds(0);
+    }
+    return () => {
+      if (interval) clearInterval(interval);
+    };
+  }, [progress?.active]);
 
   useEffect(() => {
     let active = true;
@@ -152,9 +168,15 @@ export default function AIAnalysisProgressCard({ progress, provider, model, pref
           <span className="truncate font-medium text-foreground text-[0.78rem]">
             {progress?.stage || "Processing claim evidence..."}
           </span>
-          <span className="font-mono text-[0.7rem] text-muted-foreground shrink-0 ml-3">
-            Step {currentStep} of {progress?.totalSteps || 4}
-          </span>
+          <div className="flex items-center gap-2 font-mono text-[0.7rem] text-muted-foreground shrink-0 ml-3">
+            {elapsedSeconds > 0 && (
+              <span className="text-primary font-semibold flex items-center gap-1">
+                <span>⏱️</span>
+                <span>{elapsedSeconds}s</span>
+              </span>
+            )}
+            <span>Step {currentStep} of {progress?.totalSteps || 4}</span>
+          </div>
         </div>
         <div className="h-1.5 w-full overflow-hidden rounded-full bg-muted">
           <div
