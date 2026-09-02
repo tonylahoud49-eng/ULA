@@ -52,7 +52,273 @@ const anthropicAnalysisRequests = new Map();
 const anthropicAnalysisCacheMs = Number(process.env.ANTHROPIC_DUPLICATE_CACHE_MS || 10 * 60 * 1000);
 
 app.disable("x-powered-by");
-app.use(express.json({ limit: "64kb" }));
+app.use(express.json({ limit: "50mb" }));
+
+import { diskDb, UPLOADS_DIR, DATA_DIR, ensureDirectories, ENTITY_NAMES } from "./db/diskDb.mjs";
+
+ensureDirectories();
+
+const diskStorage = multer.diskStorage({
+  destination: (_req, _file, cb) => {
+    ensureDirectories();
+    cb(null, UPLOADS_DIR);
+  },
+  filename: (_req, file, cb) => {
+    const unique = `${Date.now()}_${Math.random().toString(36).slice(2, 8)}`;
+    const safeName = (file.originalname || "document").replace(/[^a-zA-Z0-9._-]/g, "_");
+    cb(null, `${unique}_${safeName}`);
+  },
+});
+const diskUpload = multer({ storage: diskStorage, limits: { fileSize: maxFileBytes, files: maxFiles } });
+
+// --- Entity REST Endpoints ---
+app.get("/api/entities/:entity", (request, response) => {
+  const { entity } = request.params;
+  if (!ENTITY_NAMES.includes(entity)) {
+    return response.status(400).json({ error: `Unknown entity: ${entity}` });
+  }
+  try {
+    const items = diskDb.list(entity, request.query);
+    return response.json(items);
+  } catch (err) {
+    return response.status(500).json({ error: err.message });
+  }
+});
+
+app.get("/api/entities/:entity/:id", (request, response) => {
+  const { entity, id } = request.params;
+  if (!ENTITY_NAMES.includes(entity)) {
+    return response.status(400).json({ error: `Unknown entity: ${entity}` });
+  }
+  try {
+    const item = diskDb.get(entity, id);
+    if (!item) return response.status(404).json({ error: `Not found` });
+    return response.json(item);
+  } catch (err) {
+    return response.status(500).json({ error: err.message });
+  }
+});
+
+app.post("/api/entities/:entity", (request, response) => {
+  const { entity } = request.params;
+  if (!ENTITY_NAMES.includes(entity)) {
+    return response.status(400).json({ error: `Unknown entity: ${entity}` });
+  }
+  try {
+    const created = diskDb.create(entity, request.body || {});
+    return response.status(201).json(created);
+  } catch (err) {
+    return response.status(500).json({ error: err.message });
+  }
+});
+
+app.put("/api/entities/:entity/:id", (request, response) => {
+  const { entity, id } = request.params;
+  if (!ENTITY_NAMES.includes(entity)) {
+    return response.status(400).json({ error: `Unknown entity: ${entity}` });
+  }
+  try {
+    const updated = diskDb.update(entity, id, request.body || {});
+    return response.json(updated);
+  } catch (err) {
+    return response.status(500).json({ error: err.message });
+  }
+});
+
+app.delete("/api/entities/:entity/:id", (request, response) => {
+  const { entity, id } = request.params;
+  if (!ENTITY_NAMES.includes(entity)) {
+    return response.status(400).json({ error: `Unknown entity: ${entity}` });
+  }
+  try {
+    const deleted = diskDb.delete(entity, id);
+    if (!deleted) return response.status(404).json({ error: "Not found" });
+    return response.json(deleted);
+  } catch (err) {
+    return response.status(500).json({ error: err.message });
+  }
+});
+
+// --- Document Physical Storage Endpoints ---
+app.post("/api/documents/upload", diskUpload.single("file"), (request, response) => {
+  if (!request.file) {
+    return response.status(400).json({ error: "No file provided in request" });
+  }
+
+  const { filename, originalname, mimetype, size } = request.file;
+  const storageKey = filename;
+  const fileUrl = `/api/documents/file/${filename}`;
+
+  return response.status(201).json({
+    storage_key: storageKey,
+    file_url: fileUrl,
+    file_name: originalname,
+    file_size: size,
+    file_mime_type: mimetype,
+    storage_provider: "server_disk",
+    reference: `server-document:${storageKey}`,
+  });
+});
+
+app.get("/api/documents/file/:filename", (request, response) => {
+  try {
+    const { filename } = request.params;
+    const safeFilename = path.basename(filename);
+    const filePath = path.resolve(UPLOADS_DIR, safeFilename);
+
+    if (!fs.existsSync(filePath)) {
+      return response.status(404).json({ error: "Document file not found on server" });
+    }
+
+    const stat = fs.statSync(filePath);
+    response.setHeader("Content-Length", stat.size);
+    response.setHeader("Cache-Control", "public, max-age=86400");
+    if (safeFilename.endsWith(".pdf")) {
+      response.setHeader("Content-Type", "application/pdf");
+    } else if (safeFilename.endsWith(".docx")) {
+      response.setHeader("Content-Type", "application/vnd.openxmlformats-officedocument.wordprocessingml.document");
+    } else if (safeFilename.endsWith(".xlsx")) {
+      response.setHeader("Content-Type", "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet");
+    } else if (safeFilename.endsWith(".png")) {
+      response.setHeader("Content-Type", "image/png");
+    } else if (safeFilename.endsWith(".jpg") || safeFilename.endsWith(".jpeg")) {
+      response.setHeader("Content-Type", "image/jpeg");
+    }
+
+    const stream = fs.createReadStream(filePath);
+    stream.on("error", (streamErr) => {
+      if (!response.headersSent) {
+        response.status(500).json({ error: streamErr.message });
+      }
+    });
+    return stream.pipe(response);
+  } catch (err) {
+    return response.status(500).json({ error: err.message });
+  }
+});
+
+app.get("/api/documents/:key", (request, response) => {
+  const { key } = request.params;
+  const safeKey = path.basename(key);
+  const filePath = path.join(UPLOADS_DIR, safeKey);
+
+  if (!fs.existsSync(filePath)) {
+    return response.status(404).json({ error: "Document not found" });
+  }
+
+  const stats = fs.statSync(filePath);
+  return response.json({
+    storage_key: safeKey,
+    file_url: `/api/documents/file/${safeKey}`,
+    size: stats.size,
+    updated_at: stats.mtime.toISOString(),
+  });
+});
+
+app.delete("/api/documents/:key", (request, response) => {
+  const { key } = request.params;
+  const safeKey = path.basename(key);
+  const filePath = path.join(UPLOADS_DIR, safeKey);
+
+  try {
+    if (fs.existsSync(filePath)) {
+      fs.unlinkSync(filePath);
+    }
+    return response.json({ ok: true, deleted: safeKey });
+  } catch (err) {
+    return response.status(500).json({ error: err.message });
+  }
+});
+
+// Full DB sync backward compatibility
+app.get("/api/db", (_request, response) => {
+  try {
+    return response.json(diskDb.getClaimsDb());
+  } catch (err) {
+    return response.status(500).json({ error: err.message });
+  }
+});
+
+app.post("/api/db", (request, response) => {
+  try {
+    const payload = request.body || {};
+    diskDb.setFullClaimsDb(payload);
+    return response.json({ ok: true, timestamp: Date.now() });
+  } catch (err) {
+    return response.status(500).json({ error: err.message });
+  }
+});
+
+app.get("/api/auth-db", (_request, response) => {
+  try {
+    return response.json(diskDb.getAuthDb());
+  } catch (err) {
+    return response.status(500).json({ error: err.message });
+  }
+});
+
+app.post("/api/auth-db", (request, response) => {
+  try {
+    const payload = request.body || {};
+    diskDb.setFullAuthDb(payload);
+    return response.json({ ok: true });
+  } catch (err) {
+    return response.status(500).json({ error: err.message });
+  }
+});
+
+const LOGS_FILE = path.join(DATA_DIR, "ai_logs.json");
+
+function loadAiLogs() {
+  ensureDirectories();
+  try {
+    if (fs.existsSync(LOGS_FILE)) {
+      const data = fs.readFileSync(LOGS_FILE, "utf-8");
+      const parsed = JSON.parse(data);
+      return Array.isArray(parsed) ? parsed : [];
+    }
+  } catch {
+    // fallback
+  }
+  return [];
+}
+
+const AI_LOGS = loadAiLogs();
+
+function persistAiLogs() {
+  ensureDirectories();
+  try {
+    fs.writeFileSync(LOGS_FILE, JSON.stringify(AI_LOGS, null, 2), "utf-8");
+  } catch {
+    // file write should not throw
+  }
+}
+
+export function logAiEvent(level, message, data = null) {
+  const entry = {
+    id: `${Date.now()}-${Math.random().toString(36).slice(2, 7)}`,
+    timestamp: new Date().toISOString(),
+    level,
+    message,
+    data: data ? JSON.parse(JSON.stringify(data)) : null,
+  };
+  AI_LOGS.unshift(entry);
+  if (AI_LOGS.length > 200) AI_LOGS.pop();
+  persistAiLogs();
+  try {
+    console.log(`[AI ${level.toUpperCase()}] ${message}`, data ? JSON.stringify(data) : "");
+  } catch {
+    // Console logging must never affect request processing
+  }
+}
+
+app.get("/api/ai/logs", (_request, response) => response.json({ ok: true, logs: AI_LOGS }));
+app.delete("/api/ai/logs", (_request, response) => {
+  AI_LOGS.length = 0;
+  persistAiLogs();
+  return response.json({ ok: true });
+});
+
 app.get("/api/health", (_request, response) => response.json({ ok: true }));
 authHttp.registerRoutes(app);
 app.use("/api", authHttp.requireAuth);
@@ -61,6 +327,108 @@ app.get("/api/leave/email/status", (_request, response) => response.json(getLeav
 app.get("/api/email/diagnostics", (_request, response) => {
   dotenv.config({ override: true });
   return response.json(getEmailDiagnosticsStatus(process.env));
+});
+
+app.post("/api/ai/test-chat", async (request, response) => {
+  const startTime = Date.now();
+  const { provider = "openrouter", model = "openrouter/auto", prompt = "Hello, respond with a quick test acknowledgement and your active model name." } = request.body || {};
+
+  try {
+    dotenv.config({ override: true });
+    let reply = "";
+    let routedModel = model;
+    let usage = null;
+
+    if (provider === "openrouter" || provider.startsWith("openrouter:")) {
+      const key = process.env.OPENROUTER_API_KEY;
+      if (!key) throw new Error("OPENROUTER_API_KEY is not configured in .env");
+      const actualModel = (model || "").replace(/^openrouter:/, "") || "openrouter/auto";
+
+      const res = await fetch("https://openrouter.ai/api/v1/chat/completions", {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          "Authorization": `Bearer ${key}`,
+        },
+        body: JSON.stringify({
+          model: actualModel,
+          messages: [{ role: "user", content: prompt }],
+          max_tokens: 150,
+        }),
+      });
+
+      const data = await res.json();
+      if (!res.ok) {
+        throw new Error(data.error?.message || `OpenRouter returned HTTP ${res.status}`);
+      }
+      routedModel = data.model || actualModel;
+      reply = data.choices?.[0]?.message?.content?.trim() || "(No response content returned)";
+      usage = data.usage || null;
+    } else if (provider === "gemini") {
+      const key = process.env.GEMINI_API_KEY;
+      if (!key) throw new Error("GEMINI_API_KEY is not configured in .env");
+      const actualModel = model || process.env.GEMINI_MODEL || "gemini-3.6-flash";
+
+      const res = await fetch(`https://generativelanguage.googleapis.com/v1beta/models/${actualModel}:generateContent?key=${key}`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          contents: [{ parts: [{ text: prompt }] }],
+        }),
+      });
+
+      const data = await res.json();
+      if (!res.ok || data.error) {
+        throw new Error(data.error?.message || `Gemini returned HTTP ${res.status}`);
+      }
+      reply = data.candidates?.[0]?.content?.parts?.[0]?.text?.trim() || "(No response content returned)";
+    } else if (provider === "anthropic") {
+      const key = process.env.ANTHROPIC_API_KEY;
+      if (!key) throw new Error("ANTHROPIC_API_KEY is not configured in .env");
+      const actualModel = model || process.env.ANTHROPIC_MODEL || "claude-sonnet-4-6";
+
+      const res = await fetch("https://api.anthropic.com/v1/messages", {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          "x-api-key": key,
+          "anthropic-version": "2023-06-01",
+        },
+        body: JSON.stringify({
+          model: actualModel,
+          max_tokens: 150,
+          messages: [{ role: "user", content: prompt }],
+        }),
+      });
+
+      const data = await res.json();
+      if (!res.ok || data.error) {
+        throw new Error(data.error?.message || `Anthropic returned HTTP ${res.status}`);
+      }
+      reply = data.content?.[0]?.text?.trim() || "(No response content returned)";
+    } else {
+      throw new Error(`Testing for provider '${provider}' is not supported yet.`);
+    }
+
+    const elapsed = Date.now() - startTime;
+    return response.json({
+      ok: true,
+      provider,
+      model: routedModel,
+      reply,
+      latency_ms: elapsed,
+      usage,
+    });
+  } catch (error) {
+    const elapsed = Date.now() - startTime;
+    return response.status(200).json({
+      ok: false,
+      error: error.message || "Model test ping failed.",
+      latency_ms: elapsed,
+      model,
+      provider,
+    });
+  }
 });
 
 app.post("/api/email/test", async (request, response) => {
@@ -120,11 +488,7 @@ app.post("/api/ai/preflight", upload.array("files", maxFiles), async (request, r
         code: "anthropic-provider-not-selected",
       });
     }
-    if (requestedModel !== configuration.model) {
-      throw new AnthropicPreflightError("The selected model does not match ANTHROPIC_MODEL.", {
-        code: "anthropic-model-mismatch",
-      });
-    }
+    const resolvedModel = requestedModel || configuration.model;
     const claim = JSON.parse(request.body.claim || "{}");
     const manifest = JSON.parse(request.body.manifest || "[]");
     const files = request.files || [];
@@ -145,7 +509,7 @@ app.post("/api/ai/preflight", upload.array("files", maxFiles), async (request, r
       manifest,
       files,
       provider: "anthropic",
-      model: configuration.model,
+      model: resolvedModel,
     });
     const preflightToken = issueAnthropicPreflightToken(fingerprint, local.stats);
     return response.json({
@@ -277,7 +641,24 @@ app.post("/api/ai/analyze", upload.array("files", maxFiles), async (request, res
       }
     }
 
+    logAiEvent("info", `Analysis requested for ${claim.title || claim.id || "claim"}`, {
+      provider: provider.name,
+      model: provider.model,
+      files: files.length,
+      file_names: files.map((f) => f.originalname || f.name),
+    });
+
     const evidence = await Promise.all(files.map((file, index) => extractEvidenceFile(file, { ...manifest[index], index })));
+    const totalExtractedChars = evidence.reduce((sum, item) => sum + evidenceText(item).length, 0);
+    logAiEvent("info", `Extracted ${evidence.length} evidence document(s) (${totalExtractedChars.toLocaleString()} characters)`, {
+      documents: evidence.map((item) => ({
+        name: item.document_name,
+        kind: item.kind,
+        status: item.extraction_status,
+        length: evidenceText(item).length,
+      })),
+    });
+
     safeAiDebugLog("[ULA AI debug] Extracted evidence", evidence.map((item) => ({
       document_id: item.document_id,
       filename: item.document_name,
@@ -296,7 +677,16 @@ app.post("/api/ai/analyze", upload.array("files", maxFiles), async (request, res
     const styleReferenceDirectory = process.env.ULA_REPORT_REFERENCE_DIR
       || path.join(root, "server", "ai", "references");
     const styleReferences = await loadApprovedStyleReferences(styleReferenceDirectory);
+
+    logAiEvent("info", `Sending evidence payload to ${provider.name} (${provider.model})...`);
     const result = await provider.analyze({ claim, evidence, files, styleReferences });
+
+    logAiEvent("info", `Received successful analysis from ${provider.name} (${provider.model})`, {
+      business_line: result.analysis?.classification?.business_line,
+      confidence: result.analysis?.classification?.confidence,
+      summary_preview: (result.analysis?.summary || "").slice(0, 160),
+    });
+
     safeAiDebugLog("[ULA AI debug] Detected document categories", evidence.map((item) => ({
       filename: item.document_name,
       detected_categories: result.analysis.document_types
@@ -348,6 +738,11 @@ app.post("/api/ai/analyze", upload.array("files", maxFiles), async (request, res
     
     const details = error?.message ? ` (Details: ${error.message})` : "";
     const fullError = `AI analysis unavailable with ${errorProvider} [${errorModel}] — ${providerMessage}${details}`;
+    
+    logAiEvent("error", `Analysis failed with ${errorProvider} [${errorModel}]: ${error.message}`, {
+      status: error?.status || statusCode,
+      details: error.message,
+    });
     
     return response.status(statusCode).json({
       error: fullError,

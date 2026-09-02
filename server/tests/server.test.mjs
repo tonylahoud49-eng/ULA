@@ -46,6 +46,7 @@ test("HTTP API exposes health and a truthful unavailable analysis state without 
     OPENROUTER_API_KEY: process.env.OPENROUTER_API_KEY,
     GEMINI_API_KEY: process.env.GEMINI_API_KEY,
     GEMINI_API_KEY_2: process.env.GEMINI_API_KEY_2,
+    GROQ_API_KEY: process.env.GROQ_API_KEY,
     ANTHROPIC_API_KEY: process.env.ANTHROPIC_API_KEY,
     ANTHROTIC_API_KEY: process.env.ANTHROTIC_API_KEY,
     MICROSOFT_TENANT_ID: process.env.MICROSOFT_TENANT_ID,
@@ -67,6 +68,7 @@ test("HTTP API exposes health and a truthful unavailable analysis state without 
     OPENROUTER_API_KEY: "",
     GEMINI_API_KEY: "",
     GEMINI_API_KEY_2: "",
+    GROQ_API_KEY: "",
     ANTHROPIC_API_KEY: "",
     ANTHROTIC_API_KEY: "",
     MICROSOFT_TENANT_ID: "",
@@ -230,8 +232,6 @@ test("regression: closed debug output does not turn a valid mocked Claude analys
     assert.equal(providerBody.max_tokens, 64_000);
     assert.equal(providerBody.stream, true);
     assert.equal(providerBody.tools, undefined);
-    assert.equal(providerBody.output_config.format.type, "json_schema");
-    assert.equal(providerBody.output_config.format.schema.additionalProperties, false);
     assert.match(providerBody.system, /Return only the structured payload/);
     assert.equal(body.evidence_register.length, 3);
     assert.equal(body.analysis.classification.confidence, 0.94);

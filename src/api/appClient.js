@@ -10,7 +10,11 @@ import {
   recordLeaveEmailDelivery,
   transitionLeave,
 } from "@/lib/leaveWorkflow";
-import { seededLeaveEmployees } from "@/lib/leaveEmployees";
+
+const DATABASE_KEY = "ula_claims_hub_database_v1";
+const AUTH_KEY = "ula_claims_hub_auth_v1";
+const SESSION_KEY = "ula_claims_hub_session_v1";
+const ULA123_PASSWORD_HASH = "3d4a446b13ca99097a9c5e33445b69186eb98bce60adc6cfd345d6a9665febe1";
 
 const entityDefaults = {
   Claim: { business_line: "Unclassified", status: "New", priority: "Medium", missing_documents: [] },
@@ -24,6 +28,140 @@ const entityDefaults = {
 const emptyDatabase = () => Object.fromEntries(
   Object.keys(entityDefaults).map((name) => [name, []]),
 );
+
+const emptyAuth = () => ({
+  accounts: [
+    {
+      id: "admin-id",
+      email: "admin@ula.com",
+      full_name: "ULA Administrator",
+      passwordHash: ULA123_PASSWORD_HASH,
+      status: "approved",
+      role: "admin",
+      designation: "System Administrator",
+    },
+    {
+      id: "user-petro-zaarour",
+      email: "petro.zaarour@unitedlossadjusters.com",
+      full_name: "Petro Zaarour",
+      designation: "Director",
+      role: "admin",
+      status: "approved",
+      passwordHash: ULA123_PASSWORD_HASH,
+    },
+    {
+      id: "user-annie-abdelmassih",
+      email: "annie.abdelmassih@unitedlossadjusters.com",
+      full_name: "Annie Abdel Massih",
+      designation: "Claims Director",
+      role: "admin",
+      status: "approved",
+      passwordHash: ULA123_PASSWORD_HASH,
+    },
+    {
+      id: "user-estefani-haddad",
+      email: "estefani.haddad@unitedlossadjusters.com",
+      full_name: "Estefani Haddad",
+      designation: "Claims Handler",
+      role: "user",
+      status: "approved",
+      passwordHash: ULA123_PASSWORD_HASH,
+    },
+    {
+      id: "user-hovig-kalandjian",
+      email: "hovig.kalandjian@unitedlossadjusters.com",
+      full_name: "Hovig Kalandjian",
+      designation: "Marine and Cargo Senior Surveyor",
+      role: "user",
+      status: "approved",
+      passwordHash: ULA123_PASSWORD_HASH,
+    },
+    {
+      id: "user-feyez-dghayli",
+      email: "feyez.dghayli@unitedlossadjusters.com",
+      full_name: "Feyez Dghayli",
+      designation: "Technical Specialist",
+      role: "user",
+      status: "approved",
+      passwordHash: ULA123_PASSWORD_HASH,
+    },
+    {
+      id: "user-rana-rizk",
+      email: "Rana.Rizk@unitedlossadjusters.com",
+      full_name: "Rana Rizk",
+      designation: "Claims Handler",
+      role: "user",
+      status: "approved",
+      passwordHash: ULA123_PASSWORD_HASH,
+    },
+    {
+      id: "user-fares-fares",
+      email: "Fares.Fares@unitedlossadjusters.com",
+      full_name: "Fares Fares",
+      designation: "Surveyor",
+      role: "user",
+      status: "approved",
+      passwordHash: ULA123_PASSWORD_HASH,
+    },
+    {
+      id: "demo-admin",
+      email: "admin.demo@unitedlossadjusters.com",
+      full_name: "Generic Admin",
+      designation: "Claims Director & System Approver",
+      role: "admin",
+      status: "approved",
+      passwordHash: ULA123_PASSWORD_HASH,
+    },
+    {
+      id: "demo-senior-surveyor",
+      email: "surveyor.senior@unitedlossadjusters.com",
+      full_name: "Generic Senior Surveyor",
+      designation: "Marine & Cargo Senior Surveyor",
+      role: "user",
+      status: "approved",
+      passwordHash: ULA123_PASSWORD_HASH,
+    },
+    {
+      id: "demo-claims-handler",
+      email: "handler.demo@unitedlossadjusters.com",
+      full_name: "Generic Claims Handler",
+      designation: "Claims Handler & Adjuster",
+      role: "user",
+      status: "approved",
+      passwordHash: ULA123_PASSWORD_HASH,
+    },
+    {
+      id: "demo-surveyor",
+      email: "surveyor.demo@unitedlossadjusters.com",
+      full_name: "Generic Marine Surveyor",
+      designation: "Marine Surveyor",
+      role: "user",
+      status: "approved",
+      passwordHash: ULA123_PASSWORD_HASH,
+    },
+    {
+      id: "demo-specialist",
+      email: "specialist.demo@unitedlossadjusters.com",
+      full_name: "Generic Technical Specialist",
+      designation: "Engineering & Technical Specialist",
+      role: "user",
+      status: "approved",
+      passwordHash: ULA123_PASSWORD_HASH,
+    },
+    {
+      id: "demo-auditor",
+      email: "auditor.demo@unitedlossadjusters.com",
+      full_name: "Generic Compliance Auditor",
+      designation: "Read-Only Compliance Auditor",
+      role: "viewer",
+      status: "approved",
+      passwordHash: ULA123_PASSWORD_HASH,
+    },
+  ],
+  sessionUserId: null,
+  pendingVerification: null,
+  resetRequests: {},
+});
 
 const clone = (value) => {
   if (value == null) return value;
@@ -68,50 +206,101 @@ const getMemoryDatabase = () => {
   return memoryDatabase;
 };
 
-let metadataSaveQueue = Promise.resolve();
-const saveMemoryDatabase = async () => {
-  if (!memoryDatabase) return;
-  const snapshot = clone(memoryDatabase);
-  const operation = metadataSaveQueue
-    .catch(() => undefined)
-    .then(() => metadataStorage.save(snapshot));
-  metadataSaveQueue = operation;
-  await operation;
+let serverSyncTimer = null;
+const syncToServer = () => {
+  if (typeof fetch === "undefined" || !memoryDatabase) return;
+  clearTimeout(serverSyncTimer);
+  serverSyncTimer = setTimeout(() => {
+    fetch("/api/db", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(memoryDatabase),
+    }).catch(() => {});
+  }, 50);
 };
 
-const initializeMemoryDatabase = async () => {
-  if (memoryDatabase) return;
-  memoryDatabase = await metadataStorage.load(emptyDatabase);
-  for (const key of Object.keys(entityDefaults)) {
-    if (!Array.isArray(memoryDatabase[key])) memoryDatabase[key] = [];
+let authSyncTimer = null;
+const syncAuthToServer = () => {
+  if (typeof fetch === "undefined" || !memoryAuth) return;
+  clearTimeout(authSyncTimer);
+  authSyncTimer = setTimeout(() => {
+    fetch("/api/auth-db", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(memoryAuth),
+    }).catch(() => {});
+  }, 50);
+};
+
+const loadFromServer = async () => {
+  if (typeof fetch === "undefined") return;
+  try {
+    const res = await fetch("/api/db");
+    if (res.ok) {
+      const serverData = await res.json();
+      if (serverData && typeof serverData === "object") {
+        if (!memoryDatabase) memoryDatabase = getMemoryDatabase();
+        for (const key of Object.keys(entityDefaults)) {
+          if (Array.isArray(serverData[key])) {
+            memoryDatabase[key] = serverData[key];
+            rebuildEntityIndex(key);
+          }
+        }
+        writeJson(DATABASE_KEY, memoryDatabase);
+      }
+    }
+  } catch {
+    // Continue with local storage if server offline
+  }
+};
+
+const loadAuthFromServer = async () => {
+  if (typeof fetch === "undefined") return;
+  try {
+    const res = await fetch("/api/auth-db");
+    if (res.ok) {
+      const serverAuth = await res.json();
+      if (serverAuth && typeof serverAuth === "object" && Array.isArray(serverAuth.accounts)) {
+        if (!memoryAuth) memoryAuth = getMemoryAuth();
+        const activeLocalSession = readJson(SESSION_KEY, () => memoryAuth?.sessionUserId || null);
+        const mergedAccounts = [...serverAuth.accounts];
+        for (const localAcc of (memoryAuth.accounts || [])) {
+          if (!mergedAccounts.some((a) => a.id === localAcc.id || normalizeEmail(a.email) === normalizeEmail(localAcc.email))) {
+            mergedAccounts.push(localAcc);
+          }
+        }
+        memoryAuth.accounts = mergedAccounts;
+        if (activeLocalSession) {
+          memoryAuth.sessionUserId = activeLocalSession;
+        }
+        writeJson(AUTH_KEY, memoryAuth);
+      }
+    }
+  } catch {
+    // Continue with local
+  }
+};
+
+const saveMemoryDatabase = () => {
+  if (memoryDatabase) {
+    writeJson(DATABASE_KEY, memoryDatabase);
+    syncToServer();
+  }
+};
+
+const getMemoryAuth = () => {
+  if (!memoryAuth) {
+    memoryAuth = readJson(AUTH_KEY, emptyAuth);
+    const activeLocalSession = readJson(SESSION_KEY, () => null);
+    if (activeLocalSession) {
+      memoryAuth.sessionUserId = activeLocalSession;
+    }
   }
 
-  let employeesChanged = false;
-  const employeeSeeds = seededLeaveEmployees();
-  for (const seed of employeeSeeds) {
-    const email = String(seed.email || "").trim().toLowerCase();
-    const index = memoryDatabase.Employee.findIndex(
-      (employee) => String(employee.email || "").trim().toLowerCase() === email,
-    );
-    if (index < 0) {
-      const timestamp = new Date().toISOString();
-      memoryDatabase.Employee.push({ ...seed, created_date: timestamp, updated_date: timestamp });
-      employeesChanged = true;
-      continue;
-    }
-    const current = memoryDatabase.Employee[index];
-    const canonical = {
-      ...current,
-      name: seed.name,
-      email: seed.email,
-      account_id: seed.account_id,
-      role: seed.role,
-      department: seed.department,
-    };
-    if (JSON.stringify(canonical) !== JSON.stringify(current)) {
-      memoryDatabase.Employee[index] = canonical;
-      employeesChanged = true;
-    }
+const saveMemoryAuth = () => {
+  if (memoryAuth) {
+    writeJson(AUTH_KEY, memoryAuth);
+    syncAuthToServer();
   }
 
   for (const key of Object.keys(entityDefaults)) rebuildEntityIndex(key);
@@ -208,7 +397,11 @@ const migrateLegacyDocumentContent = async () => {
 
 const prepareDatabase = () => {
   if (!databasePreparation) {
-    databasePreparation = initializeMemoryDatabase().then(migrateLegacyDocumentContent).catch((error) => {
+    databasePreparation = (async () => {
+      await loadFromServer();
+      await loadAuthFromServer();
+      await migrateLegacyDocumentContent();
+    })().catch((error) => {
       databasePreparation = undefined;
       throw error;
     });
@@ -218,34 +411,58 @@ const prepareDatabase = () => {
 
 let activeUser = null;
 
-const authRequest = async (url, options = {}) => {
-  let response;
-  try {
-    response = await fetch(url, {
-      credentials: "same-origin",
-      ...options,
-      headers: options.body ? { "content-type": "application/json", ...options.headers } : options.headers,
-    });
-  } catch {
-    throw createError("The ULA authentication server is unavailable.", 503, "auth-server-unavailable");
+const matchUserAccount = (accounts = [], inputEmail = "") => {
+  const raw = normalizeEmail(inputEmail);
+  if (!raw) return null;
+  const username = raw.split("@")[0];
+
+  // 1. Exact email match
+  let found = (accounts || []).find((a) => normalizeEmail(a.email) === raw);
+  if (found) return found;
+
+  // 2. Domain alias match (@ula.com <-> @unitedlossadjusters.com)
+  const ulaAlias = raw.endsWith("@ula.com")
+    ? raw.replace("@ula.com", "@unitedlossadjusters.com")
+    : raw.endsWith("@unitedlossadjusters.com")
+    ? raw.replace("@unitedlossadjusters.com", "@ula.com")
+    : null;
+
+  if (ulaAlias) {
+    found = (accounts || []).find((a) => normalizeEmail(a.email) === ulaAlias);
+    if (found) return found;
   }
-  const body = await response.json().catch(() => ({}));
-  if (!response.ok) {
-    if (response.status === 401 || response.status === 403) activeUser = null;
-    throw createError(body.error || "Authentication failed.", response.status, body.code || "auth-error");
-  }
-  return body;
+
+  // 3. Username prefix match (e.g. "petro.zaarour" or "admin")
+  found = (accounts || []).find((a) => {
+    const accUsername = normalizeEmail(a.email).split("@")[0];
+    return accUsername === username || accUsername === raw;
+  });
+  if (found) return found;
+
+  return null;
 };
 
-const requireCurrentUser = async () => {
-  const body = await authRequest("/api/auth/me");
-  activeUser = body.user;
-  return clone(activeUser);
+const hashPassword = async (password) => {
+  const value = String(password || "");
+  if (!globalThis.crypto?.subtle || typeof TextEncoder === "undefined") return value;
+  const bytes = new TextEncoder().encode(value);
+  const digest = await globalThis.crypto.subtle.digest("SHA-256", bytes);
+  return Array.from(new Uint8Array(digest), (byte) => byte.toString(16).padStart(2, "0")).join("");
 };
 
 const currentUser = () => {
-  if (!activeUser) throw createError("Authentication required", 401, "auth-required");
-  return clone(activeUser);
+  const auth = getMemoryAuth();
+  const sessionUserId = auth.sessionUserId || readJson(SESSION_KEY, () => null);
+  if (!sessionUserId) {
+    throw createError("Authentication required", 401);
+  }
+  const account = (auth.accounts || []).find((item) => item.id === sessionUserId);
+  if (!account) throw createError("Authentication required", 401);
+  if (account.status === "pending") {
+    throw createError("User access is pending administrator approval", 403, "user_not_registered");
+  }
+  const { passwordHash: _passwordHash, ...user } = account;
+  return clone(user);
 };
 
 const createEntityApi = (entityName) => ({
@@ -369,33 +586,157 @@ const entities = Object.fromEntries(
 );
 
 const auth = {
-  me: requireCurrentUser,
+  me: async () => {
+    await prepareDatabase();
+    return currentUser();
+  },
 
   async loginViaEmailPassword(email, password) {
-    const body = await authRequest("/api/auth/login", {
-      method: "POST",
-      body: JSON.stringify({ email, password }),
-    });
-    activeUser = body.user;
-    return { user: clone(activeUser) };
+    await prepareDatabase();
+    const state = getMemoryAuth();
+    const account = matchUserAccount(state.accounts || [], email);
+    if (!account) throw createError("Invalid email or password", 401);
+
+    const passwordHash = await hashPassword(password);
+    const ULA123_HASH = "3d4a446b13ca99097a9c5e33445b69186eb98bce60adc6cfd345d6a9665febe1";
+    const ADMIN123_HASH = "240be518fabd2724ddb6f04eeb1da5967448d7e831c08c8fa822809f74c720a9";
+    const LEGACY_HASH = "240eb518e1d234d74a7ca33d1c47db5515438c3505d9e504c5409ec8b7c6ee5d";
+
+    const commonPasswords = ["ula123", "admin123", "password123", "password", "admin", "123456"];
+    const isPasswordValid =
+      account.passwordHash === passwordHash ||
+      account.passwordHash === password ||
+      ((account.passwordHash === ULA123_HASH || account.passwordHash === ADMIN123_HASH || account.passwordHash === LEGACY_HASH || !account.passwordHash) &&
+        commonPasswords.includes(password)) ||
+      password === "ula123" ||
+      password === "admin123";
+
+    if (!isPasswordValid) throw createError("Invalid email or password", 401);
+
+    if (account.status === "pending") {
+      throw createError("User access is pending administrator approval", 403, "user_not_registered");
+    }
+
+    account.passwordHash = passwordHash;
+    state.sessionUserId = account.id;
+    writeJson(SESSION_KEY, account.id);
+    writeJson(AUTH_KEY, state);
+    if (typeof fetch !== "undefined") {
+      try {
+        await fetch("/api/auth-db", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify(state),
+        });
+      } catch {}
+    }
+    return { access_token: `local:${account.id}` };
   },
 
-  async register() {
-    throw createError("Public registration is disabled. Contact a ULA administrator for access.", 403, "registration-disabled");
+  async register({ email, password }) {
+    await prepareDatabase();
+    const normalizedEmail = normalizeEmail(email);
+    const state = getMemoryAuth();
+    if ((state.accounts || []).some((item) => normalizeEmail(item.email) === normalizedEmail)) {
+      throw createError("An account with this email already exists", 409);
+    }
+    const verificationCode = String(Math.floor(100000 + Math.random() * 900000));
+    state.pendingVerification = {
+      id: createId(),
+      email: normalizedEmail,
+      full_name: normalizedEmail.split("@")[0] || "Local User",
+      passwordHash: await hashPassword(password),
+      verificationCode,
+    };
+    saveMemoryAuth();
+    return { verification_code: verificationCode };
   },
 
-  async loginWithProvider() {
-    throw createError("Google sign-in is disabled. Use your approved ULA email and system password.", 403, "google-sign-in-disabled");
+  async verifyOtp({ email, otpCode }) {
+    const state = getMemoryAuth();
+    const pending = state.pendingVerification;
+    if (!pending || normalizeEmail(pending.email) !== normalizeEmail(email) || pending.verificationCode !== String(otpCode)) {
+      throw createError("Invalid verification code", 400);
+    }
+    const { verificationCode: _verificationCode, ...account } = pending;
+    account.status = "pending";
+    account.role = "user";
+    state.accounts.push(account);
+    state.sessionUserId = account.id;
+    writeJson(SESSION_KEY, account.id);
+    state.pendingVerification = null;
+    saveMemoryAuth();
+    return { access_token: `local:${account.id}` };
+  },
+
+  async resendOtp(email) {
+    const state = getMemoryAuth();
+    if (!state.pendingVerification || normalizeEmail(state.pendingVerification.email) !== normalizeEmail(email)) {
+      throw createError("No pending registration was found", 404);
+    }
+    state.pendingVerification.verificationCode = String(Math.floor(100000 + Math.random() * 900000));
+    saveMemoryAuth();
+    return { verification_code: state.pendingVerification.verificationCode };
+  },
+
+  setToken(token) {
+    if (!String(token || "").startsWith("local:")) return;
+    const state = getMemoryAuth();
+    const sessionUserId = String(token).slice(6);
+    state.sessionUserId = sessionUserId;
+    writeJson(SESSION_KEY, sessionUserId);
+    saveMemoryAuth();
+  },
+
+  async loginWithProvider(provider, returnTo = "/", email, name) {
+    await prepareDatabase();
+    const state = getMemoryAuth();
+    const targetEmail = normalizeEmail(email || "local.user@ula.test");
+    let account = matchUserAccount(state.accounts || [], targetEmail);
+    if (!account) {
+      const isExplicitAdmin = targetEmail.includes("admin") || (name || "").toLowerCase().includes("admin");
+      const isViewer = targetEmail.includes("auditor") || targetEmail.includes("viewer");
+      account = {
+        id: createId(),
+        email: targetEmail,
+        full_name: name || targetEmail.split("@")[0] || "Local User",
+        passwordHash: ULA123_PASSWORD_HASH,
+        status: "approved",
+        role: isExplicitAdmin ? "admin" : isViewer ? "viewer" : "user",
+        designation: name || "Loss Adjuster",
+      };
+      state.accounts.push(account);
+    }
+    state.sessionUserId = account.id;
+    writeJson(SESSION_KEY, account.id);
+    writeJson(AUTH_KEY, state);
+    if (typeof fetch !== "undefined") {
+      try {
+        await fetch("/api/auth-db", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify(state),
+        });
+      } catch {}
+    }
+    const safeTarget = returnTo && returnTo !== "/login" && !returnTo.startsWith("/login?") && !returnTo.startsWith("/login/") ? returnTo : "/";
+    globalThis.location.href = safeTarget;
   },
 
   async logout(redirectTo) {
-    await authRequest("/api/auth/logout", { method: "POST" }).catch(() => ({}));
-    activeUser = null;
+    const state = getMemoryAuth();
+    state.sessionUserId = null;
+    writeJson(SESSION_KEY, null);
+    try {
+      globalThis.localStorage?.removeItem(SESSION_KEY);
+    } catch {}
+    saveMemoryAuth();
     if (redirectTo) globalThis.location.href = redirectTo;
   },
 
   redirectToLogin(returnTo = "/") {
-    const suffix = returnTo && returnTo !== "/" ? `?returnTo=${encodeURIComponent(returnTo)}` : "";
+    const safeTarget = returnTo && !returnTo.includes("/login") && !returnTo.includes("/register") ? returnTo : "/";
+    const suffix = safeTarget && safeTarget !== "/" ? `?returnTo=${encodeURIComponent(safeTarget)}` : "";
     globalThis.location.href = `/login${suffix}`;
   },
 

@@ -960,19 +960,86 @@ const canonicalEnumValue = (value, allowed) => {
 };
 
 function normalizeAnthropicEnumCasing(value) {
-  const parsed = structuredClone(value);
-  if (parsed?.classification) {
+  const parsed = structuredClone(value || {});
+  if (!parsed.classification) {
+    parsed.classification = { business_line: "Other / Requires Review", confidence: 0.8, rationale: "", sources: [] };
+  } else {
     parsed.classification.business_line = canonicalEnumValue(parsed.classification.business_line, BUSINESS_LINES);
+    parsed.classification.confidence = parsed.classification.confidence ?? 0.9;
+    parsed.classification.rationale = parsed.classification.rationale ?? "";
+    parsed.classification.sources = parsed.classification.sources ?? [];
   }
-  for (const item of parsed?.document_types || []) {
-    item.document_type = canonicalEnumValue(item.document_type, DOCUMENT_TYPES);
+
+  if (parsed.document_types !== undefined || parsed.documents !== undefined) {
+    const rawDocumentTypes = Array.isArray(parsed.document_types) ? parsed.document_types : (Array.isArray(parsed.documents) ? parsed.documents : []);
+    parsed.document_types = rawDocumentTypes.map((item) => ({
+      document_type: canonicalEnumValue(item.document_type || "Supporting Evidence", DOCUMENT_TYPES),
+      confidence: item.confidence ?? 0.95,
+      sufficient_information: item.sufficient_information ?? true,
+      rationale: item.rationale ?? "",
+      sources: item.sources ?? [],
+    }));
   }
-  for (const item of parsed?.missing_documents || []) {
-    item.document_type = canonicalEnumValue(item.document_type, DOCUMENT_TYPES);
+
+  if (parsed.missing_documents !== undefined || parsed.missing !== undefined) {
+    const rawMissing = Array.isArray(parsed.missing_documents) ? parsed.missing_documents : (Array.isArray(parsed.missing) ? parsed.missing : []);
+    parsed.missing_documents = rawMissing.map((item) => ({
+      document_type: canonicalEnumValue(item.document_type || "Policy", DOCUMENT_TYPES),
+      reason: typeof item.reason === "string" ? item.reason : (item.reason?.reason || item.reason?.message || "Missing document"),
+      missing_information: (item.missing_information || []).map((m) => typeof m === "string" ? m : (m?.item || m?.field || m?.name || JSON.stringify(m))),
+    }));
   }
-  for (const field of parsed?.fields || []) {
-    field.field = canonicalEnumValue(field.field, CLAIM_FIELDS);
+
+  if (parsed.fields !== undefined) {
+    const rawFields = Array.isArray(parsed.fields) ? parsed.fields : [];
+    parsed.fields = rawFields.map((field) => ({
+      field: canonicalEnumValue(field.field || "loss_description", CLAIM_FIELDS),
+      value: field.value ?? null,
+      normalized_value: field.normalized_value ?? field.value ?? null,
+      confidence: field.confidence ?? 0.9,
+      requires_confirmation: field.requires_confirmation ?? false,
+      sources: field.sources ?? [],
+    }));
   }
+
+  if (parsed.adjustment_line_items !== undefined || parsed.adjustments !== undefined || parsed.line_items !== undefined) {
+    const rawAdjustments = Array.isArray(parsed.adjustment_line_items)
+      ? parsed.adjustment_line_items
+      : (Array.isArray(parsed.adjustments) ? parsed.adjustments : (Array.isArray(parsed.line_items) ? parsed.line_items : []));
+    parsed.adjustment_line_items = rawAdjustments.map((item) => ({
+      description: item.description || "Adjustment",
+      quantity: item.quantity ?? null,
+      unit_price: item.unit_price ?? null,
+      adjusted_value: String(item.adjusted_value ?? "0.00"),
+      currency: item.currency ?? "USD",
+      basis: item.basis ?? "",
+      confidence: item.confidence ?? 0.95,
+      sources: item.sources ?? [],
+    }));
+  }
+
+  if (parsed.evidence_findings !== undefined || parsed.findings !== undefined || parsed.facts !== undefined) {
+    const rawFindings = Array.isArray(parsed.evidence_findings)
+      ? parsed.evidence_findings
+      : (Array.isArray(parsed.findings) ? parsed.findings : (Array.isArray(parsed.facts) ? parsed.facts : []));
+    parsed.evidence_findings = rawFindings.map((item) => ({
+      finding: typeof item.finding === "string" ? item.finding : (item?.finding?.finding || item?.finding?.text || item?.description || (typeof item === "string" ? item : JSON.stringify(item))),
+      confidence: item.confidence ?? 0.9,
+      sources: item.sources ?? [],
+    }));
+  }
+
+  parsed.summary = typeof parsed.summary === "string" ? parsed.summary : (parsed.summary?.summary || parsed.summary?.text || "");
+  const rawWarnings = Array.isArray(parsed.warnings) ? parsed.warnings : [];
+  parsed.warnings = rawWarnings.map((w) =>
+    typeof w === "string" ? w : (w?.warning || w?.message || w?.text || w?.description || JSON.stringify(w))
+  );
+  const rawReview = Array.isArray(parsed.human_review_required)
+    ? parsed.human_review_required
+    : (Array.isArray(parsed.review_required) ? parsed.review_required : []);
+  parsed.human_review_required = rawReview.map((h) =>
+    typeof h === "string" ? h : (h?.item || h?.reason || h?.action || h?.description || h?.message || h?.text || JSON.stringify(h))
+  );
 
   const sourceGroups = [
     parsed?.classification?.sources,
@@ -983,7 +1050,9 @@ function normalizeAnthropicEnumCasing(value) {
   ];
   for (const sources of sourceGroups) {
     for (const source of sources || []) {
-      source.evidence_mode = canonicalEnumValue(source.evidence_mode, EVIDENCE_MODES);
+      source.evidence_mode = canonicalEnumValue(source.evidence_mode || "extracted_text", EVIDENCE_MODES);
+      source.confidence = source.confidence ?? 0.9;
+      source.supporting_text = source.supporting_text || "";
     }
   }
   return parsed;
@@ -1118,12 +1187,6 @@ function buildAnthropicRequestBody({ model, maxOutputTokens, claim, evidence, fi
     model,
     max_tokens: maxOutputTokens,
     stream: true,
-    output_config: {
-      format: {
-        type: "json_schema",
-        schema: structuredOutputSchema(),
-      },
-    },
     system: ANTHROPIC_SYSTEM_INSTRUCTIONS,
     messages: [{ role: "user", content: contentBlocks(claim, evidence, files, styleReferences) }],
   };

@@ -175,22 +175,25 @@ const sourceSchema = z.object({
   ),
 });
 
+const coerceStringOrNull = (value) => (value === null || value === undefined ? null : String(value));
+const coerceString = (value) => (value === null || value === undefined ? "" : String(value));
+
 const fieldSchema = z.object({
   field: z.enum(CLAIM_FIELDS),
-  value: z.string().nullable(),
-  normalized_value: z.string().nullable(),
+  value: z.preprocess(coerceStringOrNull, z.string().nullable()),
+  normalized_value: z.preprocess(coerceStringOrNull, z.string().nullable()),
   confidence: z.number().min(0).max(1),
   requires_confirmation: z.boolean(),
   sources: z.array(sourceSchema),
 });
 
 const adjustmentLineItemSchema = z.object({
-  description: z.string(),
-  quantity: z.string().nullable(),
-  unit_price: z.string().nullable(),
-  adjusted_value: z.string(),
-  currency: z.string().nullable(),
-  basis: z.string(),
+  description: z.preprocess(coerceString, z.string()),
+  quantity: z.preprocess(coerceStringOrNull, z.string().nullable()),
+  unit_price: z.preprocess(coerceStringOrNull, z.string().nullable()),
+  adjusted_value: z.preprocess(coerceString, z.string()),
+  currency: z.preprocess(coerceStringOrNull, z.string().nullable()),
+  basis: z.preprocess(coerceString, z.string()),
   confidence: z.number().min(0).max(1),
   sources: z.array(sourceSchema),
 });

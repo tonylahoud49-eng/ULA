@@ -1,7 +1,28 @@
 import React, { useEffect, useState } from "react";
 import { Select, SelectContent, SelectItem, SelectTrigger } from "@/components/ui/select";
 import { Switch } from "@/components/ui/switch";
-import { formatModelDisplayName } from "@/components/AIAnalysisProgressCard";
+import { Button } from "@/components/ui/button";
+import {
+  Dialog,
+  DialogContent,
+  DialogDescription,
+  DialogHeader,
+  DialogTitle,
+  DialogTrigger,
+} from "@/components/ui/dialog";
+import { Input } from "@/components/ui/input";
+import { Sparkles, Activity, CheckCircle2, AlertCircle, Loader2, Send } from "lucide-react";
+
+export const POPULAR_MODELS = [
+  { value: "openrouter:openrouter/auto", label: "openrouter/auto (Auto-route)", provider: "openrouter", model: "openrouter/auto", org: "OpenRouter" },
+  { value: "openrouter:meta-llama/llama-3.3-70b-instruct", label: "llama-3.3-70b-instruct", provider: "openrouter", model: "meta-llama/llama-3.3-70b-instruct", org: "OpenRouter" },
+  { value: "openrouter:deepseek/deepseek-chat", label: "deepseek-chat", provider: "openrouter", model: "deepseek/deepseek-chat", org: "OpenRouter" },
+  { value: "groq:openai/gpt-oss-120b", label: "gpt-oss-120b (Ultra-fast)", provider: "groq", model: "openai/gpt-oss-120b", org: "Groq" },
+  { value: "gemini:gemini-3.6-flash", label: "gemini-3.6-flash", provider: "gemini", model: "gemini-3.6-flash", org: "Google" },
+  { value: "anthropic:claude-sonnet-4-6", label: "claude-sonnet-4-6", provider: "anthropic", model: "claude-sonnet-4-6", org: "Anthropic" },
+  { value: "openai:gpt-4o", label: "gpt-4o", provider: "openai", model: "gpt-4o", org: "OpenAI" },
+  { value: "ollama:llama3.3", label: "llama3.3", provider: "ollama", model: "llama3.3", org: "Ollama" },
+];
 
 export default function AIModelSelector({
   value,
@@ -11,8 +32,11 @@ export default function AIModelSelector({
   enableFallback = true,
   onEnableFallbackChange,
 }) {
-  const [providers, setProviders] = useState([]);
-  const [loading, setLoading] = useState(true);
+  const [modelList, setModelList] = useState(POPULAR_MODELS);
+  const [isTestOpen, setIsTestOpen] = useState(false);
+  const [testPrompt, setTestPrompt] = useState("Hello! Acknowledge this test and state your model name.");
+  const [testing, setTesting] = useState(false);
+  const [testResult, setTestResult] = useState(null);
 
   useEffect(() => {
     let active = true;
@@ -24,13 +48,29 @@ export default function AIModelSelector({
           ? data.configured_providers
           : [{ provider: data.provider || "anthropic", model: data.model || "claude-sonnet-4-6" }];
         
-        setProviders(list);
-        
-        // Auto-select initial if not set
+        if (data.configured_providers && data.configured_providers.length > 0) {
+          setModelList((prev) => {
+            const updated = [...prev];
+            data.configured_providers.forEach((cp) => {
+              const key = `${cp.provider}:${cp.model}`;
+              if (!updated.some((item) => item.value === key || item.model === cp.model)) {
+                updated.unshift({
+                  value: key,
+                  label: cp.model,
+                  provider: cp.provider,
+                  model: cp.model,
+                  org: cp.provider.toUpperCase(),
+                });
+              }
+            });
+            return updated;
+          });
+        }
+
         if (!value) {
           const saved = localStorage.getItem("ula_ai_selected_provider");
-          const found = list.find((p) => p.provider === saved);
-          const initial = found ? found.provider : list[0].provider;
+          const found = POPULAR_MODELS.find((p) => p.value === saved || p.model === saved || p.provider === saved);
+          const initial = found ? found.value : POPULAR_MODELS[0].value;
           onChange(initial);
         }
 
@@ -63,35 +103,67 @@ export default function AIModelSelector({
     }
   };
 
-  if (loading || providers.length === 0) {
-    return (
-      <div className={`h-9 min-w-[190px] rounded border border-border/80 bg-background px-3 py-1.5 text-xs text-muted-foreground flex items-center gap-1.5 ${className}`}>
-        <span className="h-1.5 w-1.5 rounded-full bg-primary/60" />
-        <span className="truncate">Loading models…</span>
-      </div>
-    );
-  }
+  const selectedItem = modelList.find((p) => p.value === value || p.provider === value || p.model === value) || {
+    value: value || "gemini:gemini-3.6-flash",
+    label: value || "gemini-3.6-flash",
+    provider: (value || "").split(":")[0] || "gemini",
+    model: (value || "").includes(":") ? (value || "").split(":").slice(1).join(":") : (value || "gemini-3.6-flash"),
+    org: "Configured",
+  };
+
+  const handleRunTest = async (overridePrompt) => {
+    const promptToSend = overridePrompt || testPrompt;
+    setTesting(true);
+    setTestResult(null);
+
+    const controller = new AbortController();
+    const timeoutId = setTimeout(() => controller.abort(), 10000);
+
+    try {
+      const res = await fetch("/api/ai/test-chat", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          provider: selectedItem.provider,
+          model: selectedItem.model,
+          prompt: promptToSend,
+        }),
+        signal: controller.signal,
+      });
+      clearTimeout(timeoutId);
+      const data = await res.json();
+      setTestResult(data);
+    } catch (err) {
+      clearTimeout(timeoutId);
+      setTestResult({
+        ok: false,
+        error: err.name === "AbortError"
+          ? `Connection timed out after 10s. The model '${selectedItem.model}' is unreachable or rate-limited.`
+          : (err.message || "Failed to reach AI server."),
+        latency_ms: 10000,
+      });
+    } finally {
+      setTesting(false);
+    }
+  };
 
   return (
     <div className={`flex flex-wrap items-center gap-3 ${className}`}>
-      <Select value={value || providers[0]?.provider} onValueChange={handleSelect} disabled={disabled}>
-        <SelectTrigger className="h-9 min-w-[210px] max-w-[260px] bg-background text-xs font-medium border-border shadow-xs hover:border-primary/40 focus:ring-1 focus:ring-primary">
+      <Select value={selectedItem.value} onValueChange={handleSelect} disabled={disabled}>
+        <SelectTrigger className="h-9 min-w-[240px] max-w-[320px] bg-background text-xs font-medium border-border shadow-xs hover:border-primary/40 focus:ring-1 focus:ring-primary">
           <div className="flex items-center gap-2 truncate">
-            <span className="docket-label text-[0.62rem] text-muted-foreground">Model</span>
-            <span className="font-mono text-[0.73rem] truncate font-semibold text-foreground">
-              {formatModelDisplayName(
-                value || providers[0]?.provider,
-                providers.find((p) => p.provider === (value || providers[0]?.provider))?.model
-              )}
+            <span className="docket-label text-[0.62rem] text-muted-foreground uppercase font-semibold">{selectedItem.provider}</span>
+            <span className="font-mono text-[0.75rem] truncate font-semibold text-foreground">
+              {selectedItem.model}
             </span>
           </div>
         </SelectTrigger>
-        <SelectContent align="end" className="min-w-[240px]">
-          {providers.map((p) => (
-            <SelectItem key={p.provider} value={p.provider} className="text-xs">
-              <div className="flex flex-col py-0.5">
-                <span className="font-semibold text-foreground">{formatModelDisplayName(p.provider, p.model)}</span>
-                <span className="font-mono text-[0.68rem] text-muted-foreground">{p.model}</span>
+        <SelectContent align="end" className="min-w-[300px]">
+          {modelList.map((p) => (
+            <SelectItem key={p.value} value={p.value} className="text-xs">
+              <div className="flex items-center justify-between gap-3 w-full py-0.5">
+                <span className="font-mono font-semibold text-foreground text-xs">{p.model}</span>
+                <span className="text-[0.62rem] font-sans px-1.5 py-0.5 rounded bg-muted text-muted-foreground uppercase font-medium">{p.org || p.provider}</span>
               </div>
             </SelectItem>
           ))}

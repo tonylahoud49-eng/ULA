@@ -16,14 +16,14 @@ import { SYSTEM_INSTRUCTIONS, promptText, toDataUrl, enforceGrounding, parseStru
  */
 
 const OPENROUTER_BASE_URL = "https://openrouter.ai/api/v1";
-const DEFAULT_MODEL = "google/gemma-4-31b-it:free";
+const DEFAULT_MODEL = "meta-llama/llama-3.3-70b-instruct";
 const DEFAULT_MAX_COMPLETION_TOKENS = 16_384;
 
 function normalizeFallbackModels(value, primaryModel) {
   if (value === undefined) {
-    return primaryModel.endsWith(":free") && primaryModel !== "openrouter/free"
-      ? ["openrouter/free"]
-      : [];
+    return ["deepseek/deepseek-chat", "openai/gpt-4o-mini", "qwen/qwen-2.5-72b-instruct"].filter(
+      (m) => m !== primaryModel,
+    );
   }
   const values = Array.isArray(value) ? value : String(value).split(",");
   return [...new Set(values.map((item) => String(item).trim()).filter((item) => item && item !== primaryModel))];
@@ -60,9 +60,8 @@ function parseStructuredAnalysis(response) {
   }
 }
 
-function requiresJsonObjectCompatibility(model) {
-  const normalized = String(model || "").toLowerCase();
-  return normalized === "openrouter/free" || normalized.startsWith("google/gemma-4-");
+function requiresJsonObjectCompatibility(_model) {
+  return true;
 }
 
 function unwrapAnalysis(value) {
@@ -147,8 +146,9 @@ export function createOpenRouterProvider({
   const resolvedModel = model || DEFAULT_MODEL;
   const modelCandidates = [...new Set([
     resolvedModel,
-    resolvedModel.endsWith(":free") ? resolvedModel.replace(/:free$/, "") : null,
-    resolvedModel.includes(":free") ? DEFAULT_MODEL : null,
+    "meta-llama/llama-3.3-70b-instruct",
+    "deepseek/deepseek-chat",
+    "openai/gpt-4o-mini",
   ].filter(Boolean))];
   const resolvedFallbackModels = normalizeFallbackModels(fallbackModels, resolvedModel);
   const resolvedMaxCompletionTokens = normalizeMaxCompletionTokens(maxCompletionTokens);
@@ -274,10 +274,15 @@ export function createOpenRouterProvider({
       if (!parsed) {
         try {
           const content = response?.choices?.[0]?.message?.content;
-          parsed = normalizePartialAnalysis(JSON.parse(content || ""));
+          if (content) {
+            parsed = normalizePartialAnalysis(parseStructuredJson(content));
+          }
         } catch {
-          throw lastParseError;
+          // If partial rescue fails, throw the original error
         }
+      }
+      if (!parsed) {
+        throw lastParseError;
       }
 
       return {

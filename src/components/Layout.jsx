@@ -10,11 +10,13 @@ import {
   LogOut,
   Menu,
   Shield,
+  Terminal,
   X,
 } from "lucide-react";
 import { appClient } from "@/api/appClient";
 import { Button } from "@/components/ui/button";
 import { useAuth } from "@/lib/AuthContext";
+import AILogsModal from "@/components/AILogsModal";
 import ulaLogo from "@/assets/ula-logo.png";
 
 const navItems = [
@@ -144,8 +146,21 @@ export default function Layout() {
               <p className="mt-1 hidden text-xs text-muted-foreground sm:block">United Loss Adjusters &amp; Surveyors</p>
             </div>
           </div>
-          <div className="hidden items-center gap-3 sm:flex">
-            <span className="status-mark border-primary/30 bg-primary/5 text-primary">
+          <div className="flex items-center gap-3">
+            <AILogsModal
+              triggerButton={
+                <Button
+                  variant="outline"
+                  size="sm"
+                  className="h-8 gap-1.5 text-xs font-medium border-border/80 hover:bg-muted/80 shadow-xs"
+                  title="View real-time server AI analysis logs and diagnostics"
+                >
+                  <Terminal className="h-3.5 w-3.5 text-primary" />
+                  <span>AI Logs</span>
+                </Button>
+              }
+            />
+            <span className="hidden items-center gap-1.5 status-mark border-primary/30 bg-primary/5 text-primary sm:inline-flex">
               <ClipboardCheck className="h-3.5 w-3.5" /> Local development
             </span>
           </div>
