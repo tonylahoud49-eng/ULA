@@ -1097,15 +1097,41 @@ function ReportSection({ claimId, claim, documents, reports, onChanged }) {
   };
 
   const approve = async (r) => {
-    const user = await appClient.auth.me();
-    await appClient.entities.ReportVersion.update(r.id, {
-      status: "Final",
-      issue_state: "Final",
-      approved_by: user.full_name || user.email,
-      approved_date: new Date().toISOString(),
-    });
-    await appClient.entities.Claim.update(claimId, { status: "Report Final" });
-    await onChanged();
+    try {
+      const user = await appClient.auth.me();
+      const updatedAssignments = (r.assignments || []).map((assignment) => {
+        if (assignment.role === "approver") {
+          return {
+            ...assignment,
+            name: user.full_name || user.email,
+            designation: user.designation || "Loss Adjuster / Director",
+            status: "Signed & Validated",
+          };
+        }
+        return assignment;
+      });
+
+      await appClient.entities.ReportVersion.update(r.id, {
+        status: "Final",
+        issue_state: "Final",
+        human_approval_required: false,
+        approved_by: user.full_name || user.email,
+        approved_date: new Date().toISOString(),
+        assignments: updatedAssignments,
+      });
+      await appClient.entities.Claim.update(claimId, { status: "Report Final" });
+      await onChanged();
+      toast({
+        title: "Report Approved & Finalized",
+        description: `Controlled Version ${r.version_number} has been signed off and issued by ${user.full_name || user.email}.`,
+      });
+    } catch (e) {
+      toast({
+        variant: "destructive",
+        title: "Approval failed",
+        description: e.message || "Failed to approve report version",
+      });
+    }
   };
 
   const deleteReportVersion = async () => {
@@ -1182,6 +1208,7 @@ function ReportSection({ claimId, claim, documents, reports, onChanged }) {
         <div className="space-y-4">
           {reports.slice().reverse().map((r) => {
             const reportData = getReportData(r);
+            const isFinal = r.issue_state === "Final" || r.status === "Final";
             return (
             <article key={r.id} className="docket-surface overflow-hidden rounded-lg">
               <div className="flex flex-wrap items-center justify-between gap-3 border-b px-5 py-4">
@@ -1190,13 +1217,34 @@ function ReportSection({ claimId, claim, documents, reports, onChanged }) {
                   <div>
                     <div className="flex flex-wrap items-center gap-2">
                       <h4 className="font-heading text-lg font-semibold">Version {r.version_number}</h4>
-                      <span className="status-mark border-primary/30 bg-primary/5 text-primary">{r.issue_state || r.status || "Draft"}</span>
-                      {r.human_approval_required && <span className="status-mark border-amber-300 bg-amber-50 text-amber-800"><ShieldCheck className="h-3 w-3" /> Human review required</span>}
+                      <span className={`status-mark ${isFinal ? "border-emerald-300 bg-emerald-50 text-emerald-800 font-semibold" : "border-primary/30 bg-primary/5 text-primary"}`}>
+                        {r.issue_state || r.status || "Draft"}
+                      </span>
+                      {r.human_approval_required && !isFinal && (
+                        <span className="status-mark border-amber-300 bg-amber-50 text-amber-800">
+                          <ShieldCheck className="h-3 w-3" /> Human review required
+                        </span>
+                      )}
+                      {isFinal && (
+                        <span className="status-mark border-emerald-300 bg-emerald-50 text-emerald-800 flex items-center gap-1">
+                          <CheckCircle className="h-3 w-3 text-emerald-600" /> Signed off by {r.approved_by || "Director"}
+                        </span>
+                      )}
                     </div>
                     <p className="text-xs text-muted-foreground">{r.template_name} · {r.business_line || "Marine"} · {r.readiness?.overall_progress ?? 0}% completeness</p>
                   </div>
                 </div>
                 <div className="flex flex-wrap items-center gap-2">
+                  {!isFinal && (
+                    <Button
+                      size="sm"
+                      className="bg-emerald-600 text-white hover:bg-emerald-700 font-semibold shadow-xs"
+                      onClick={() => approve(r)}
+                    >
+                      <FileCheck2 className="h-4 w-4 mr-1" />
+                      Approve &amp; Sign Off
+                    </Button>
+                  )}
                   <Button variant="outline" size="sm" onClick={() => setActiveReport(activeReport === r.id ? null : r.id)}>{activeReport === r.id ? "Hide preview" : "View preview"}</Button>
                   <Button variant="outline" size="sm" onClick={() => exportMarkdown(r)}><Download className="h-4 w-4 mr-1" /> MD</Button>
                   <Button variant="outline" size="sm" onClick={() => exportTxt(r)}><Download className="h-4 w-4 mr-1" /> TXT</Button>

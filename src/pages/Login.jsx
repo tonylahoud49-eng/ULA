@@ -8,55 +8,48 @@ import { LogIn, Mail, Lock, Loader2, Users, UserCheck, CheckCircle2 } from "luci
 import AuthLayout from "@/components/AuthLayout";
 import { safeReturnTo } from "@/lib/authReturnTo";
 
-const TEST_TEAM_MEMBERS = [
+const GENERIC_TEST_ROLES = [
   {
-    name: "Petro Zaarour",
-    designation: "Director",
-    email: "petro.zaarour@unitedlossadjusters.com",
+    name: "Generic Admin",
+    designation: "Claims Director & System Approver",
+    email: "admin.demo@unitedlossadjusters.com",
     role: "Admin",
     roleColor: "bg-amber-50 text-amber-800 border-amber-300",
   },
   {
-    name: "Annie Abdel Massih",
-    designation: "Claims Director",
-    email: "annie.abdelmassih@unitedlossadjusters.com",
-    role: "Admin",
-    roleColor: "bg-amber-50 text-amber-800 border-amber-300",
-  },
-  {
-    name: "Estefani Haddad",
-    designation: "Claims Handler",
-    email: "estefani.haddad@unitedlossadjusters.com",
-    role: "Handler",
-    roleColor: "bg-emerald-50 text-emerald-800 border-emerald-300",
-  },
-  {
-    name: "Hovig Kalandjian",
+    name: "Generic Senior Surveyor",
     designation: "Marine & Cargo Senior Surveyor",
-    email: "hovig.kalandjian@unitedlossadjusters.com",
+    email: "surveyor.senior@unitedlossadjusters.com",
     role: "Senior Surveyor",
     roleColor: "bg-blue-50 text-blue-800 border-blue-300",
   },
   {
-    name: "Feyez Dghayli",
-    designation: "Technical Specialist",
-    email: "feyez.dghayli@unitedlossadjusters.com",
+    name: "Generic Claims Handler",
+    designation: "Claims Handler & Adjuster",
+    email: "handler.demo@unitedlossadjusters.com",
+    role: "Claims Handler",
+    roleColor: "bg-emerald-50 text-emerald-800 border-emerald-300",
+  },
+  {
+    name: "Generic Marine Surveyor",
+    designation: "Field Marine Surveyor",
+    email: "surveyor.demo@unitedlossadjusters.com",
+    role: "Surveyor",
+    roleColor: "bg-cyan-50 text-cyan-800 border-cyan-300",
+  },
+  {
+    name: "Generic Technical Specialist",
+    designation: "Engineering & Technical Specialist",
+    email: "specialist.demo@unitedlossadjusters.com",
     role: "Specialist",
     roleColor: "bg-indigo-50 text-indigo-800 border-indigo-300",
   },
   {
-    name: "Rana Rizk",
-    designation: "Claims Handler",
-    email: "Rana.Rizk@unitedlossadjusters.com",
-    role: "Handler",
-    roleColor: "bg-emerald-50 text-emerald-800 border-emerald-300",
-  },
-  {
-    name: "Fares Fares",
-    designation: "Surveyor",
-    email: "Fares.Fares@unitedlossadjusters.com",
-    role: "Surveyor",
-    roleColor: "bg-blue-50 text-blue-800 border-blue-300",
+    name: "Generic Compliance Auditor",
+    designation: "Read-Only Compliance & Quality Auditor",
+    email: "auditor.demo@unitedlossadjusters.com",
+    role: "Auditor",
+    roleColor: "bg-slate-50 text-slate-800 border-slate-300",
   },
 ];
 
@@ -113,7 +106,7 @@ export default function Login() {
         onClick={() => setShowTeamModal(true)}
       >
         <Users className="w-5 h-5 text-primary" />
-        Test Sign In (Team Members)
+        Test Sign In (Generic Roles)
       </Button>
 
       {showTeamModal && (
@@ -123,9 +116,9 @@ export default function Login() {
               <div>
                 <h3 className="font-heading text-xl font-bold flex items-center gap-2">
                   <UserCheck className="h-5 w-5 text-primary" />
-                  Test Sign In · ULA Team Members
+                  Test Sign In · Generic Roles
                 </h3>
-                <p className="text-xs text-muted-foreground mt-0.5">Select any team member to sign in immediately.</p>
+                <p className="text-xs text-muted-foreground mt-0.5">Select a generic test persona to simulate role permissions.</p>
               </div>
               <button
                 type="button"
@@ -137,7 +130,7 @@ export default function Login() {
             </div>
 
             <div className="space-y-2.5 overflow-y-auto pr-1 flex-1 mb-4">
-              {TEST_TEAM_MEMBERS.map((member) => (
+              {GENERIC_TEST_ROLES.map((member) => (
                 <button
                   key={member.email}
                   type="button"

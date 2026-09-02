@@ -82,11 +82,45 @@ Legacy `.doc`, Outlook `.msg`, encrypted files, and formats outside the list abo
 
 Optional approved report-style manifests can be loaded through `ULA_REPORT_REFERENCE_DIR`. This reference layer accepts only explicitly approved JSON manifests containing structure/style guidance; it never treats historical report facts as current claim evidence.
 
-## Local data and authentication
+## Multi-User Internal Deployment & Persistence
 
-The application stores lightweight accounts, claim metadata, reports, employees, and leave records in browser localStorage. Uploaded file blobs are stored separately in IndexedDB. The Google sign-in button creates or opens a local demonstration account. Email/password registration and login are also supported locally.
+The application is configured for multi-user collaboration over a local internal network or private server:
 
-This persistence and authentication remain intended for development and demonstration. Production use still requires a secure server database, server-side authentication/authorization for application APIs, and durable document storage such as SharePoint or another backend. AI suggestions never silently replace claim fields; users review and save them through the existing workflow.
+- **Shared Disk Persistence (`server/db/diskDb.mjs`)**:
+  - Claims, uploaded physical documents (PDF/DOCX/XLSX/images), generated loss adjusters' report versions, and employee leave records are persisted directly to the shared backend disk (`/.data/claims_db.json`, `/.data/auth_db.json`, and `/.data/uploads/`).
+  - All users accessing the application on the local network see, edit, and share the exact same claims repository and uploaded files.
+  - Browser localStorage and IndexedDB serve as local caches and offline fallback.
+
+- **Team Members & Authentication**:
+  - Pre-seeded with 7 official ULA team members:
+    - Petro Zaarour (`petro.zaarour@ula.com`)
+    - Annie Abdel Massih (`annie.abdelmassih@ula.com`)
+    - Estefani Haddad (`estefani.haddad@ula.com`)
+    - Hovig Kalandjian (`hovig.kalandjian@ula.com`)
+    - Feyez Dghayli (`feyez.dghayli@ula.com`)
+    - Rana Rizk (`rana.rizk@ula.com`)
+    - Fares Fares (`fares.fares@ula.com`)
+  - Quick 1-click test sign-in buttons are available on `/login`, or users can sign in with their corporate email and default password `ula123`.
+  - Re-seed at any time with: `npm run seed`.
+
+- **Multi-Provider AI Analysis Engine**:
+  - Configured with OpenRouter (`openrouter/auto`, `meta-llama/llama-3.3-70b-instruct`, `deepseek/deepseek-chat`), Groq (`openai/gpt-oss-120b`), Anthropic (`claude-sonnet-4-6`), and Gemini (`gemini-2.5-flash`).
+  - Includes a 10-second fast reachability timeout and automatic grounding source verification to prevent false field withholding.
+
+### Starting the Server for the Team
+
+```bash
+# 1. Install dependencies (if fresh clone)
+npm install
+
+# 2. Seed default users and employees
+npm run seed
+
+# 3. Start the combined API & Frontend server
+npm run dev
+# Or for production server:
+npm run build && npm start
+```
 
 ## Email notifications for Annual Leave / TOIL
 

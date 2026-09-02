@@ -100,6 +100,83 @@ export const SEEDED_TEAM_MEMBERS = [
   },
 ];
 
+export const SEEDED_DEMO_USERS = [
+  {
+    id: "demo-admin",
+    email: "admin.demo@unitedlossadjusters.com",
+    full_name: "Generic Admin",
+    designation: "Claims Director & Approver",
+    role: "admin",
+    status: "approved",
+    department: "Executive Management",
+    annual_leave_total: 20,
+    annual_leave_used: 0,
+    toil_balance: 0,
+  },
+  {
+    id: "demo-senior-surveyor",
+    email: "surveyor.senior@unitedlossadjusters.com",
+    full_name: "Generic Senior Surveyor",
+    designation: "Senior Marine & Cargo Surveyor",
+    role: "user",
+    status: "approved",
+    department: "Marine & Cargo Surveying",
+    annual_leave_total: 15,
+    annual_leave_used: 0,
+    toil_balance: 0,
+  },
+  {
+    id: "demo-claims-handler",
+    email: "handler.demo@unitedlossadjusters.com",
+    full_name: "Generic Claims Handler",
+    designation: "Claims Handler & Adjuster",
+    role: "user",
+    status: "approved",
+    department: "Claims Administration",
+    annual_leave_total: 15,
+    annual_leave_used: 0,
+    toil_balance: 0,
+  },
+  {
+    id: "demo-surveyor",
+    email: "surveyor.demo@unitedlossadjusters.com",
+    full_name: "Generic Marine Surveyor",
+    designation: "Marine Surveyor",
+    role: "user",
+    status: "approved",
+    department: "Survey Operations",
+    annual_leave_total: 15,
+    annual_leave_used: 0,
+    toil_balance: 0,
+  },
+  {
+    id: "demo-specialist",
+    email: "specialist.demo@unitedlossadjusters.com",
+    full_name: "Generic Technical Specialist",
+    designation: "Engineering & Technical Specialist",
+    role: "user",
+    status: "approved",
+    department: "Technical Engineering",
+    annual_leave_total: 15,
+    annual_leave_used: 0,
+    toil_balance: 0,
+  },
+  {
+    id: "demo-auditor",
+    email: "auditor.demo@unitedlossadjusters.com",
+    full_name: "Generic Compliance Auditor",
+    designation: "Read-Only Compliance Auditor",
+    role: "viewer",
+    status: "approved",
+    department: "Quality Assurance",
+    annual_leave_total: 15,
+    annual_leave_used: 0,
+    toil_balance: 0,
+  },
+];
+
+export const ALL_SEEDED_ACCOUNTS = [...SEEDED_TEAM_MEMBERS, ...SEEDED_DEMO_USERS];
+
 export function seedUsers({ verbose = true } = {}) {
   if (!fs.existsSync(DATA_DIR)) {
     fs.mkdirSync(DATA_DIR, { recursive: true });
@@ -125,7 +202,7 @@ export function seedUsers({ verbose = true } = {}) {
   let addedAuthCount = 0;
   let updatedAuthCount = 0;
 
-  for (const member of SEEDED_TEAM_MEMBERS) {
+  for (const member of ALL_SEEDED_ACCOUNTS) {
     const existingIndex = authDb.accounts.findIndex(
       (acc) => acc.email.toLowerCase() === member.email.toLowerCase() || acc.id === member.id
     );
@@ -181,7 +258,7 @@ export function seedUsers({ verbose = true } = {}) {
 
   let addedEmployeeCount = 0;
 
-  for (const member of SEEDED_TEAM_MEMBERS) {
+  for (const member of ALL_SEEDED_ACCOUNTS) {
     // User record
     const userIndex = claimsDb.User.findIndex(
       (u) => u.email?.toLowerCase() === member.email.toLowerCase() || u.id === member.id
@@ -234,22 +311,28 @@ export function seedUsers({ verbose = true } = {}) {
 
   if (verbose) {
     console.log("==================================================");
-    console.log(" [ULA SEEDER] United Loss Adjusters Team Members ");
+    console.log(" [ULA SEEDER] United Loss Adjusters Team & Roles  ");
     console.log("==================================================");
     console.log(`✓ Auth accounts: ${addedAuthCount} added, ${updatedAuthCount} updated`);
-    console.log(`✓ Employees registered: ${claimsDb.Employee.length} total active team members (${addedEmployeeCount} newly added)`);
+    console.log(`✓ Total accounts & employees registered: ${claimsDb.Employee.length}`);
     console.log("--------------------------------------------------");
+    console.log("Official ULA Team Members:");
     SEEDED_TEAM_MEMBERS.forEach((m) => {
       console.log(` • ${m.full_name.padEnd(22)} | ${m.designation.padEnd(35)} | ${m.email} [${m.role.toUpperCase()}]`);
     });
     console.log("--------------------------------------------------");
-    console.log("Default password for all seeded accounts: ula123");
+    console.log("Generic Test / Demo Personas:");
+    SEEDED_DEMO_USERS.forEach((m) => {
+      console.log(` • ${m.full_name.padEnd(22)} | ${m.designation.padEnd(35)} | ${m.email} [${m.role.toUpperCase()}]`);
+    });
+    console.log("--------------------------------------------------");
+    console.log("Default password for all accounts: ula123");
     console.log("==================================================\n");
   }
 
   return {
     success: true,
-    seeded: SEEDED_TEAM_MEMBERS.length,
+    seeded: ALL_SEEDED_ACCOUNTS.length,
     addedAuth: addedAuthCount,
     updatedAuth: updatedAuthCount,
     addedEmployees: addedEmployeeCount,
