@@ -26,6 +26,9 @@ export function safeReturnTo() {
     }
     const path = url.pathname + url.search;
     if (!path.startsWith("/") || path.startsWith("//") || path.includes("\\")) return "/";
+    if (path === "/login" || path.startsWith("/login?") || path.startsWith("/login/") || path === "/register" || path.startsWith("/register?") || path.startsWith("/register/")) {
+      return "/";
+    }
     return path;
   } catch {
     return "/";
