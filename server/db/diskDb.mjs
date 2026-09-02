@@ -20,13 +20,16 @@ export const ENTITY_NAMES = [
   "User",
 ];
 
+// SHA-256 hash for default password "ula123"
+const ULA123_PASSWORD_HASH = "3d4a446b13ca99097a9c5e33445b69186eb98bce60adc6cfd345d6a9665febe1";
+
 const DEFAULT_AUTH = {
   accounts: [
     {
       id: "admin-id",
       email: "admin@ula.com",
       full_name: "ULA Administrator",
-      passwordHash: "240eb518e1d234d74a7ca33d1c47db5515438c3505d9e504c5409ec8b7c6ee5d", // ula123 / admin123
+      passwordHash: ULA123_PASSWORD_HASH,
       status: "approved",
       role: "admin",
       designation: "System Administrator",
@@ -38,7 +41,7 @@ const DEFAULT_AUTH = {
       designation: "Director",
       role: "admin",
       status: "approved",
-      passwordHash: "240eb518e1d234d74a7ca33d1c47db5515438c3505d9e504c5409ec8b7c6ee5d",
+      passwordHash: ULA123_PASSWORD_HASH,
     },
     {
       id: "user-annie-abdelmassih",
@@ -47,7 +50,7 @@ const DEFAULT_AUTH = {
       designation: "Claims Director",
       role: "admin",
       status: "approved",
-      passwordHash: "240eb518e1d234d74a7ca33d1c47db5515438c3505d9e504c5409ec8b7c6ee5d",
+      passwordHash: ULA123_PASSWORD_HASH,
     },
     {
       id: "user-estefani-haddad",
@@ -56,7 +59,7 @@ const DEFAULT_AUTH = {
       designation: "Claims Handler",
       role: "user",
       status: "approved",
-      passwordHash: "240eb518e1d234d74a7ca33d1c47db5515438c3505d9e504c5409ec8b7c6ee5d",
+      passwordHash: ULA123_PASSWORD_HASH,
     },
     {
       id: "user-hovig-kalandjian",
@@ -65,7 +68,7 @@ const DEFAULT_AUTH = {
       designation: "Marine and Cargo Senior Surveyor",
       role: "user",
       status: "approved",
-      passwordHash: "240eb518e1d234d74a7ca33d1c47db5515438c3505d9e504c5409ec8b7c6ee5d",
+      passwordHash: ULA123_PASSWORD_HASH,
     },
     {
       id: "user-feyez-dghayli",
@@ -74,7 +77,7 @@ const DEFAULT_AUTH = {
       designation: "Technical Specialist",
       role: "user",
       status: "approved",
-      passwordHash: "240eb518e1d234d74a7ca33d1c47db5515438c3505d9e504c5409ec8b7c6ee5d",
+      passwordHash: ULA123_PASSWORD_HASH,
     },
     {
       id: "user-rana-rizk",
@@ -83,7 +86,7 @@ const DEFAULT_AUTH = {
       designation: "Claims Handler",
       role: "user",
       status: "approved",
-      passwordHash: "240eb518e1d234d74a7ca33d1c47db5515438c3505d9e504c5409ec8b7c6ee5d",
+      passwordHash: ULA123_PASSWORD_HASH,
     },
     {
       id: "user-fares-fares",
@@ -92,7 +95,67 @@ const DEFAULT_AUTH = {
       designation: "Surveyor",
       role: "user",
       status: "approved",
-      passwordHash: "240eb518e1d234d74a7ca33d1c47db5515438c3505d9e504c5409ec8b7c6ee5d",
+      passwordHash: ULA123_PASSWORD_HASH,
+    },
+    {
+      id: "demo-admin",
+      email: "admin.demo@unitedlossadjusters.com",
+      full_name: "Generic Admin",
+      designation: "Claims Director & Approver",
+      role: "admin",
+      status: "approved",
+      passwordHash: ULA123_PASSWORD_HASH,
+      department: "Executive Management",
+    },
+    {
+      id: "demo-senior-surveyor",
+      email: "surveyor.senior@unitedlossadjusters.com",
+      full_name: "Generic Senior Surveyor",
+      designation: "Senior Marine & Cargo Surveyor",
+      role: "user",
+      status: "approved",
+      passwordHash: ULA123_PASSWORD_HASH,
+      department: "Marine & Cargo Surveying",
+    },
+    {
+      id: "demo-claims-handler",
+      email: "handler.demo@unitedlossadjusters.com",
+      full_name: "Generic Claims Handler",
+      designation: "Claims Handler & Adjuster",
+      role: "user",
+      status: "approved",
+      passwordHash: ULA123_PASSWORD_HASH,
+      department: "Claims Administration",
+    },
+    {
+      id: "demo-surveyor",
+      email: "surveyor.demo@unitedlossadjusters.com",
+      full_name: "Generic Marine Surveyor",
+      designation: "Marine Surveyor",
+      role: "user",
+      status: "approved",
+      passwordHash: ULA123_PASSWORD_HASH,
+      department: "Survey Operations",
+    },
+    {
+      id: "demo-specialist",
+      email: "specialist.demo@unitedlossadjusters.com",
+      full_name: "Generic Technical Specialist",
+      designation: "Engineering & Technical Specialist",
+      role: "user",
+      status: "approved",
+      passwordHash: ULA123_PASSWORD_HASH,
+      department: "Technical Engineering",
+    },
+    {
+      id: "demo-auditor",
+      email: "auditor.demo@unitedlossadjusters.com",
+      full_name: "Generic Compliance Auditor",
+      designation: "Read-Only Compliance Auditor",
+      role: "viewer",
+      status: "approved",
+      passwordHash: ULA123_PASSWORD_HASH,
+      department: "Quality Assurance",
     },
   ],
   sessionUserId: null,

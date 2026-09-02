@@ -79,8 +79,14 @@ export default function Login() {
     }
   };
 
-  const handleQuickLogin = (selectedEmail, selectedName) => {
-    appClient.auth.loginWithProvider("quick_test", returnTo, selectedEmail, selectedName);
+  const handleQuickLogin = async (selectedEmail, selectedName) => {
+    setLoading(true);
+    try {
+      await appClient.auth.loginWithProvider("quick_test", returnTo, selectedEmail, selectedName);
+    } catch (err) {
+      setError(err.message || "Unable to sign in with test account");
+      setLoading(false);
+    }
   };
 
   return (
