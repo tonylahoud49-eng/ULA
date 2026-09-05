@@ -280,6 +280,8 @@ export default function ClaimDetail() {
   const [editing, setEditing] = useState(false);
   const [form, setForm] = useState({});
   const readiness = useMemo(() => reportReadiness(claim || {}, documents), [claim, documents]);
+  const currentProvider = selectedProvider.includes(":") ? selectedProvider.split(":")[0] : selectedProvider;
+  const currentModel = selectedProvider.includes(":") ? selectedProvider.split(":").slice(1).join(":") : undefined;
 
   const load = async () => {
     try {
@@ -303,12 +305,22 @@ export default function ClaimDetail() {
     setAnalyzing(true);
     setAnalysisError("");
     setPreflightStats(null);
-    setAnalysisProgress({ active: true, progress: 10, stage: "Running local safety and request-size checks...", step: 1, totalSteps: 4 });
-    let timer1;
-    let timer2;
     const separator = selectedProvider.indexOf(":");
     const requestedProvider = separator >= 0 ? selectedProvider.slice(0, separator) : selectedProvider;
     const requestedModel = separator >= 0 ? selectedProvider.slice(separator + 1) : undefined;
+
+    setAnalysisProgress({ active: true, progress: 15, stage: "Evidence Ingestion: Ingesting evidence files and parsing text...", step: 1, totalSteps: 4 });
+
+    const timers = [];
+    timers.push(setTimeout(() => {
+      setAnalysisProgress((curr) => curr.active ? { ...curr, progress: 35, stage: "Document Classification: Classifying document types & confidence scoring...", step: 2 } : curr);
+    }, 1500));
+    timers.push(setTimeout(() => {
+      setAnalysisProgress((curr) => curr.active ? { ...curr, progress: 65, stage: "Policy & Fact Extraction: Extracting salient facts & policy terms...", step: 3 } : curr);
+    }, 4500));
+    timers.push(setTimeout(() => {
+      setAnalysisProgress((curr) => curr.active ? { ...curr, progress: 85, stage: "Docket Synthesis: Generating evidence findings & calculations...", step: 4 } : curr);
+    }, 9000));
 
     try {
       const res = await appClient.functions.invoke("analyseClaim", {
@@ -318,17 +330,10 @@ export default function ClaimDetail() {
         disable_fallback: requestedProvider === "anthropic" || !enableFallback,
         on_preflight: (stats) => {
           setPreflightStats(stats);
-          setAnalysisProgress({ active: true, progress: 25, stage: "Preflight passed. Starting protected Claude analysis...", step: 1, totalSteps: 4 });
-          timer1 = setTimeout(() => {
-            setAnalysisProgress({ active: true, progress: 45, stage: "Classifying document categories & confidence scoring...", step: 2, totalSteps: 4 });
-          }, 500);
-          timer2 = setTimeout(() => {
-            setAnalysisProgress({ active: true, progress: 75, stage: "Extracting salient facts & policy coverage positions...", step: 3, totalSteps: 4 });
-          }, 1200);
+          setAnalysisProgress((curr) => ({ ...curr, progress: 25, stage: "Preflight passed. Starting protected Claude analysis...", step: 1 }));
         },
       });
-      clearTimeout(timer1);
-      clearTimeout(timer2);
+      timers.forEach(clearTimeout);
       setAnalysisProgress({ active: true, progress: 100, stage: "Analysis complete! Updating claim docket...", step: 4, totalSteps: 4 });
       await new Promise((r) => setTimeout(r, 300));
       setAnalysis(res.data.analysis);
@@ -344,12 +349,12 @@ export default function ClaimDetail() {
 
       await load();
     } catch (e) {
-      clearTimeout(timer1);
-      clearTimeout(timer2);
+      timers.forEach(clearTimeout);
       const message = e.response?.data?.error || e.message;
       setAnalysisError(message);
       toast({ variant: "destructive", title: "Analysis could not be completed", description: message });
     } finally {
+      timers.forEach(clearTimeout);
       setAnalyzing(false);
       setAnalysisProgress({ active: false, progress: 0, stage: "", step: 1, totalSteps: 4 });
     }
@@ -398,13 +403,13 @@ export default function ClaimDetail() {
       </div>
 
       {preflightStats && !analysisProgress.active && !analysis?.usage && (
-        <AITokenWatch mode="pre_run" preflight={preflightStats} provider={selectedProvider} />
+        <AITokenWatch mode="pre_run" preflight={preflightStats} provider={currentProvider} model={currentModel} />
       )}
 
       {analysisProgress.active && (
         <div className="space-y-3">
-          <AIAnalysisProgressCard progress={analysisProgress} provider={selectedProvider} preflight={preflightStats} />
-          <AITokenWatch mode="in_flight" elapsedSeconds={analysisProgress.step * 3} provider={selectedProvider} />
+          <AIAnalysisProgressCard progress={analysisProgress} provider={currentProvider} model={currentModel} preflight={preflightStats} />
+          <AITokenWatch mode="in_flight" elapsedSeconds={analysisProgress.step * 3} provider={currentProvider} model={currentModel} />
         </div>
       )}
 

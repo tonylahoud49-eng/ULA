@@ -47,22 +47,25 @@ export function anthropicSafetyLimits(env = process.env) {
   };
 }
 
-export function validateAnthropicConfiguration(env = process.env) {
+export function validateAnthropicConfiguration(env = process.env, { allowExplicitProvider = false } = {}) {
   const provider = String(env.AI_PROVIDER || "").trim().toLowerCase();
   const apiKey = String(env.ANTHROPIC_API_KEY || "").trim();
-  const model = String(env.ANTHROPIC_MODEL || "").trim();
-  if (provider !== "anthropic") {
+  const model = String(env.ANTHROPIC_MODEL || "claude-sonnet-4-6").trim();
+  if (!allowExplicitProvider && provider !== "anthropic") {
     throw new AnthropicPreflightError("AI_PROVIDER must be set to anthropic before Claude analysis.", {
+      status: 400,
       code: "anthropic-provider-not-selected",
     });
   }
   if (!apiKey) {
-    throw new AnthropicPreflightError("ANTHROPIC_API_KEY is missing from the server environment.", {
+    throw new AnthropicPreflightError("Anthropic Claude requires ANTHROPIC_API_KEY in your .env file. Please add your Anthropic API key to use Claude.", {
+      status: 400,
       code: "anthropic-api-key-missing",
     });
   }
   if (!model) {
     throw new AnthropicPreflightError("ANTHROPIC_MODEL is missing from the server environment.", {
+      status: 400,
       code: "anthropic-model-missing",
     });
   }
@@ -74,10 +77,11 @@ export function validateAnthropicConfiguration(env = process.env) {
     );
   } catch (error) {
     throw new AnthropicPreflightError(error.message, {
+      status: 400,
       code: "anthropic-output-token-limit-invalid",
     });
   }
-  return { provider, apiKey, model, maxOutputTokens };
+  return { provider: "anthropic", apiKey, model, maxOutputTokens };
 }
 
 function safePreflightLog(payload) {
@@ -96,8 +100,9 @@ export async function testAnthropicConnectivity({
   env = process.env,
   fetchImpl = globalThis.fetch,
   endpoint = ANTHROPIC_MESSAGES_URL,
+  allowExplicitProvider = true,
 } = {}) {
-  const { apiKey, model } = validateAnthropicConfiguration(env);
+  const { apiKey, model } = validateAnthropicConfiguration(env, { allowExplicitProvider });
   const timeoutMs = positiveInteger(env.ANTHROPIC_CONNECTIVITY_TIMEOUT_MS, DEFAULT_CONNECTIVITY_TIMEOUT_MS);
   let response;
   try {

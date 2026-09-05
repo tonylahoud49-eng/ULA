@@ -151,7 +151,15 @@ export function createConfiguredProvider(options = {}, env = process.env) {
   const allProviders = [primary, ...fallbacks].filter(Boolean);
 
   if (!allProviders.length) {
-    return { status, provider: null };
+    const config = PROVIDER_CONFIGS[targetProvider];
+    const missingKey = config?.keyVar || "API key";
+    return {
+      status: {
+        ...status,
+        reason: `AI provider ${targetProvider} is not configured. Add ${missingKey} to the .env file.`,
+      },
+      provider: null,
+    };
   }
 
   return {

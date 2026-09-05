@@ -796,7 +796,7 @@ app.post("/api/email/test", async (request, response) => {
 });
 
 function anthropicPreflightFailure(response, error) {
-  return response.status(Number(error.status) || 500).json({
+  return response.status(Number(error.status) || 400).json({
     ok: false,
     error: error.message || "Anthropic preflight failed.",
     code: error.code || "anthropic-preflight-failed",
@@ -819,17 +819,27 @@ app.post("/api/ai/connectivity", async (_request, response) => {
 
 app.post("/api/ai/preflight", upload.array("files", maxFiles), async (request, response) => {
   try {
-    const configuration = validateAnthropicConfiguration();
+    const configuration = validateAnthropicConfiguration(process.env, { allowExplicitProvider: true });
     const requestedProvider = String(request.body?.provider || "anthropic").toLowerCase();
     const requestedModel = String(request.body?.model || configuration.model);
     if (requestedProvider !== "anthropic") {
       throw new AnthropicPreflightError("Anthropic preflight cannot validate a different provider.", {
+        status: 400,
         code: "anthropic-provider-not-selected",
       });
     }
     const resolvedModel = requestedModel || configuration.model;
-    const claim = JSON.parse(request.body.claim || "{}");
-    const manifest = JSON.parse(request.body.manifest || "[]");
+    let claim = {};
+    let manifest = [];
+    try {
+      claim = typeof request.body?.claim === "string" ? JSON.parse(request.body.claim) : (request.body?.claim || {});
+      manifest = typeof request.body?.manifest === "string" ? JSON.parse(request.body.manifest) : (request.body?.manifest || []);
+    } catch {
+      throw new AnthropicPreflightError("Malformed claim or manifest JSON payload in preflight request.", {
+        status: 400,
+        code: "invalid-json-payload",
+      });
+    }
     const files = request.files || [];
     const styleReferenceDirectory = process.env.ULA_REPORT_REFERENCE_DIR
       || path.join(root, "server", "ai", "references");

@@ -131,6 +131,8 @@ export default function AIReporting() {
   const [billingOpen, setBillingOpen] = useState(false);
   const navigate = useNavigate();
   const readiness = useMemo(() => reportReadiness(edited || {}, documents), [edited, documents]);
+  const currentProvider = selectedProvider.includes(":") ? selectedProvider.split(":")[0] : selectedProvider;
+  const currentModel = selectedProvider.includes(":") ? selectedProvider.split(":").slice(1).join(":") : undefined;
 
   useEffect(() => {
     appClient.entities.Claim.list("-created_date", 100)
@@ -213,12 +215,22 @@ export default function AIReporting() {
     setAnalyzing(true);
     setAnalysisError("");
     setPreflightStats(null);
-    setAnalysisProgress({ active: true, progress: 10, stage: "Running local safety and request-size checks...", step: 1, totalSteps: 4 });
-    let timer1;
-    let timer2;
     const separator = selectedProvider.indexOf(":");
     const requestedProvider = separator >= 0 ? selectedProvider.slice(0, separator) : selectedProvider;
     const requestedModel = separator >= 0 ? selectedProvider.slice(separator + 1) : undefined;
+
+    setAnalysisProgress({ active: true, progress: 15, stage: "Evidence Ingestion: Ingesting evidence files and parsing text...", step: 1, totalSteps: 4 });
+
+    const timers = [];
+    timers.push(setTimeout(() => {
+      setAnalysisProgress((curr) => curr.active ? { ...curr, progress: 35, stage: "Document Classification: Classifying document types & confidence scoring...", step: 2 } : curr);
+    }, 1500));
+    timers.push(setTimeout(() => {
+      setAnalysisProgress((curr) => curr.active ? { ...curr, progress: 65, stage: "Policy & Fact Extraction: Extracting salient facts & policy terms...", step: 3 } : curr);
+    }, 4500));
+    timers.push(setTimeout(() => {
+      setAnalysisProgress((curr) => curr.active ? { ...curr, progress: 85, stage: "Docket Synthesis: Generating evidence findings & calculations...", step: 4 } : curr);
+    }, 9000));
 
     try {
       const response = await appClient.functions.invoke("analyseClaim", {
@@ -228,17 +240,10 @@ export default function AIReporting() {
         disable_fallback: requestedProvider === "anthropic" || !enableFallback,
         on_preflight: (stats) => {
           setPreflightStats(stats);
-          setAnalysisProgress({ active: true, progress: 25, stage: "Preflight passed. Starting protected Claude analysis...", step: 1, totalSteps: 4 });
-          timer1 = setTimeout(() => {
-            setAnalysisProgress({ active: true, progress: 45, stage: "Classifying document categories & confidence scoring...", step: 2, totalSteps: 4 });
-          }, 500);
-          timer2 = setTimeout(() => {
-            setAnalysisProgress({ active: true, progress: 75, stage: "Extracting salient facts & policy coverage positions...", step: 3, totalSteps: 4 });
-          }, 1200);
+          setAnalysisProgress((curr) => ({ ...curr, progress: 25, stage: "Preflight passed. Starting protected Claude analysis...", step: 1 }));
         },
       });
-      clearTimeout(timer1);
-      clearTimeout(timer2);
+      timers.forEach(clearTimeout);
       setAnalysisProgress({ active: true, progress: 100, stage: "Analysis complete! Finalizing suggestions...", step: 4, totalSteps: 4 });
       await new Promise((r) => setTimeout(r, 300));
       setAnalysis(response.data.analysis);
@@ -262,12 +267,12 @@ export default function AIReporting() {
       })));
       setStep(3);
     } catch (error) {
-      clearTimeout(timer1);
-      clearTimeout(timer2);
+      timers.forEach(clearTimeout);
       const message = error.response?.data?.error || error.message;
       setAnalysisError(message);
       toast({ variant: "destructive", title: "Analysis could not be completed", description: message });
     } finally {
+      timers.forEach(clearTimeout);
       setAnalyzing(false);
       setAnalysisProgress({ active: false, progress: 0, stage: "", step: 1, totalSteps: 4 });
     }
@@ -389,7 +394,7 @@ export default function AIReporting() {
       {step === 2 && claim && (
         <div>
           {analyzing ? (
-            <AIAnalysisProgressCard progress={analysisProgress} provider={selectedProvider} preflight={preflightStats} className="mx-auto max-w-2xl" />
+            <AIAnalysisProgressCard progress={analysisProgress} provider={currentProvider} model={currentModel} preflight={preflightStats} className="mx-auto max-w-2xl" />
           ) : (
             <Card className="docket-surface p-8 text-center shadow-none">
               <FileText className="mx-auto mb-4 h-11 w-11 text-primary" />
@@ -398,7 +403,7 @@ export default function AIReporting() {
               {analysisError && <div className="mx-auto mt-4 max-w-xl rounded-md border border-destructive/30 bg-destructive/5 p-3 text-left text-sm text-destructive" role="alert"><strong>AI analysis unavailable.</strong> {analysisError.replace(/^AI analysis unavailable\s*[—-]\s*/i, "")}</div>}
               {preflightStats && (
                 <div className="mx-auto mt-4 max-w-xl text-left">
-                  <AITokenWatch mode="pre_run" preflight={preflightStats} provider={selectedProvider} />
+                  <AITokenWatch mode="pre_run" preflight={preflightStats} provider={currentProvider} model={currentModel} />
                 </div>
               )}
               <div className="mt-6 flex flex-col items-center justify-center gap-3 sm:flex-row">

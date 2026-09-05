@@ -2,28 +2,45 @@ import React, { useEffect, useState } from "react";
 import { CheckCircle2 } from "lucide-react";
 
 export function formatModelDisplayName(provider, model) {
-  const p = String(provider || "").toLowerCase();
-  const m = String(model || "").toLowerCase();
+  let p = String(provider || "").toLowerCase();
+  let m = String(model || "").toLowerCase();
 
-  if (p === "anthropic" || m.includes("claude") || m.includes("sonnet")) {
-    return `Anthropic · ${model || "Claude"}`;
+  // If provider is a composite "provider:model" string, unpack it
+  if (p.includes(":")) {
+    const parts = p.split(":");
+    p = parts[0];
+    if (!m) m = parts.slice(1).join(":");
+  }
+
+  if (p === "openrouter") {
+    if (m === "openrouter/auto" || m === "auto") return "OpenRouter · Auto";
+    const clean = String(m || model || "").split("/").pop() || model || "Auto";
+    return `OpenRouter · ${clean}`;
+  }
+  if (p === "groq" || m.includes("groq")) {
+    const clean = String(m || model || "").split("/").pop() || "Llama 3.3 70B";
+    return `Groq · ${clean}`;
   }
   if (p === "gemini" || m.includes("gemini")) {
+    if (m.includes("3.6-flash") || m.includes("3.6")) return "Gemini 3.6 Flash";
     if (m.includes("2.5-flash") || m.includes("2.5")) return "Gemini 2.5 Flash";
     if (m.includes("1.5-pro") || m.includes("pro")) return "Gemini 1.5 Pro";
-    return `Gemini (${model || "Flash"})`;
+    return `Gemini · ${model || "Flash"}`;
   }
   if (p === "openai" || m.includes("gpt")) {
     if (m.includes("5.6-terra") || m.includes("5.6")) return "GPT-5.6 Terra";
     if (m.includes("4o-mini")) return "GPT-4o Mini";
     if (m.includes("4o")) return "GPT-4o";
-    return `OpenAI (${model || "GPT-4o"})`;
+    return `OpenAI · ${model || "GPT-4o"}`;
   }
-  if (p === "openrouter") {
-    const clean = String(model || "").split("/").pop() || model || "Gemma 4";
-    return `OpenRouter · ${clean}`;
+  if (p === "ollama" || m.includes("ollama")) {
+    return `Ollama · ${model || "Local"}`;
   }
-  return provider && model ? `${provider} / ${model}` : "Claude 3.5 Sonnet";
+  if (p === "anthropic" || m.includes("claude") || m.includes("sonnet") || m.includes("opus")) {
+    return `Anthropic · ${model || "Claude 3.5 Sonnet"}`;
+  }
+  if (model) return `${p ? `${p} · ` : ""}${model}`;
+  return p ? p.toUpperCase() : "AI Assistant";
 }
 
 const STAGES = [
@@ -72,11 +89,20 @@ export default function AIAnalysisProgressCard({ progress, provider, model, pref
     };
   }, []);
 
-  const selectedProviderStatus = provider
-    ? aiStatus?.configured_providers?.find((item) => item.provider === provider)
+  // Handle composite provider format "provider:model"
+  let parsedProvider = provider;
+  let parsedModel = model;
+  if (String(provider || "").includes(":")) {
+    const parts = String(provider).split(":");
+    parsedProvider = parts[0];
+    if (!parsedModel) parsedModel = parts.slice(1).join(":");
+  }
+
+  const selectedProviderStatus = parsedProvider
+    ? aiStatus?.configured_providers?.find((item) => item.provider === parsedProvider)
     : null;
-  const activeProvider = provider || aiStatus?.provider;
-  const activeModel = model
+  const activeProvider = parsedProvider || aiStatus?.provider;
+  const activeModel = parsedModel
     || selectedProviderStatus?.model
     || (activeProvider === aiStatus?.provider ? aiStatus?.model : null);
   const modelLabel = formatModelDisplayName(activeProvider, activeModel);

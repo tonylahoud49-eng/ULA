@@ -18,7 +18,7 @@ import { calculateAiUsage } from "../billingCalculator.mjs";
 
 const OPENROUTER_BASE_URL = "https://openrouter.ai/api/v1";
 const DEFAULT_MODEL = "meta-llama/llama-3.3-70b-instruct";
-const DEFAULT_MAX_COMPLETION_TOKENS = 16_384;
+const DEFAULT_MAX_COMPLETION_TOKENS = 6_144;
 
 function normalizeFallbackModels(value, primaryModel) {
   if (value === undefined) {
@@ -38,7 +38,7 @@ function normalizeMaxCompletionTokens(value) {
 
 function isRetryableRequestError(error) {
   const status = Number(error?.status);
-  if ([404, 408, 409, 425, 429, 500, 502, 503, 504].includes(status)) return true;
+  if ([402, 404, 408, 409, 425, 429, 500, 502, 503, 504].includes(status)) return true;
   const code = String(error?.code || error?.cause?.code || "").toUpperCase();
   if (["ECONNRESET", "ECONNREFUSED", "ETIMEDOUT", "UND_ERR_CONNECT_TIMEOUT", "UND_ERR_SOCKET"].includes(code)) {
     return true;
@@ -256,7 +256,7 @@ export function createOpenRouterProvider({
             break;
           } catch (error) {
             lastRequestError = error;
-            if (Number(error?.status) === 404 && index < candidateModels.length - 1) continue;
+            if ([402, 404].includes(Number(error?.status)) && index < candidateModels.length - 1) continue;
             if (isRetryableRequestError(error) && attemptIndex < attempts.length - 1) break;
             throw error;
           }
