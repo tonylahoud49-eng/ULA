@@ -54,16 +54,35 @@ export function createGroqProvider({ apiKey, model, client } = {}) {
       const responseFormat = zodResponseFormat(claimAnalysisSchema, "ula_claim_analysis");
       const compatibilityInstructions = `${SYSTEM_INSTRUCTIONS}\n\nReturn only one valid JSON object matching the required schema strictly; do not use Markdown fences:\n${JSON.stringify(responseFormat.json_schema.schema)}`;
 
-      const response = await openai.chat.completions.create({
-        model: resolvedModel,
-        messages: [
-          { role: "system", content: compatibilityInstructions },
-          { role: "user", content: userContent },
-        ],
-        response_format: { type: "json_object" },
-        temperature: 0,
-        max_completion_tokens: 8192,
-      });
+      let response;
+      try {
+        response = await openai.chat.completions.create({
+          model: resolvedModel,
+          messages: [
+            { role: "system", content: compatibilityInstructions },
+            { role: "user", content: userContent },
+          ],
+          response_format: { type: "json_object" },
+          temperature: 0,
+          max_completion_tokens: 8192,
+        });
+      } catch (error) {
+        if (Array.isArray(userContent) && (error.message?.includes("must be a string") || [400, 404].includes(Number(error.status)))) {
+          const textOnly = userContent.filter((p) => p.type === "text").map((p) => p.text).join("\n\n");
+          response = await openai.chat.completions.create({
+            model: resolvedModel,
+            messages: [
+              { role: "system", content: compatibilityInstructions },
+              { role: "user", content: textOnly },
+            ],
+            response_format: { type: "json_object" },
+            temperature: 0,
+            max_completion_tokens: 8192,
+          });
+        } else {
+          throw error;
+        }
+      }
 
       const choice = response.choices?.[0];
       if (!choice?.message?.content) {

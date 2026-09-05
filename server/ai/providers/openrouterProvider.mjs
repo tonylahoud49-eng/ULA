@@ -18,7 +18,25 @@ import { calculateAiUsage } from "../billingCalculator.mjs";
 
 const OPENROUTER_BASE_URL = "https://openrouter.ai/api/v1";
 const DEFAULT_MODEL = "meta-llama/llama-3.3-70b-instruct";
-const DEFAULT_MAX_COMPLETION_TOKENS = 6_144;
+const DEFAULT_MAX_COMPLETION_TOKENS = 2_500;
+
+const COMPACT_SCHEMA_HINT = JSON.stringify({
+  classification: {
+    business_line: "Yacht | Property | Marine Cargo (Reefer/GFS) | Marine Cargo (Non-Reefer) | Bulk Vessel | Air Shipment (NET) | Land Shipment | Fidelity Claims | Other / Requires Review",
+    confidence: 0.95,
+    rationale: "string",
+    sources: [{ document_id: "string", document_name: "string", page: 1, supporting_text: "string", confidence: 0.95, evidence_mode: "extracted_text" }],
+  },
+  document_types: [{ document_type: "string", confidence: 0.95, sufficient_information: true, rationale: "string", sources: [] }],
+  fields: [{ field: "string", value: "string | number | null", normalized_value: "string | number | null", sources: [] }],
+  adjustment_line_items: [{ description: "string", item_type: "claimed | adjusted | deduction | salvage | fee | policy_limit", claimed_amount: 0, adjusted_amount: 0, currency: "USD", sources: [] }],
+  missing_documents: [{ document_type: "string", reason: "string", missing_information: ["string"] }],
+  evidence_findings: [{ analysis_domain: "chronology_custody | condition_extent | proximate_cause | policy_application | quantum_mitigation | liability_recovery | general", finding: "string", professional_significance: "string", confidence: 0.95, sources: [] }],
+  summary: "string",
+  report_introduction: null,
+  warnings: ["string"],
+  human_review_required: ["string"],
+}, null, 2);
 
 function normalizeFallbackModels(value, primaryModel) {
   if (value === undefined) {
@@ -34,6 +52,34 @@ function normalizeMaxCompletionTokens(value) {
   const parsed = Number(value);
   if (!Number.isFinite(parsed)) return DEFAULT_MAX_COMPLETION_TOKENS;
   return Math.min(32_768, Math.max(2_048, Math.floor(parsed)));
+}
+
+function isImageInputUnsupportedError(error) {
+  const msg = [
+    error?.message,
+    error?.error?.message,
+    error?.error?.metadata?.raw,
+    error?.error?.metadata?.provider_error_code,
+  ].filter(Boolean).join(" ").toLowerCase();
+  const status = Number(error?.status);
+  return (
+    (status === 404 && msg.includes("support image input"))
+    || msg.includes("support image input")
+    || msg.includes("no endpoints found that support image")
+    || msg.includes("does not support image")
+    || msg.includes("image input")
+    || msg.includes("image_parse_error")
+    || msg.includes("invalid_image_format")
+    || msg.includes("unsupported image")
+    || msg.includes("provider returned error")
+    || (status === 400 && msg.includes("must be a string"))
+  );
+}
+
+function parseAffordableTokens(error) {
+  const msg = String(error?.message || error?.error?.message || "");
+  const match = msg.match(/can only afford (\d+)/i);
+  return match ? Number(match[1]) : null;
 }
 
 function isRetryableRequestError(error) {
@@ -216,13 +262,10 @@ export function createOpenRouterProvider({
       });
 
       const responseFormat = zodResponseFormat(claimAnalysisSchema, "ula_claim_analysis");
-      const compatibilityInstructions = `${SYSTEM_INSTRUCTIONS}\n\nThe selected model does not enforce JSON Schema. Return only one valid JSON object matching this schema exactly; do not use Markdown fences:\n${JSON.stringify(responseFormat.json_schema.schema)}`;
-      const requestBase = {
-        temperature: 0,
-        stream: false,
-        max_completion_tokens: resolvedMaxCompletionTokens,
-        plugins: [{ id: "response-healing" }],
-      };
+      const compatibilityInstructions = `${SYSTEM_INSTRUCTIONS}\n\nThe selected model does not enforce JSON Schema. Return only one valid JSON object matching this schema exactly; do not use Markdown fences:\n${COMPACT_SCHEMA_HINT}`;
+      let activeUserContent = userContent;
+      let currentMaxTokens = resolvedMaxCompletionTokens;
+
       const attempts = [
         {
           model: resolvedModel,
@@ -242,12 +285,15 @@ export function createOpenRouterProvider({
           try {
             const useJsonObject = requiresJsonObjectCompatibility(candidateModel);
             response = await openai.chat.completions.create({
-              ...requestBase,
+              temperature: 0,
+              stream: false,
+              max_completion_tokens: currentMaxTokens,
+              plugins: [{ id: "response-healing" }],
               ...(index === 0 ? attempt : {}),
               model: candidateModel,
               messages: [
                 { role: "system", content: useJsonObject ? compatibilityInstructions : SYSTEM_INSTRUCTIONS },
-                { role: "user", content: userContent },
+                { role: "user", content: activeUserContent },
               ],
               response_format: useJsonObject ? { type: "json_object" } : responseFormat,
             });
@@ -256,7 +302,63 @@ export function createOpenRouterProvider({
             break;
           } catch (error) {
             lastRequestError = error;
-            if ([402, 404].includes(Number(error?.status)) && index < candidateModels.length - 1) continue;
+
+            // If the model/endpoint rejected image input, strip images and immediately retry this model in text-only mode
+            if (activeUserContent.some((part) => part.type === "image_url") && (isImageInputUnsupportedError(error) || Number(error?.status) === 402)) {
+              activeUserContent = activeUserContent.filter((part) => part.type !== "image_url");
+              try {
+                const useJsonObject = requiresJsonObjectCompatibility(candidateModel);
+                response = await openai.chat.completions.create({
+                  temperature: 0,
+                  stream: false,
+                  max_completion_tokens: currentMaxTokens,
+                  plugins: [{ id: "response-healing" }],
+                  ...(index === 0 ? attempt : {}),
+                  model: candidateModel,
+                  messages: [
+                    { role: "system", content: useJsonObject ? compatibilityInstructions : SYSTEM_INSTRUCTIONS },
+                    { role: "user", content: activeUserContent },
+                  ],
+                  response_format: useJsonObject ? { type: "json_object" } : responseFormat,
+                });
+                responseModel = candidateModel;
+                lastRequestError = null;
+                break;
+              } catch (retryError) {
+                lastRequestError = retryError;
+                error = retryError;
+              }
+            }
+
+            // If OpenRouter reported an affordable token ceiling on 402, scale down max_completion_tokens
+            const affordable = parseAffordableTokens(error);
+            if (affordable && affordable >= 1_000 && affordable < currentMaxTokens) {
+              currentMaxTokens = Math.max(1_000, affordable - 50);
+              try {
+                const useJsonObject = requiresJsonObjectCompatibility(candidateModel);
+                response = await openai.chat.completions.create({
+                  temperature: 0,
+                  stream: false,
+                  max_completion_tokens: currentMaxTokens,
+                  plugins: [{ id: "response-healing" }],
+                  ...(index === 0 ? attempt : {}),
+                  model: candidateModel,
+                  messages: [
+                    { role: "system", content: useJsonObject ? compatibilityInstructions : SYSTEM_INSTRUCTIONS },
+                    { role: "user", content: activeUserContent },
+                  ],
+                  response_format: useJsonObject ? { type: "json_object" } : responseFormat,
+                });
+                responseModel = candidateModel;
+                lastRequestError = null;
+                break;
+              } catch (retryAffordableError) {
+                lastRequestError = retryAffordableError;
+                error = retryAffordableError;
+              }
+            }
+
+            if (index < candidateModels.length - 1 && (isRetryableRequestError(error) || [400, 402, 404].includes(Number(error?.status)))) continue;
             if (isRetryableRequestError(error) && attemptIndex < attempts.length - 1) break;
             throw error;
           }
