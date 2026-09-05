@@ -673,6 +673,78 @@ app.post("/api/ai/test-chat", async (request, response) => {
         throw new Error(data.error?.message || `Anthropic returned HTTP ${res.status}`);
       }
       reply = data.content?.[0]?.text?.trim() || "(No response content returned)";
+    } else if (provider === "groq") {
+      const key = process.env.GROQ_API_KEY;
+      if (!key) throw new Error("GROQ_API_KEY is not configured in .env");
+      const actualModel = model || process.env.GROQ_MODEL || "openai/gpt-oss-120b";
+
+      const res = await fetch("https://api.groq.com/openai/v1/chat/completions", {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          "Authorization": `Bearer ${key}`,
+        },
+        body: JSON.stringify({
+          model: actualModel,
+          messages: [{ role: "user", content: prompt }],
+          max_tokens: 150,
+        }),
+      });
+
+      const data = await res.json();
+      if (!res.ok || data.error) {
+        throw new Error(data.error?.message || `Groq returned HTTP ${res.status}`);
+      }
+      routedModel = data.model || actualModel;
+      reply = data.choices?.[0]?.message?.content?.trim() || "(No response content returned)";
+      usage = data.usage || null;
+    } else if (provider === "openai") {
+      const key = process.env.OPENAI_API_KEY;
+      if (!key) throw new Error("OPENAI_API_KEY is not configured in .env");
+      const actualModel = model || process.env.OPENAI_MODEL || "gpt-4o-mini";
+
+      const res = await fetch("https://api.openai.com/v1/chat/completions", {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          "Authorization": `Bearer ${key}`,
+        },
+        body: JSON.stringify({
+          model: actualModel,
+          messages: [{ role: "user", content: prompt }],
+          max_tokens: 150,
+        }),
+      });
+
+      const data = await res.json();
+      if (!res.ok || data.error) {
+        throw new Error(data.error?.message || `OpenAI returned HTTP ${res.status}`);
+      }
+      routedModel = data.model || actualModel;
+      reply = data.choices?.[0]?.message?.content?.trim() || "(No response content returned)";
+      usage = data.usage || null;
+    } else if (provider === "ollama") {
+      const host = (process.env.OLLAMA_HOST || "http://127.0.0.1:11434").replace(/\/+$/, "");
+      const baseURL = host.endsWith("/v1") ? host : `${host}/v1`;
+      const actualModel = model || process.env.OLLAMA_MODEL || "llama3.3";
+
+      const res = await fetch(`${baseURL}/chat/completions`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          model: actualModel,
+          messages: [{ role: "user", content: prompt }],
+          max_tokens: 150,
+        }),
+      });
+
+      const data = await res.json();
+      if (!res.ok || data.error) {
+        throw new Error(data.error?.message || `Ollama returned HTTP ${res.status}`);
+      }
+      routedModel = data.model || actualModel;
+      reply = data.choices?.[0]?.message?.content?.trim() || "(No response content returned)";
+      usage = data.usage || null;
     } else {
       throw new Error(`Testing for provider '${provider}' is not supported yet.`);
     }

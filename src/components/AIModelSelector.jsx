@@ -109,8 +109,9 @@ export default function AIModelSelector({
     setTesting(true);
     setTestResult(null);
 
+    const startTime = Date.now();
     const controller = new AbortController();
-    const timeoutId = setTimeout(() => controller.abort(), 10000);
+    const timeoutId = setTimeout(() => controller.abort(), 20000);
 
     try {
       const res = await fetch("/api/ai/test-chat", {
@@ -124,16 +125,25 @@ export default function AIModelSelector({
         signal: controller.signal,
       });
       clearTimeout(timeoutId);
-      const data = await res.json();
+
+      const text = await res.text();
+      let data;
+      try {
+        data = JSON.parse(text);
+      } catch {
+        throw new Error(res.ok ? "Invalid server response format." : `Server returned status ${res.status}`);
+      }
+
       setTestResult(data);
     } catch (err) {
       clearTimeout(timeoutId);
+      const elapsed = Date.now() - startTime;
       setTestResult({
         ok: false,
         error: err.name === "AbortError"
-          ? `Connection timed out after 10s. The model '${selectedItem.model}' is unreachable or rate-limited.`
+          ? `Connection timed out after ${Math.round(elapsed / 1000)}s. The model '${selectedItem.model}' is taking too long to respond.`
           : (err.message || "Failed to reach AI server."),
-        latency_ms: 10000,
+        latency_ms: elapsed,
       });
     } finally {
       setTesting(false);
