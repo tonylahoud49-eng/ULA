@@ -260,17 +260,26 @@ async function analyzeClaimWithProviderOnce({ claim, documents, provider, model,
   }
   const { body, responseText } = await readResponseBody(response);
   if (!response.ok) {
-    const nonHtmlDetails = responseText && !/^\s*</.test(responseText)
-      ? ` (Details: ${responseText.slice(0, 300)})`
-      : "";
+    let detailsText = "";
+    if (!body.error && responseText) {
+      const stripped = responseText
+        .replace(/<style[^>]*>[\s\S]*?<\/style>/gi, "")
+        .replace(/<script[^>]*>[\s\S]*?<\/script>/gi, "")
+        .replace(/<[^>]+>/g, " ")
+        .replace(/\s+/g, " ")
+        .trim()
+        .slice(0, 300);
+      detailsText = stripped ? ` (Details: ${stripped})` : "";
+    }
+    const message = body.error || `AI analysis unavailable — the analysis request failed with HTTP ${response.status}.${detailsText}`;
     const err = createRequestError(
-      body.error || `AI analysis unavailable — the analysis request failed with HTTP ${response.status}.${nonHtmlDetails}`,
+      message,
       response.status,
       body.code || "ai-analysis-failed",
     );
     err.provider = body.provider;
     err.model = body.model;
-    err.details = body.details;
+    err.details = body.details || detailsText;
     throw err;
   }
   return mapAnalysis(body);

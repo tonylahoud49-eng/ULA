@@ -5,6 +5,18 @@ import JSZip from "jszip";
 import readXlsxFile from "read-excel-file/node";
 import { simpleParser } from "mailparser";
 
+if (typeof ArrayBuffer.prototype.transferToFixedLength !== "function") {
+  ArrayBuffer.prototype.transferToFixedLength = function transferToFixedLength(newByteLength) {
+    const length = newByteLength === undefined ? this.byteLength : newByteLength;
+    const dest = new ArrayBuffer(length);
+    new Uint8Array(dest).set(new Uint8Array(this, 0, Math.min(this.byteLength, length)));
+    return dest;
+  };
+}
+if (typeof ArrayBuffer.prototype.transfer !== "function") {
+  ArrayBuffer.prototype.transfer = ArrayBuffer.prototype.transferToFixedLength;
+}
+
 const TEXT_EXTENSIONS = new Set([".txt", ".csv", ".json", ".xml", ".html", ".htm", ".md", ".rtf"]);
 const IMAGE_EXTENSIONS = new Set([".png", ".jpg", ".jpeg", ".webp", ".gif"]);
 const MAX_SEARCHABLE_VISUAL_PAGES = 24;

@@ -13,7 +13,7 @@
     "lint": "eslint . --quiet",
     "lint:fix": "eslint . --fix",
     "typecheck": "tsc -p ./jsconfig.json",
-    "test": "node --test server/tests/*.test.mjs",
+    "test": "node scripts/run-tests.mjs",
     "test:email": "node scripts/send-test-email.mjs",
     "test:anthropic-preflight": "node server/tests/run-anthropic-preflight-test.mjs",
     "preview:anthropic-payload": "node server/tests/run-anthropic-payload-preview.mjs",

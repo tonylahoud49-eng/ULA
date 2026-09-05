@@ -933,8 +933,18 @@ app.post("/api/ai/analyze", upload.array("files", maxFiles), async (request, res
     }
     activeProviderInfo = { provider: provider.name, model: provider.model };
 
-    const claim = JSON.parse(request.body.claim || "{}");
-    const manifest = JSON.parse(request.body.manifest || "[]");
+    let claim = {};
+    let manifest = [];
+    try {
+      claim = typeof request.body?.claim === "string" ? JSON.parse(request.body.claim) : (request.body?.claim || {});
+    } catch {
+      return response.status(400).json({ error: "A valid claim is required.", code: "invalid-claim" });
+    }
+    try {
+      manifest = typeof request.body?.manifest === "string" ? JSON.parse(request.body.manifest) : (request.body?.manifest || []);
+    } catch {
+      return response.status(400).json({ error: "A valid manifest is required.", code: "invalid-manifest" });
+    }
     const files = request.files || [];
     if (!claim.id) return response.status(400).json({ error: "A valid claim is required.", code: "invalid-claim" });
     if (!files.length || files.length !== manifest.length) {
@@ -1119,9 +1129,9 @@ app.use((error, request, response, next) => {
     return response.status(413).json({ error: `AI analysis unavailable — ${error.message}`, code: "upload-limit" });
   }
   const isAiRequest = request.path === "/api/ai/preflight" || request.path === "/api/ai/analyze";
-  const message = isAiRequest && process.env.NODE_ENV !== "production"
+  const message = isAiRequest
     ? `AI analysis unavailable — ${error.message || "the analysis server failed."}`
-    : "AI analysis unavailable — the analysis server failed.";
+    : (process.env.NODE_ENV !== "production" ? (error.message || "Internal server error") : "Internal server error");
   return response.status(Number(error.status) || 500).json({
     error: message,
     code: error.code || "server-error",
@@ -1138,9 +1148,12 @@ if (fs.existsSync(dist)) {
 }
 
 if (process.argv[1] && path.resolve(process.argv[1]) === path.resolve(serverFile)) {
-  app.listen(port, host, () => {
+  const server = app.listen(port, host, () => {
     console.log(`ULA application server listening on http://${host}:${port}`);
   });
+  server.setTimeout(600000);
+  server.headersTimeout = 605000;
+  server.requestTimeout = 600000;
 }
 
 export default app;

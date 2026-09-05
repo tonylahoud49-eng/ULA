@@ -13,7 +13,23 @@ export default defineConfig(({ mode }) => {
   server: {
     host: "0.0.0.0",
     proxy: {
-      "/api": `http://127.0.0.1:${env.PORT || 8787}`,
+      "/api": {
+        target: `http://127.0.0.1:${env.PORT || 8787}`,
+        changeOrigin: true,
+        timeout: 600000,
+        proxyTimeout: 600000,
+        configure: (proxy) => {
+          proxy.on("error", (err, _req, res) => {
+            if (res && !res.headersSent) {
+              res.writeHead(502, { "Content-Type": "application/json" });
+              res.end(JSON.stringify({
+                error: `Local API proxy error: ${err.message || "Failed to communicate with backend server."}`,
+                code: "proxy-error",
+              }));
+            }
+          });
+        },
+      },
     },
   },
   optimizeDeps: {
