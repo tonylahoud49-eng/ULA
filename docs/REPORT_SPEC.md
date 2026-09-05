@@ -13,6 +13,7 @@ The controlling implementation is primarily in:
 - `server/ai/claimAnalysisSchema.mjs`
 - `server/ai/referenceLayer.mjs`
 - `server/ai/references/gfs-reefer-approved.json`
+- `server/ai/references/property-fire-approved.json`
 - `server/ai/references/bulk-vessels-approved.json`
 - `server/ai/references/air-shipments-approved.json`
 - `server/ai/references/land-shipments-approved.json`
@@ -123,11 +124,11 @@ Use one of these three openings:
 
 2. When no source expressly states the cause but supported evidence permits a qualified professional assessment:
 
-   `The proximate cause of loss is not expressly established as a source fact; the available evidence supports the qualified professional assessment set out below.`
+   `The proximate cause of loss is not expressly stated as a source fact; the available evidence supports the qualified professional assessment set out below.`
 
 3. When neither an express cause nor a defensible evidence-based assessment is available:
 
-   `The proximate cause of loss is not established from the available evidence.`
+   `The reviewed evidence does not yet permit a defensible proximate-cause opinion; the decisive causal records are identified below.`
 
 ### Reasoning sequence
 
@@ -141,11 +142,13 @@ After the opening, use the following sequence where the evidence permits:
 
 An observed condition, discovery date, intact seal, packing condition, or other indicator is not automatically the proximate cause. A source-stated cause remains subject to professional verification of its mechanism and policy significance.
 
+When physical evidence supports a qualified mechanism but does not identify the precise event or custodian, the report must state the strongest proportionate professional opinion on that mechanism and then separately identify the custody-stage limitation. It must not substitute repeated chronology or a generic unresolved-cause statement for that analysis.
+
 For shortage or non-delivery, assess the shipped quantity, total and per-container shortage, who counted and witnessed each count, seal history and condition, tampering or forced entry, origin loading evidence, carrier attendance or certificate, timing, competing explanations, and decisive gaps. An intact seal may weaken a sealed-transit removal hypothesis but does not by itself prove origin shortage or packing error.
 
 For temperature claims, distinguish measured logger evidence from a condition merely compatible with temperature damage. Test origin condition, handling, packaging, timing, logger completeness, calibration, and alternative deterioration mechanisms.
 
-Do not use `not established` as a substitute for reasoning. First test the material hypotheses. If the issue remains unresolved, explain why and identify the evidence that could distinguish the alternatives.
+Never use `not established` in client-facing report text. First test the material hypotheses. If the issue remains unresolved, state the reviewed evidence, the exact missing document, page, record, test, witness, approval, or reconciliation, and the decision that item would resolve.
 
 ## Adequacy of the Insured Value and underinsurance
 
@@ -177,7 +180,7 @@ When inadequate, the conclusion must state that the invoice values are not adequ
 
 When the required comparable evidence is incomplete or conflicting, use this exact fallback:
 
-> Whether the invoice values are adequately insured and whether there is underinsurance cannot be established from the available evidence because a comparable invoice value, insured value, currency, and evidenced valuation basis are not all available.
+> Whether the invoice values are adequately insured and whether there is underinsurance requires a comparable invoice value, insured value, currency, and evidenced valuation basis; obtain the missing comparable input before giving that opinion.
 
 Do not substitute the policy limit, per-conveyance limit, shipment value, or presented claim for a missing comparable input. Per-conveyance adequacy remains a separate professional issue where allocation between conveyances is not established.
 
@@ -223,7 +226,7 @@ When supported:
 
 When not supported:
 
-> The above adjusted claim amount in {supported ISO currency} cannot be stated as fair & reasonable because a fully supported and reconciled adjusted amount is not established from the reviewed evidence.
+> The above adjusted claim amount in {supported ISO currency} cannot be stated as fair & reasonable because the reviewed file requires a reconciled adjustment schedule, supported quantities, rates, and deductions.
 
 When no single reporting currency is supported, replace `in {supported ISO currency}` with `in a single reporting currency`. When the amount is supported only by quotation or estimate evidence, append that limitation expressly.
 
@@ -243,7 +246,7 @@ When policy wording exists but no specific sourced coverage finding controls:
 
 When operative wording is absent:
 
-> Cover advice: The operative policy wording is not established from the reviewed evidence, so cover cannot be advised without inventing terms and remains subject to professional review.
+> Cover advice: The reviewed file does not contain the operative policy wording required to assess cover. Obtain the policy schedule, clauses, endorsements, warranties, conditions, exclusions, valuation basis, and deductible wording before cover is advised.
 
 ### Point 4 - liable-party position
 
@@ -267,15 +270,16 @@ The wording is intentionally recorded exactly as implemented, including `Insurer
 
 Claude must analyze the complete current-claim evidence set together, including searchable text, scanned pages, and photographs. It must:
 
-1. Classify documents by content, not filenames or upload labels.
+1. Review every PDF page in page-number order before drafting any analysis, including pages with sparse OCR, scans, schedules, endorsements, signatures, tables, and material raster images. A page-coverage failure blocks the run.
+2. Classify documents by content, not filenames or upload labels.
 2. Extract atomic facts with provenance before drawing conclusions.
 3. Resolve party roles before extracting names; Applicant, Assured, Insurer, Reinsured/Reassured, Reinsurer, broker, shipper, consignee, carrier, and email sender are distinct roles.
 4. Reject headings, addresses, warranties, bill-of-lading boilerplate, endorsements, and OCR fragments from party fields.
-5. Read every policy page and separately retain the exact policy or cover-note number, period, insured value, conveyance limits, transit scope, valuation basis or uplift, deductible, clauses, extensions, warranties, conditions, and exclusions.
+5. Read every policy page and separately retain the exact policy or cover-note number, period, insured value, conveyance limits, transit scope, valuation basis or uplift, deductible, clauses, extensions, warranties, conditions, and exclusions. The policy-number field may use only an expressly labelled policy or cover-note identifier; premium, certificate, endorsement, claim, invoice, sum-insured, and OCR-adjacent references remain separate and any material conflict stays visible.
 6. Reconstruct shipment routing chronologically, keeping origin, each sea/air/land leg, transshipment, discharge, final destination, delivery, empty return, vessel/voyage, and transport reference distinct.
 7. Separate observed condition, causal indicators, express source-stated cause, and professional causal opinion.
 8. Map each material policy term to the relevant established facts without inventing compliance, breach, cover, or legal effect.
-9. Keep all financial concepts separate and leave arithmetic to the deterministic application layer.
+9. Keep all financial concepts separate and leave arithmetic to the deterministic application layer. Reconcile every quotation, invoice, repair, and claim line to the evidenced damaged item, quantity, rate, and loss scope; an unmapped quotation total remains provisional valuation evidence and cannot become an arbitrary adjustment line.
 10. In every analytical section, move from supported facts to interpretation/significance and then to a proportionate professional conclusion.
 11. Give the strongest defensible provisional assessment; do not suppress analysis merely because it is not final.
 12. Identify counterevidence, alternatives, limitations, and what evidence could change the conclusion.
@@ -290,25 +294,30 @@ Claude must analyze the complete current-claim evidence set together, including 
 21. Make each evidence gap decision-specific by identifying the exact document, test, record, witness, approval, or reconciliation needed and the cause, coverage, quantum, mitigation, liability, recovery, or outcome question it would resolve.
 22. Preserve whether a transport record is an original, sea waybill, copy, or draft; reconcile quotation lines, ancillary charges, VAT/tax, and deductible components separately; and keep raw page references in structured provenance rather than client wording.
 
-PDF extraction must not assume that a page with searchable text is visually irrelevant. A searchable page containing a materially sized raster image may also be rendered for Claude vision so that captioned photographs, OCR overlays, logger screens, scans, and mixed text/photo survey pages are not omitted. Additional searchable visual pages are bounded locally; ordinary text pages, logos, and decorative marks must not flood the request. The extracted text remains the verification source for textual facts, while genuinely visual findings use visual provenance.
+Every material policy application is a separate issue record in this order: exact provision; matched current fact or precise factual gap; provisional significance; and professional decision required. The client report must not replace this issue map with a generic statement that policy terms require review.
+
+PDF extraction must not assume that a page with searchable text is visually irrelevant. A searchable page containing a materially sized raster image may also be rendered for Claude vision so that captioned photographs, OCR overlays, logger screens, scans, and mixed text/photo survey pages are not omitted. Additional searchable visual pages are bounded locally; ordinary text pages, logos, and decorative marks must not flood the request. Dense visual PDFs use an economical raster tier for every selected visual page; this reduces request cost without omitting any selected page. The extracted text remains the verification source for textual facts, while genuinely visual findings use visual provenance.
 
 Before returning the structured result, Claude performs a Director-grade internal review within the same provider request. This review does not expose chain-of-thought and does not create a second paid analysis request. It must:
 
 1. Complete the sourced fact, document, party-role, chronology, policy, quantity, financial, and condition record before assessing the claim.
-2. Apply every material test in the applicable owner-approved business-line methodology profile; the profile is an analysis checklist, not merely a writing-style reference.
-3. Challenge the draft analysis across chronology and custody, physical condition and extent, proximate cause, policy application, quantum and mitigation, and liability and recovery. Each returned material finding is assigned to one of those analysis domains so the issue ledger remains structured and auditable; `general` is reserved for a material issue that genuinely fits none of them.
-4. For each material issue, connect supported facts to professional significance, evidence for and against, viable alternatives, the strongest proportionate provisional assessment, and the exact evidence or decision that could change it.
-5. Test causal mechanisms, timing, custody, physical consistency, counterevidence, and alternatives rather than repeating a reported cause or inferring cause from one indicator.
-6. Use comparison evidence deliberately: pre-loading against delivery condition, affected against sound items, and differently exposed units or custody periods. Prior similar shipments, routine practice, handling labels, and unaffected comparators are context, not standalone proof of cause or packing compliance.
-7. Separate observed damage from inferred internal failure, contamination, hygiene, safety, fitness for purpose, repairability, and total loss. Screening tests support only the proposition established by their evidenced method; stronger technical conclusions require proportionate testing, competent expert or OEM evidence, or explicit qualification and the missing verification.
-8. Map each material policy term to the matching current-claim facts and explain the provisional significance without inventing compliance, breach, cover, or legal effect. Keep independently established scope, territory, duration, limit, and exclusion issues separate from disputed cause, packing, warranty, and compliance issues; identify the provisional issue hierarchy while leaving legal effect and approval to the authorized professional.
-9. Reconcile the scope of loss at the smallest evidenced unit, preserve every source-stated calculation input, and leave arithmetic to the deterministic application layer.
-10. Distinguish every plausible liable or recovery party and test custody, contract, causation, notice, evidence preservation, defences, limitation or time bar, and recovery economics before recommending pursuit.
-11. Select the strongest supported outcome branch permitted by the applicable profile, or state which branches remain open and what evidence separates them.
-12. Audit the final structured result for unsupported assertions, missed evidence, generic filler, one-sided conflicts, repeated findings, conflated financial concepts, and conclusions that are stronger or weaker than the evidence.
-13. Confirm cross-section consistency and client readiness: no summary or conclusion may upgrade a provisional quotation, unresolved conflict, qualified cause, unconfirmed cover position, or unestablished liable party beyond the detailed evidence-led analysis.
+2. Build and complete a claim-specific evidence coverage plan from the actual uploaded pages and material signals. Policy, transport/custody, condition/extent, cause, quantum/mitigation, and liability/recovery domains identified by the current evidence must each receive a cited finding or a precise evidence-gap explanation; a domain must never be silently omitted.
+3. Apply every material test in the applicable owner-approved business-line methodology profile; the profile is an analysis checklist, not merely a writing-style reference.
+4. Challenge the draft analysis across chronology and custody, physical condition and extent, proximate cause, policy application, quantum and mitigation, and liability and recovery. Each returned material finding is assigned to one of those analysis domains so the issue ledger remains structured and auditable; `general` is reserved for a material issue that genuinely fits none of them.
+5. For each material issue, connect supported facts to professional significance, evidence for and against, viable alternatives, the strongest proportionate provisional assessment, and the exact evidence or decision that could change it.
+6. Test causal mechanisms, timing, custody, physical consistency, counterevidence, and alternatives rather than repeating a reported cause or inferring cause from one indicator.
+7. Use comparison evidence deliberately: pre-loading against delivery condition, affected against sound items, and differently exposed units or custody periods. Prior similar shipments, routine practice, handling labels, and unaffected comparators are context, not standalone proof of cause or packing compliance.
+8. Separate observed damage from inferred internal failure, contamination, hygiene, safety, fitness for purpose, repairability, and total loss. Screening tests support only the proposition established by their evidenced method; stronger technical conclusions require proportionate testing, competent expert or OEM evidence, or explicit qualification and the missing verification.
+9. Map each material policy term to the matching current-claim facts and explain the provisional significance without inventing compliance, breach, cover, or legal effect. Keep independently established scope, territory, duration, limit, and exclusion issues separate from disputed cause, packing, warranty, and compliance issues; identify the provisional issue hierarchy while leaving legal effect and approval to the authorized professional.
+10. Reconcile the scope of loss at the smallest evidenced unit, preserve every source-stated calculation input, and leave arithmetic to the deterministic application layer.
+11. Distinguish every plausible liable or recovery party and test custody, contract, causation, notice, evidence preservation, defences, limitation or time bar, and recovery economics before recommending pursuit.
+12. Select the strongest supported outcome branch permitted by the applicable profile, or state which branches remain open and what evidence separates them.
+13. Audit the final structured result for unsupported assertions, missed evidence, generic filler, one-sided conflicts, repeated findings, conflated financial concepts, and conclusions that are stronger or weaker than the evidence.
+14. Confirm cross-section consistency and client readiness: no summary or conclusion may upgrade a provisional quotation, unresolved conflict, qualified cause, unconfirmed cover position, or unestablished liable party beyond the detailed evidence-led analysis.
 
 Material findings may use a compact analytical paragraph of up to four sentences when needed to connect fact, significance, counterevidence or alternatives, and a proportionate provisional assessment. Concision must not reduce a material issue to a bare observation or generic review warning.
+
+For large current-claim files, the provider is instructed to keep its structured payload within 48 unique citations and 64 records, with concise material fields, adjustment lines, findings, and decision-specific evidence gaps, to prevent an incomplete response. This is an output-discipline limit, not a page-review limit. The AI must still review every current-claim page and retain the strongest cited result for every material issue; it must not emit a page-by-page extraction, duplicate records, or irrelevant schema fields. A structurally complete payload returned at the provider's output cap remains reviewable and is not discarded solely because the cap was reached.
 
 ## Final issue quality gate
 
@@ -322,7 +331,7 @@ Generated client content must not inherit yellow text highlighting from editing 
 - Claim metadata is context only and is not proof.
 - Search the complete current evidence set before marking a value unavailable.
 - Unsupported scalar fields are null in AI output, require confirmation, and carry no invented source.
-- Client-facing missing values use `Not established from the reviewed evidence` or the approved issue-specific fallback wording.
+- Client-facing missing values use the approved issue-specific wording that names the required evidence and decision; the phrase `not established` is prohibited.
 - Never convert an unknown amount or deduction to zero.
 - Never treat a policy limit, sum insured, invoice total, or shipment value as a claim merely because it is monetary.
 - Reject OCR garbage and sample-data contamination rather than reproducing it.
@@ -348,7 +357,7 @@ Use uncertainty language when evidence is absent, contradictory, incomplete, vis
 4. why it remains unresolved; and
 5. the exact additional evidence or professional determination required.
 
-Do not pad a section with generic uncertainty. Do not use `not established` until the material hypotheses have been tested.
+Do not pad a section with generic uncertainty. State the exact unresolved evidence and the decision it would resolve after the material hypotheses have been tested.
 
 ## Previous approved reports
 
@@ -396,6 +405,28 @@ The GFS methodology requires:
 10. Current-evidence-based carrier, shipper, supplier, consignee, or other recovery analysis. Historical allocation of liability is never reusable.
 
 The global Director wording, section rules, empty Enclosure and Outstanding sections, Appendix limits, calculation controls, citation requirements, and human approval gates override any inconsistent wording or mistake in a historical GFS report.
+
+## Property and Fire methodology profile
+
+The approved business-line profile is named `property-fire`. It is an internal AI methodology profile for Property claims involving premises, fire, electrical failure, water ingress, rain, smoke, soot, explosion, or related physical damage. It is not a source of claim facts and is not a separate authentication identity or user-visible AI provider.
+
+The profile activates automatically only when current claim evidence contains supported property-premises context, such as Property All Risk or Commercial Fire Risk wording, an insured premises, a building, apartment, factory, fire-service report, or water-ingress evidence. If the claim already has a specific business line, it must be `Property`. Unclassified claims may activate the profile from current evidence for classification. The profile must not be sent to cargo, yacht, fidelity, or unrelated claims.
+
+The Property and Fire methodology requires:
+
+1. Review of every current-claim page and a chronological record of the event, discovery, notification, emergency attendance, inspection, mitigation, repair, salvage, disposal, and claim presentation.
+2. Resolution of all material parties and roles before drawing conclusions about insured interest, responsibility, liability, or recovery.
+3. Evidence-led physical-condition analysis at the smallest supported unit, distinguishing observed damage, reported damage, unaffected property, repairable property, and total-loss assertions.
+4. Cause analysis that distinguishes the insured peril from the ignition or ingress mechanism and separately tests timing, physical consistency, source evidence, counterevidence, competing explanations, and evidence gaps.
+5. Property-specific causal testing where relevant: fire origin and spread; electrical failure and protection; water path, rainfall, drainage, maintenance and deterioration; industrial operations, storage, housekeeping and safeguards; and material alternatives.
+6. Full current-policy and endorsement review, with every material term mapped to current facts or a precise factual gap and its provisional coverage significance.
+7. Separate treatment of insurers being on risk, insurable interest, physical loss, cause, policy compliance, coverage, adequacy, quantum, salvage, liability, recovery, and final professional approval.
+8. Line-by-line, deterministic adjustment from current-evidence quantities, invoices, receipts, repair evidence, depreciation, VAT/tax, deductible, salvage and recovery; quotations and market comparisons remain provisional unless independently supported.
+9. Decision-specific outstanding-evidence requests identifying the exact record, test, witness, invoice, expert opinion, policy continuation, or reconciliation and the issue it would resolve.
+10. A supported outcome branch: no evidenced physical loss; partial repairable damage; evidenced total loss; covered property loss; an exclusion or gradual-deterioration issue; a warranty or condition issue needing approval; or a covered loss below the deductible.
+11. Current-claim photographs only, used to support material observations and not as a substitute for policy, technical, causal, financial, or chronological evidence.
+
+The global Director wording, approved section order, empty Enclosure and Outstanding sections, Appendix limits, no-fabrication rules, deterministic calculations, citation requirements, and human approval gates override every unsupported Property or Fire cause, coverage, liability, recovery, quantity, depreciation, total-loss, or legacy-report conclusion.
 
 ## Marine Non-Reefer Cargo methodology profile
 
@@ -546,7 +577,7 @@ AI output is a draft suggestion. Professional review and approval are always req
 These mismatches exist in the current code and are documented here; this file does not change them:
 
 1. `src/lib/reportTemplates.js` still stores the metadata title `Outstanding/ Not Available Documents`, while the issued DOCX and its tests use the approved title `Outstanding Documents`.
-2. The issued DOCX leaves `Enclosure to this report` and `Outstanding Documents` empty, but the Markdown draft/preview path currently falls back to a `Not established from the reviewed evidence` bullet for an empty list.
+2. The issued DOCX leaves `Enclosure to this report` and `Outstanding Documents` empty; the Markdown draft/preview must use the approved specific-evidence wording when an empty fallback is needed.
 3. `MIN_REPORT_PHOTOGRAPHS` is declared as 3, but the current selection/export path does not enforce a minimum; it may export fewer than three or no photographs when sufficient current-claim images are unavailable.
 4. The legacy file `samples/templates/REPORTING-SPEC.md` says photographs require printed evidence IDs, captions, dates, and source references. The current approved DOCX intentionally prints only the one-sentence Appendix description and the photographs; provenance remains internal.
 

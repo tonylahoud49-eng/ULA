@@ -290,7 +290,7 @@ All these operations took place in the presence of the parties below.`,
   assert.match(draft.content, /31\/05\/2026: Cargo arrived/);
   assert.match(draft.content, /FOB, freight, and insurance total USD 70206\.45, matching the commercial invoice total/);
   assert.match(draft.content, /The recorded policy inception \(16\/Apr\/2026\) follows the recorded departure/);
-  assert.match(draft.content, /The proximate cause of loss is not established from the available evidence/);
+  assert.match(draft.content, /The reviewed evidence does not yet permit a defensible proximate-cause opinion/);
   assert.doesNotMatch(draft.content, /Victoire|Judi Lebanon|MC\/0002606|MSNU7244246|MEDULB209962|13,552\.80/i);
 });
 
@@ -424,7 +424,7 @@ test("a claim quantum found on an image-only page is mapped through normalizatio
   assert.match(draft.normalizedRecord.field_trace.claim_amount.resolution, /evidence-supported candidate/);
   assert.match(draft.content, /USD 10,859\.57/);
   assert.match(draft.content, /Salvage invoice loss - 574 cartons/);
-  assert.doesNotMatch(draft.content, /Requires confirmation/i);
+  assert.doesNotMatch(draft.content, /\bnot established\b/i);
 });
 
 test("damaged-goods schedules are reconciled to insured invoice prices instead of producing an empty LBP adjustment", () => {

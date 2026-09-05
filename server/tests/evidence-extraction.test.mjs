@@ -3,7 +3,7 @@ import assert from "node:assert/strict";
 import JSZip from "jszip";
 import { createCanvas, loadImage } from "@napi-rs/canvas";
 import { jsPDF } from "jspdf";
-import { extractEvidenceFile, evidenceText } from "../evidence/extractEvidence.mjs";
+import { extractEvidenceFile, evidenceText, visionRenderOptionsForSelectedPages } from "../evidence/extractEvidence.mjs";
 
 const file = (name, mimeType, buffer) => ({ originalname: name, mimetype: mimeType, buffer, size: buffer.length });
 
@@ -57,6 +57,12 @@ test("server extraction reads PDF, DOCX, XLSX, and email contents and routes ima
   const imageEvidence = await extractEvidenceFile(file("damage.jpg", "image/jpeg", Buffer.from([1, 2, 3])), { id: "image-1" });
   assert.equal(imageEvidence.extraction_status, "vision-required");
   assert.equal(imageEvidence.kind, "image");
+});
+
+test("dense visual PDFs keep every page eligible for review at an economical raster tier", () => {
+  assert.deepEqual(visionRenderOptionsForSelectedPages(23), { maxDimension: 900, jpegQuality: 48 });
+  assert.deepEqual(visionRenderOptionsForSelectedPages(13), { maxDimension: 1_200, jpegQuality: 60 });
+  assert.equal(visionRenderOptionsForSelectedPages(12), undefined);
 });
 
 test("image-only pages inside a mixed PDF are rendered and retained for provider vision", async () => {
@@ -155,4 +161,29 @@ test("later sparse OCR visual pages are not hidden by earlier searchable scans",
   assert.equal(evidence.vision_image_count, 24);
   assert.ok(evidence.vision_images.some((image) => image.page === 25));
   assert.equal(evidence.vision_images.find((image) => image.page === 25).vision_reason, "sparse-searchable-visual");
+});
+
+test("a complete 25-page scanned evidence PDF is retained as a native Claude document", async () => {
+  const scan = createCanvas(160, 120);
+  const context = scan.getContext("2d");
+  context.fillStyle = "#ffffff";
+  context.fillRect(0, 0, scan.width, scan.height);
+  context.fillStyle = "#111111";
+  context.fillRect(20, 20, 120, 80);
+
+  const pdf = new jsPDF({ unit: "px", format: [200, 160] });
+  for (let pageNumber = 1; pageNumber <= 25; pageNumber += 1) {
+    if (pageNumber > 1) pdf.addPage([200, 160], "portrait");
+    pdf.addImage(scan.toDataURL("image/jpeg", 0.75), "JPEG", 20, 20, 160, 120);
+  }
+
+  const evidence = await extractEvidenceFile(
+    file("complete-scanned-evidence.pdf", "application/pdf", Buffer.from(pdf.output("arraybuffer"))),
+    { id: "complete-scanned-evidence" },
+  );
+
+  assert.equal(evidence.extraction_status, "vision-required");
+  assert.equal(evidence.image_only_page_count, 25);
+  assert.equal(evidence.vision_image_count, 0);
+  assert.equal(evidence.native_pdf, true);
 });

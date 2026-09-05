@@ -10,6 +10,7 @@ import {
   LogOut,
   Menu,
   Shield,
+  Settings,
   Terminal,
   X,
 } from "lucide-react";
@@ -32,6 +33,7 @@ const pageTitles = {
   "/ai-reporting": "Reporting Workspace",
   "/annual-leave": "Annual Leave",
   "/users": "User Administration",
+  "/settings": "Settings",
 };
 
 export default function Layout() {
@@ -109,6 +111,15 @@ export default function Layout() {
                     <span className="block text-sm font-semibold leading-tight">Users</span>
                     <span className="mt-0.5 block text-[0.68rem] leading-tight opacity-65">Access management</span>
                   </span>
+                  <ChevronRight className="h-4 w-4 opacity-0 transition-opacity group-hover:opacity-70" aria-hidden="true" />
+                </NavLink>
+                <NavLink
+                  to="/settings"
+                  onClick={() => setOpen(false)}
+                  className={({ isActive }) => `group flex items-center gap-3 rounded-md px-3 py-3 transition-colors ${isActive ? "bg-sidebar-primary text-sidebar-primary-foreground" : "text-sidebar-foreground/76 hover:bg-sidebar-accent hover:text-white"}`}
+                >
+                  <Settings className="h-[18px] w-[18px] shrink-0" aria-hidden="true" />
+                  <span className="min-w-0 flex-1"><span className="block text-sm font-semibold leading-tight">Settings</span><span className="mt-0.5 block text-[0.68rem] leading-tight opacity-65">Audit history</span></span>
                   <ChevronRight className="h-4 w-4 opacity-0 transition-opacity group-hover:opacity-70" aria-hidden="true" />
                 </NavLink>
               </div>

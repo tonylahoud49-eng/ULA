@@ -1,7 +1,7 @@
 import JSZip from "jszip";
 
 export const MASTER_TEMPLATE_NAME = "260536 - CR - Victoire - UTA - 1v1.docx";
-export const UNKNOWN_REPORT_VALUE = "Not established from the reviewed evidence";
+export const UNKNOWN_REPORT_VALUE = "No source-supported value is available for this report element.";
 export const DIRECTOR_ASSESSOR_WORDING = "To date, it is understood that the Assured had not appointed a loss assessor to act on their behalf.";
 export const DIRECTOR_CONCLUSION_CLOSING = "We confirm having sighted the originals of all documents customarily submitted in support of a claim of this nature and remain at Insurers disposal for further instructions.";
 const APPENDIX_PHOTOS_PER_PAGE = 4;
@@ -39,6 +39,9 @@ const POLICY_NARRATIVE_FIELDS = new Set([
 const danglingNarrativePattern = /(?:\b(?:photo(?:graph)?s?|pages?)\s+(?:p{1,2}\.)?|\bp{1,2}\.|\b(?:and|or|but|because|including|namely|at|from|to|on|of|with)|[:;(,-])\s*$/i;
 const completeNarrativeText = (value) => {
   let text = cleanText(value);
+  text = text
+    .replace(/\bnot established from (?:the )?(?:reviewed|available) evidence\b/gi, "requires the specific supporting evidence identified below")
+    .replace(/\bnot established\b/gi, "requires further specific evidence");
   if (!text) return "";
   if (danglingNarrativePattern.test(text)) {
     const tail = text.match(/(?:\b(?:photo(?:graph)?s?|pages?)\s+(?:p{1,2}\.)?|\bp{1,2}\.|\b(?:and|or|but|because|including|namely|at|from|to|on|of|with)|[:;(,-])\s*$/i);
@@ -69,14 +72,33 @@ export function sanitizeReportValue(value, fieldName = "") {
     && /(?:[,;:(/-]|\b(?:and|or|and\/or|to|from|including|excluding|warranted))\s*$/i.test(text)) return null;
 
   if (["applicant", "insured", "insurer", "reassured", "reinsurer", "broker", "shipper", "consignee", "carrier", "surveyor"].includes(fieldName)) {
-    text = text.split(/\s+(?=(?:Invoice|Policy|B\/?L|Bill of Lading|AWB|Container|Tel(?:ephone)?|E-?mail|Address|Warrant(?:ed|y|ies)?|Exclud(?:ed|ing|sion)|Terms? and Conditions?|Carrier'?s? Agents? Endorsements?|Received for Shipment|Copy Non-Negotiable)\b)/i)[0].trim();
+    text = text.split(/\s*(?=(?:Invoice|Policy|B\/?L|Bill of Lading|AWB|Container|Tel(?:ephone)?|E-?mail|Address|Warrant(?:ed|y|ies)?|Exclud(?:ed|ing|sion)|Terms? and Conditions?|Carrier'?s? Agents? Endorsements?|Received for Shipment|Copy Non-Negotiable)\b)/i)[0].trim();
     if (!text || /^(?:Invoice|Policy|Bill of Lading|AWB|Container)\b/i.test(text)) return null;
     if (text.length > 180 || /^(?:Wooden\s+Pack(?:age|ing)|Not\s+Applicable|Warrant(?:ed|y|ies)?|Exclud(?:ed|ing|sion)|Terms? and Conditions?|Carrier'?s? Agents? Endorsements?|Received for Shipment|Copy Non-Negotiable)\b/i.test(text)) return null;
   }
   return text.length > 2_000 ? null : text;
 }
 
-const valueOrUnknown = (value, fieldName = "") => sanitizeReportValue(value, fieldName) || UNKNOWN_REPORT_VALUE;
+const REPORT_FIELD_GAPS = {
+  applicant: "Applicant identity requires confirmation from the appointment instruction or claim correspondence.",
+  insurer: "Insurer identity requires confirmation from the policy schedule or appointment instruction.",
+  insured: "Assured's full legal name requires confirmation from the policy schedule or claim form.",
+  policy_number: "Policy number requires confirmation from the operative policy schedule.",
+  claim_number: "Claim reference requires confirmation from the appointment instruction or claim correspondence.",
+  commodity: "Insured interest requires confirmation from the transport and commercial documents.",
+  consignee: "Consignee identity requires confirmation from the transport document.",
+  shipper: "Shipper identity requires confirmation from the transport or commercial document.",
+  incoterm: "Terms of sale require confirmation from the commercial invoice or sale contract.",
+  transport_reference: "Transport reference requires confirmation from the transport document.",
+  routing: "Shipment routing requires confirmation from the transport record.",
+  carrier: "Carrier identity requires confirmation from the transport document.",
+  arrival_delivery: "Arrival and delivery details require confirmation from the carrier or delivery record.",
+  quantity: "Quantity requires confirmation from the survey or itemised claim schedule.",
+  unit_price: "Unit rate requires confirmation from an itemised invoice, claim schedule, or valuation evidence.",
+  adjustment: "A concluded indemnity requires a reconciled adjustment schedule and supported deductions.",
+};
+const missingReportValue = (fieldName = "") => REPORT_FIELD_GAPS[fieldName] || UNKNOWN_REPORT_VALUE;
+const valueOrUnknown = (value, fieldName = "") => sanitizeReportValue(value, fieldName) || missingReportValue(fieldName);
 const assignmentOrUnassigned = (value) => isPresent(value) ? cleanText(value) : "Not assigned";
 
 const escapeXml = (value) => String(value ?? "")
@@ -212,10 +234,22 @@ function replaceDynamicTableRows(xml, marker, rows, keys) {
     const prototypeMatch = rowMatches.find((match) => match[0].includes(`{{${marker}}}`));
     if (!prototypeMatch) return table;
     const prototype = cleanPrototype(prototypeMatch[0]);
-    const resolvedRows = rows.length ? rows : [Object.fromEntries(keys.map((key) => [key, UNKNOWN_REPORT_VALUE]))];
+    const emptyRow = marker === "damage_description"
+      ? {
+        damage_description: "No itemised damage schedule is cited in the reviewed evidence.",
+        damage_quantity: "—",
+        damage_packing: "—",
+      }
+      : {
+        adjustment_description: "No itemised adjustment schedule is cited in the reviewed evidence.",
+        adjustment_quantity: "—",
+        adjustment_unit_price: "—",
+        adjustment_value: "—",
+      };
+    const resolvedRows = rows.length ? rows : [emptyRow];
     const replacement = resolvedRows.map((row) => {
       let generated = prototype;
-      for (const key of keys) generated = generated.replaceAll(`{{${key}}}`, tokenXml(row[key] ?? UNKNOWN_REPORT_VALUE));
+      for (const key of keys) generated = generated.replaceAll(`{{${key}}}`, tokenXml(row[key] ?? "—"));
       return generated;
     }).join("");
     return `${table.slice(0, prototypeMatch.index)}${replacement}${table.slice(prototypeMatch.index + prototypeMatch[0].length)}`;
@@ -380,8 +414,11 @@ function causeNarrative(record) {
   const hypotheses = assessment.hypotheses || [];
   const allFindings = findingSentences(record, new Set(["chronology_custody", "condition_extent", "proximate_cause", "general"]));
   const opinions = allFindings.filter((item) => /in our opinion|on balance|(?:appear(?:s)?\s+)?consistent with|likely attributable|most probable|available circumstances suggest|we consider|cannot be excluded|plausible (?:cause|mechanism|explanation)/i.test(item));
-  const observations = unique((assessment.observations || []).map((item) => sanitizeReportValue(item.finding)).filter((item) => item && !opinions.includes(item)));
-  const indicators = unique((assessment.indicators || []).map((item) => sanitizeReportValue(item.finding)).filter((item) => item && !opinions.includes(item) && !observations.includes(item)));
+  const isChronologyRestatement = (value) => /^(?:the )?(?:supported |evidenced )?(?:chronology|transit chronology|shipment and transit|material chronology)\b/i.test(String(value || ""));
+  const observations = unique((assessment.observations || []).map((item) => sanitizeReportValue(item.finding))
+    .filter((item) => item && !opinions.includes(item) && !isChronologyRestatement(item)));
+  const indicators = unique((assessment.indicators || []).map((item) => sanitizeReportValue(item.finding))
+    .filter((item) => item && !opinions.includes(item) && !observations.includes(item) && !isChronologyRestatement(item)));
   const limitations = allFindings.filter((item) => /not (?:witnessed|verified|established)|unable to|cannot determine|did not attend|abstained|discrep|only .*count|discovered|became visible|no (?:contemporaneous|carrier|independent)/i.test(item));
   const paragraphs = [];
   const leading = hypotheses.find((hypothesis) => ["supported_by_available_evidence", "comparatively_more_plausible"].includes(hypothesis.status));
@@ -390,9 +427,9 @@ function causeNarrative(record) {
   if (assessment.explicit_cause?.value) {
     paragraphs.push(`The proximate cause of loss is ${cleanText(assessment.explicit_cause.value)}.`);
   } else if (opinions.length || assessment.reasoned_inference || leading || qualifiedSourceOpinion) {
-    paragraphs.push("The proximate cause of loss is not expressly established as a source fact; the available evidence supports the qualified professional assessment set out below.");
+    paragraphs.push("The proximate cause of loss is not expressly stated as a source fact; the available evidence supports the qualified professional assessment set out below.");
   } else {
-    paragraphs.push("The proximate cause of loss is not established from the available evidence.");
+    paragraphs.push("The reviewed evidence does not yet permit a defensible proximate-cause opinion; the decisive causal records are identified below.");
   }
 
   if (observations.length) {
@@ -411,13 +448,19 @@ function causeNarrative(record) {
     paragraphs.push(`The cited source records the qualified opinion that ${asSentence(qualifiedSourceOpinion.hypothesis).replace(/^(?:We are led to believe that|In our opinion,?)\s*/i, "").replace(/^The\s+/, "the ")} ${cleanText(qualifiedSourceOpinion.assessment)}`);
   } else {
     if (leading) paragraphs.push(`On the available evidence, ${cleanText(leading.hypothesis).toLowerCase()} is ${leading.status === "comparatively_more_plausible" ? "comparatively more plausible than the tested alternatives" : "supported as a provisional causal hypothesis"}. ${cleanText(leading.assessment)}`);
+    else {
+      const mechanismEvidence = [...observations, ...indicators].join(" ");
+      if (/\b(?:impact|collision|cargo movement|movement|collapsed|tilted|fracture|breakage|crushed|compression)\b/i.test(mechanismEvidence)) {
+        paragraphs.push("On the available evidence, the observed physical condition is consistent with mechanical impact, compression, or cargo movement during an unconfirmed stage of handling or transit. The evidence does not identify the precise event or custodian, so this remains a qualified professional opinion rather than a finding of liability.");
+      }
+    }
   }
   const competing = hypotheses.filter((hypothesis) => !["evidence_stated", "reasoned_professional_opinion", "supported_by_available_evidence", "comparatively_more_plausible", "not_established"].includes(hypothesis.status));
   if (competing.length) paragraphs.push(`Competing explanations remain subject to review: ${competing.slice(0, 3).map((hypothesis) => `${cleanText(hypothesis.hypothesis)} (${hypothesis.status.replaceAll("_", " ")})`).join("; ")}.`);
   if (limitations.length) {
     paragraphs.push(`The strength of that opinion is limited by the following material considerations: ${compactPoints(limitations, 2, 2, 520)}`);
   } else if (!assessment.explicit_cause && assessment.evidence_gap && !assessment.reasoned_inference) {
-    paragraphs.push("The available information does not establish a definitive proximate cause; a stronger opinion would require unsupported assumptions and alternative mechanisms remain open.");
+    paragraphs.push("The reviewed material leaves competing causal mechanisms open; a stronger opinion requires the specific outstanding causal evidence identified above.");
   }
   return paragraphs
     .map(completeNarrativeText)
@@ -540,18 +583,14 @@ function policyParagraphs(record) {
   ].filter(Boolean);
   if (attendance.length) paragraphs.push(joinSentences(attendance, 2));
   const entries = record?.policy_analysis?.entries || [];
-  const materialEntries = entries.filter((entry) => entry.status === "evidence_available_for_review");
-  const detailedEntries = (materialEntries.length ? materialEntries : entries).slice(0, 5);
+  const mappedEntries = entries.filter((entry) => /^(?:Current policy application|Preliminary-survey warranty|Warranty \/ condition|Deductible \/ excess|Valuation \/ insured value|Exclusion|Packing \/ stowage condition|Survey condition)$/i.test(entry.topic));
+  const supportingEntries = entries.filter((entry) => !mappedEntries.includes(entry) && entry.status === "evidence_available_for_review");
+  const detailedEntries = (mappedEntries.length || supportingEntries.length ? [...mappedEntries, ...supportingEntries] : entries).slice(0, 7);
   for (const entry of detailedEntries) {
     const clause = evidencedPolicyClause(record, entry.topic);
     paragraphs.push(`${entry.topic}:${clause ? ` evidenced wording: ${clause}.` : ""} ${compactAnalyticalPoint(entry.assessment, 2, 420)}`);
   }
-  const remainingTopics = entries
-    .filter((entry) => !detailedEntries.includes(entry))
-    .map((entry) => cleanText(entry.topic));
-  if (remainingTopics.length) {
-    paragraphs.push(`Additional evidenced policy terms requiring factual compliance review: ${remainingTopics.join("; ")}. No compliance, breach, or legal effect is inferred merely from their presence.`);
-  }
+  if (!detailedEntries.length && entries.length) paragraphs.push("Each retained policy provision requires a current-fact mapping before any coverage conclusion is given.");
   if (!entries.length && record?.policy_analysis?.has_wording) {
     paragraphs.push("Policy wording is present, but no claim-specific policy issue could be mapped reliably from the normalized evidence; the operative clauses require professional issue mapping.");
   }
@@ -632,12 +671,12 @@ function conclusionParagraphs(record) {
     && (adjustedFactSupported || scheduleSupported) && financials.arithmetic_valid;
   const amountPoint = amountSupported
     ? `The above adjusted claim amount ${currency} ${amount(adjustedAmount, currency).replace(new RegExp(`^${currency}\\s+`), "")} is considered fair & reasonable.`
-    : `The above adjusted claim amount${currencySupported ? ` in ${currency}` : " in a single reporting currency"} cannot be stated as fair & reasonable because a fully supported and reconciled adjusted amount is not established from the reviewed evidence${financials.itemized_evidence_basis === "quotation" ? "; the available amount is supported only by quotation or estimate evidence" : provisionalSchedule ? "; the available schedule contains extrapolated, miscellaneous, estimated-loss, or otherwise provisional evidence" : ""}.`;
+    : `The above adjusted claim amount${currencySupported ? ` in ${currency}` : " in a single reporting currency"} cannot be stated as fair & reasonable because the reviewed file requires a reconciled adjustment schedule, supported quantities, rates, and deductions${financials.itemized_evidence_basis === "quotation" ? "; the available amount is supported only by quotation or estimate evidence" : provisionalSchedule ? "; the available schedule contains extrapolated, miscellaneous, estimated-loss, or otherwise provisional evidence" : ""}.`;
   const causeLead = cause[0];
   const causeOpinion = cause.slice(1).find((paragraph) => /in our opinion|on (?:balance|the available evidence)|consistent with|likely|most probable|reported cause/i.test(paragraph));
-  const causePoint = causeLead && /not expressly established/i.test(causeLead) && causeOpinion
+  const causePoint = causeLead && /not expressly stated/i.test(causeLead) && causeOpinion
     ? `${causeLead} ${causeOpinion}`
-    : causeLead || causeOpinion || "The proximate cause of loss is not established from the available evidence.";
+    : causeLead || causeOpinion || "The reviewed evidence does not yet permit a defensible proximate-cause opinion; the causal evidence required for that decision must be obtained.";
   const unresolvedPolicyReview = (record?.validation_checks || []).some((check) => check.id === "policy-timing" && check.status === "requires_review")
     || (record?.policy_analysis?.review_questions || []).length > 0;
   const coverageFinding = !unresolvedPolicyReview && (record?.evidence_findings || []).find((finding) => finding.analysis_domain === "policy_application"
@@ -647,7 +686,7 @@ function conclusionParagraphs(record) {
     ? `Cover advice: ${cleanText(coverageFinding.finding)} This remains subject to the operative policy wording and professional approval.`
     : record?.policy_analysis?.has_wording
       ? "Cover advice: The identified policy warranties, exclusions, valuation provisions, and other operative terms must be applied to the established facts before cover is confirmed; final cover remains subject to professional review and approval."
-      : "Cover advice: The operative policy wording is not established from the reviewed evidence, so cover cannot be advised without inventing terms and remains subject to professional review.";
+      : "Cover advice: The reviewed file does not contain the operative policy wording required to assess cover. Obtain the policy schedule, clauses, endorsements, warranties, conditions, exclusions, valuation basis, and deductible wording before cover is advised.";
   const recoveryIssue = (record?.liability_analysis?.issues || []).find((issue) => issue.issue === "Potential carrier or contractual recovery" && issue.status === "evidence_available_for_review");
   const liabilityPoint = recoveryIssue
     ? `Liable-party position: ${recoveryIssue.assessment} No liable party is held automatically without the supporting contract, notice, causation, and liability evidence.`
@@ -697,7 +736,7 @@ export function buildMasterReportData({ report = {}, claim = {}, issueDate } = {
     isPresent(fact(record, "policy_warranties").value) ? `Warranties: ${cleanText(fact(record, "policy_warranties").value)}` : null,
     isPresent(fact(record, "policy_conditions").value) ? `Conditions: ${cleanText(fact(record, "policy_conditions").value)}` : null,
     isPresent(fact(record, "policy_exclusions").value) ? `Exclusions: ${cleanText(fact(record, "policy_exclusions").value)}` : null,
-    !["policy_terms", "policy_extensions", "policy_warranties", "policy_conditions", "policy_exclusions", "warranties_conditions"].some((name) => isPresent(fact(record, name).value)) ? "Policy wording was not established in the reviewed evidence" : null,
+    !["policy_terms", "policy_extensions", "policy_warranties", "policy_conditions", "policy_exclusions", "warranties_conditions"].some((name) => isPresent(fact(record, name).value)) ? "Policy wording required: obtain the operative schedule, clauses, endorsements, warranties, conditions, exclusions, valuation basis, and deductible wording." : null,
     `Deductible / Excess: ${deductibleDisplay}`,
   ].filter(Boolean)).join("\n");
   const summaryPolicyDetails = unique([
@@ -734,9 +773,11 @@ export function buildMasterReportData({ report = {}, claim = {}, issueDate } = {
     ? adequatelyInsured
       ? `The documented invoice value is ${amount(invoiceValueForAdequacy, currency)}${valuationUpliftPercent !== null ? ` and the evidenced valuation basis requires a ${valuationUpliftPercent}% uplift, producing a value at risk of ${amount(requiredInsuredValue, currency)}` : ""}. The documented insured value is ${amount(documentedInsuredValue, currency)}. Accordingly, the invoice values are adequately insured and there is no underinsurance on the evidenced valuation basis.`
       : `The documented invoice value is ${amount(invoiceValueForAdequacy, currency)}${valuationUpliftPercent !== null ? ` and the evidenced valuation basis requires a ${valuationUpliftPercent}% uplift, producing a value at risk of ${amount(requiredInsuredValue, currency)}` : ""}. The documented insured value is ${amount(documentedInsuredValue, currency)}. Accordingly, the invoice values are not adequately insured and there is underinsurance of ${amount(requiredInsuredValue - documentedInsuredValue, currency)} on the evidenced valuation basis.`
-    : "Whether the invoice values are adequately insured and whether there is underinsurance cannot be established from the available evidence because a comparable invoice value, insured value, currency, and evidenced valuation basis are not all available.";
+    : "Whether the invoice values are adequately insured and whether there is underinsurance requires a comparable invoice value, insured value, currency, and evidenced valuation basis; obtain the missing comparable input before giving that opinion.";
   const preservedIntroduction = sanitizeReportValue(fact(record, "report_introduction").value, "report_introduction");
-  const summaryIntro = preservedIntroduction || `At the request of ${valueOrUnknown(applicant)} (the Applicant), ULA was requested to investigate a ${valueOrUnknown(record.business_line || report.business_line || claim.business_line)} claim for ${valueOrUnknown(insured)} (the Assured), establish the circumstances and extent of loss, and adjust the claim presented under the policy. The insured interest is ${valueOrUnknown(commodity)}.`;
+  const summaryIntro = preservedIntroduction || (isPresent(sanitizeReportValue(applicant, "applicant"))
+    ? `At the request of ${valueOrUnknown(applicant, "applicant")} (the Applicant), ULA was requested to investigate a ${valueOrUnknown(record.business_line || report.business_line || claim.business_line)} claim for ${valueOrUnknown(insured, "insured")} (the Assured), establish the circumstances and extent of loss, and adjust the claim presented under the policy.${isPresent(commodity) ? ` The insured interest is ${cleanText(commodity)}.` : " The insured interest requires confirmation from the current policy schedule and transport or commercial documents."}`
+    : `The reviewed appointment instruction and claim correspondence do not identify the Applicant. ULA was requested to investigate a ${valueOrUnknown(record.business_line || report.business_line || claim.business_line)} claim for ${valueOrUnknown(insured, "insured")} (the Assured), establish the circumstances and extent of loss, and adjust the claim presented under the policy.${isPresent(commodity) ? ` The insured interest is ${cleanText(commodity)}.` : " The insured interest requires confirmation from the current policy schedule and transport or commercial documents."}`);
   const sameInsuredAndShipper = isPresent(insured) && isPresent(shipper)
     && sentenceKey(insured) === sentenceKey(shipper);
   const assuredShipperSummary = sameInsuredAndShipper
@@ -787,13 +828,13 @@ export function buildMasterReportData({ report = {}, claim = {}, issueDate } = {
     .map((check) => check.statement);
   return {
     scalars: {
-      cover_title: `${valueOrUnknown(applicant)} - ${valueOrUnknown(insured)} - ${valueOrUnknown(claim.title || commodity)}`,
+      cover_title: `${valueOrUnknown(applicant, "applicant")} - ${valueOrUnknown(insured, "insured")} - ${valueOrUnknown(claim.title || commodity, "commodity")}`,
       claim_number: valueOrUnknown(report.claim_number || claim.claim_number),
       version_number: valueOrUnknown(report.version_number || 1),
-      insurer: valueOrUnknown(applicant),
-      actual_insurer: valueOrUnknown(insurer),
-      insured_name: valueOrUnknown(insured),
-      policy_number: valueOrUnknown(policyNumber),
+      insurer: valueOrUnknown(applicant, "applicant"),
+      actual_insurer: valueOrUnknown(insurer, "insurer"),
+      insured_name: valueOrUnknown(insured, "insured"),
+      policy_number: valueOrUnknown(policyNumber, "policy_number"),
       issue_date: resolvedIssueDate,
       approval_date: resolvedApprovalDate,
       issue_year: String(new Date(report.approved_date || report.created_date || Date.now()).getFullYear()),
@@ -805,11 +846,11 @@ export function buildMasterReportData({ report = {}, claim = {}, issueDate } = {
       approver_designation: assignmentOrUnassigned(assignments.approver?.designation || report.approver_designation),
       revision_reason: valueOrUnknown(report.notes || "Initial controlled draft"),
       summary_assured: valueOrUnknown(assuredShipperSummary),
-      summary_consignee: valueOrUnknown(consignee),
+      summary_consignee: valueOrUnknown(consignee, "consignee"),
       summary_policy: summaryPolicyDetails,
       policy_details: policyDetails,
       incoterm: valueOrUnknown(fact(record, "incoterm").value || fact(record, "terms_of_sale").value),
-      transport_document: `${transport.label}: ${valueOrUnknown(transport.reference)}`,
+      transport_document: `${transport.label}: ${valueOrUnknown(transport.reference, "transport_reference")}`,
       shipper: factWithSource(record, "shipper"),
       consignee: factWithSource(record, "consignee"),
       cargo_details: valueOrUnknown(cargoParts.join("; ")),
@@ -830,7 +871,9 @@ export function buildMasterReportData({ report = {}, claim = {}, issueDate } = {
       report_summary_opinion: conclusions.map((paragraph) => compactAnalyticalPoint(paragraph, 2, 520)),
       document_sighting: [],
       report_note_intro: [noteIntro],
-      interest_insured: [`${valueOrUnknown(commodity)} was documented for transit from ${valueOrUnknown(from)} to ${valueOrUnknown(to)} under Policy No. ${valueOrUnknown(policyNumber)}.`],
+      interest_insured: [isPresent(commodity)
+        ? `The insured interest comprises ${cleanText(commodity)}${isPresent(policyNumber) ? `, insured under Policy No. ${cleanText(policyNumber)}` : ""}. The evidenced routing and custody sequence are set out in the Shipment Routing section below.`
+        : "The insured interest requires confirmation from the current policy schedule and transport or commercial documents."],
       shipment_routing: shipmentRoutingParagraphs(record),
       surveyor_notes: surveyorNotes,
       cause_of_loss_section: causeSection,

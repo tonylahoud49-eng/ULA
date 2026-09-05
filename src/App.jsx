@@ -20,6 +20,7 @@ const ForgotPassword = lazy(() => import('@/pages/ForgotPassword'));
 const ResetPassword = lazy(() => import('@/pages/ResetPassword'));
 const OAuthConsent = lazy(() => import('@/pages/OAuthConsent'));
 const AdminUsers = lazy(() => import('@/pages/AdminUsers'));
+const Settings = lazy(() => import('@/pages/Settings'));
 
 const PageFallback = () => (
   <div className="flex min-h-[300px] w-full items-center justify-center p-8">
@@ -62,6 +63,7 @@ const AuthenticatedApp = () => {
             <Route path="/ai-reporting" element={<AIReporting />} />
             <Route path="/annual-leave" element={<AnnualLeave />} />
             <Route path="/users" element={user?.role === 'admin' ? <AdminUsers /> : <Navigate to="/" replace />} />
+            <Route path="/settings" element={user?.role === 'admin' ? <Settings /> : <Navigate to="/" replace />} />
           </Route>
         </Route>
         <Route path="*" element={<PageNotFound />} />

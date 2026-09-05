@@ -125,10 +125,23 @@ export async function getActiveAIStatus() {
   try {
     const res = await fetch("/api/ai/status");
     if (res.ok) return await res.json();
+    const { body } = await readResponseBody(res);
+    return {
+      configured: false,
+      provider: null,
+      model: null,
+      configured_providers: [],
+      status_error: body.error || `The analysis server returned HTTP ${res.status}.`,
+    };
   } catch {
-    // fallback
+    return {
+      configured: false,
+      provider: null,
+      model: null,
+      configured_providers: [],
+      status_error: "The local analysis server is not running. Start the app with npm run dev.",
+    };
   }
-  return { configured: true, provider: "anthropic", model: "claude-sonnet-4-6", configured_providers: [] };
 }
 
 const readResponseBody = async (response) => {
@@ -148,13 +161,17 @@ async function analyzeClaimWithProviderOnce({ claim, documents, provider, model,
     statusResponse = await fetch("/api/ai/status");
   } catch {
     throw createRequestError(
-      "AI analysis unavailable â€” the local analysis server is not running. Start the app with npm run dev.",
+      "AI analysis unavailable — the local analysis server is not running. Start the app with npm run dev.",
       503,
       "ai-server-unavailable",
     );
   }
   if (!statusResponse.ok) {
-    throw createRequestError("AI analysis unavailable â€” the local analysis server health check failed.", 503, "ai-server-unavailable");
+    const { body } = await readResponseBody(statusResponse);
+    const message = statusResponse.status === 401 || statusResponse.status === 403
+      ? "AI analysis unavailable — your session is no longer valid. Sign in again and retry."
+      : `AI analysis unavailable — ${body.error || `the analysis server status check returned HTTP ${statusResponse.status}.`}`;
+    throw createRequestError(message, statusResponse.status, body.code || "ai-server-unavailable");
   }
   const status = await statusResponse.json();
   const resolvedProvider = provider || status.provider;
@@ -206,7 +223,7 @@ async function analyzeClaimWithProviderOnce({ claim, documents, provider, model,
       preflightResponse = await fetch("/api/ai/preflight", { method: "POST", body: buildForm() });
     } catch {
       throw createRequestError(
-        "Anthropic preflight failed â€” the local analysis server is not running.",
+        "Anthropic preflight failed — the local analysis server is not running.",
         503,
         "ai-server-unavailable",
       );

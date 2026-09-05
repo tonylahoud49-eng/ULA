@@ -44,9 +44,6 @@ export default function AIModelSelector({
       .then((res) => (res.ok ? res.json() : null))
       .then((data) => {
         if (!active || !data) return;
-        const list = data.configured_providers && data.configured_providers.length > 0
-          ? data.configured_providers
-          : [{ provider: data.provider || "anthropic", model: data.model || "claude-sonnet-4-6" }];
         
         if (data.configured_providers && data.configured_providers.length > 0) {
           setModelList((prev) => {
@@ -74,26 +71,22 @@ export default function AIModelSelector({
           onChange(initial);
         }
 
-        // Initialize fallback check state from localStorage
         const savedFallback = localStorage.getItem("ula_ai_enable_fallback");
         const fallbackValue = savedFallback === null ? true : savedFallback === "true";
         if (onEnableFallbackChange) {
           onEnableFallbackChange(fallbackValue);
         }
       })
-      .catch(() => {})
-      .finally(() => {
-        if (active) setLoading(false);
-      });
+      .catch(() => {});
 
     return () => {
       active = false;
     };
   }, []);
 
-  const handleSelect = (selectedProvider) => {
-    localStorage.setItem("ula_ai_selected_provider", selectedProvider);
-    onChange(selectedProvider);
+  const handleSelect = (selectedKey) => {
+    localStorage.setItem("ula_ai_selected_provider", selectedKey);
+    onChange(selectedKey);
   };
 
   const handleFallbackChange = (checked) => {
@@ -182,6 +175,110 @@ export default function AIModelSelector({
           className="h-4 w-7 data-[state=checked]:bg-primary data-[state=unchecked]:bg-muted-foreground/30 [&>span]:h-3 [&>span]:w-3 data-[state=checked]:[&>span]:translate-x-3"
         />
       </div>
+
+      <Dialog open={isTestOpen} onOpenChange={setIsTestOpen}>
+        <DialogTrigger asChild>
+          <Button
+            variant="outline"
+            size="sm"
+            className="h-9 gap-1.5 text-xs font-medium border-border hover:bg-muted/80 shadow-xs"
+            title="Test model live connection and speed"
+          >
+            <Activity className="h-3.5 w-3.5 text-primary" />
+            <span>Test Model</span>
+          </Button>
+        </DialogTrigger>
+        <DialogContent className="max-w-md">
+          <DialogHeader>
+            <DialogTitle className="flex items-center gap-2 text-base font-semibold">
+              <Sparkles className="h-4 w-4 text-primary" />
+              AI Model Field Diagnostics
+            </DialogTitle>
+            <DialogDescription className="text-xs">
+              Ping or chat with <strong className="text-foreground">{selectedItem.label}</strong> ({selectedItem.model}) to verify live status, speed, and responses.
+            </DialogDescription>
+          </DialogHeader>
+
+          <div className="space-y-4 pt-2">
+            <div className="flex gap-2">
+              <Input
+                value={testPrompt}
+                onChange={(e) => setTestPrompt(e.target.value)}
+                placeholder="Type a test query or question..."
+                className="text-xs h-9"
+                onKeyDown={(e) => {
+                  if (e.key === "Enter" && !testing) {
+                    handleRunTest();
+                  }
+                }}
+              />
+              <Button
+                size="sm"
+                onClick={() => handleRunTest()}
+                disabled={testing || !testPrompt.trim()}
+                className="h-9 px-3 gap-1.5 text-xs"
+              >
+                {testing ? (
+                  <Loader2 className="h-3.5 w-3.5 animate-spin" />
+                ) : (
+                  <>
+                    <Send className="h-3 w-3" />
+                    <span>Ping</span>
+                  </>
+                )}
+              </Button>
+            </div>
+
+            {testResult && (
+              <div
+                className={`rounded-lg border p-3 text-xs space-y-2 ${
+                  testResult.ok
+                    ? "bg-emerald-500/10 border-emerald-500/20 text-foreground"
+                    : "bg-destructive/10 border-destructive/20 text-destructive"
+                }`}
+              >
+                <div className="flex items-center justify-between font-semibold">
+                  <div className="flex items-center gap-1.5">
+                    {testResult.ok ? (
+                      <>
+                        <CheckCircle2 className="h-4 w-4 text-emerald-500" />
+                        <span className="text-emerald-600 dark:text-emerald-400">Online & Ready</span>
+                      </>
+                    ) : (
+                      <>
+                        <AlertCircle className="h-4 w-4 text-destructive" />
+                        <span>Connection Failed</span>
+                      </>
+                    )}
+                  </div>
+                  {testResult.latency_ms > 0 && (
+                    <span className="font-mono text-[0.7rem] text-muted-foreground">
+                      {testResult.latency_ms} ms
+                    </span>
+                  )}
+                </div>
+
+                {testResult.ok ? (
+                  <div className="space-y-1.5">
+                    {testResult.model && (
+                      <div className="font-mono text-[0.68rem] text-muted-foreground">
+                        Active Engine: <span className="font-semibold text-foreground">{testResult.model}</span>
+                      </div>
+                    )}
+                    <div className="rounded bg-background/80 p-2 text-xs border border-border text-foreground whitespace-pre-wrap max-h-48 overflow-y-auto">
+                      {testResult.reply}
+                    </div>
+                  </div>
+                ) : (
+                  <div className="rounded bg-destructive/10 p-2 text-xs border border-destructive/20 text-destructive whitespace-pre-wrap">
+                    {testResult.error}
+                  </div>
+                )}
+              </div>
+            )}
+          </div>
+        </DialogContent>
+      </Dialog>
     </div>
   );
 }

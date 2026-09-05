@@ -1,0 +1,66 @@
+{
+  "approved": true,
+  "profile_id": "property-fire",
+  "title": "Property and Fire - Owner-Approved Methodology Profile",
+  "applies_to": {
+    "evidence_terms_any": [
+      "property all risk",
+      "commercial fire risk",
+      "insured premises",
+      "residential premises",
+      "water seepage",
+      "water damage",
+      "rainwater damage",
+      "fire damage",
+      "fire brigade",
+      "civil defense report",
+      "building damage",
+      "apartment damage",
+      "factory premises"
+    ],
+    "business_lines": [
+      "Property"
+    ]
+  },
+  "section_order": [
+    "Cover Page",
+    "Document Control Page",
+    "Report Summary",
+    "Report and adjustment note",
+    "Table 1 - Summary and salient details",
+    "INTEREST INSURED & RELEVANT CONDITIONS OF INSURANCE POLICY",
+    "SURVEYOR NOTES",
+    "CAUSE OF LOSS",
+    "RELEVANT POLICY WARRANTIES & CONDITIONS",
+    "ADEQUACY OF THE INSURED VALUE",
+    "APPOINTMENT OF ASSESSORS",
+    "CLAIM PRESENTED ON THE POLICY & ADJUSTMENT",
+    "CONCLUSION",
+    "Enclosure to this report",
+    "Outstanding Documents",
+    "Appendix A - Photographs",
+    "About ULA"
+  ],
+  "style_notes": [
+    "Use this profile only for a current property, fire, electrical, water-ingress, rain, smoke, soot, explosion or related premises claim within the applicability scope. It is methodology only and never supplies a current claim fact, policy term, amount, party, outcome or citation.",
+    "Open with a concise appointment and scope statement from current evidence. Resolve the applicant, insurer, policyholder, Assured, owner, occupier, tenant, property manager, claimant, contractor, surveyor, emergency service, repairer, salvage buyer and any alleged responsible third party before attributing interest, responsibility or recovery.",
+    "Build a chronological loss record from the reported event, discovery, notification, emergency attendance, first inspection, follow-up inspections, mitigation, segregation, repair, salvage, disposal and claim presentation. Keep a reported time or verbal declaration distinct from an independently recorded time, official record or physical observation.",
+    "For every material physical finding, identify the exact location, affected building element or item, observed condition, extent, comparison with sound or unaffected areas, and whether it was inspected, photographed, tested, repaired, removed or only reported. Damage location or appearance alone does not prove the mechanism, timing, ownership or responsible party.",
+    "For fire, test ignition source, origin location, timing, fuel or combustible load, electrical condition, heat, flame, smoke, soot, firefighting effects, spread, stop, fire-service evidence, CCTV or alarm evidence, post-fire alterations and viable alternatives. Distinguish the insured peril of fire from the mechanism that ignited it and from any separate maintenance, operational, warranty or recovery issue.",
+    "For electrical losses, distinguish a failed component, overvoltage or voltage-surge evidence, overload, overheating, loose connection, protective-device operation, maintenance history, fire damage and consequential loss. A burnt contactor, breaker, cable or panel is not by itself proof of the initiating electrical event; request competent electrician, engineer, utility, testing or service evidence when the mechanism cannot be verified from the current record.",
+    "For water, rain or seepage losses, trace the credible water path and distinguish a sudden insured event from gradual deterioration, wear and tear, defective grouting, sealant or waterproofing, blocked drainage, overflowing gutters, plumbing escape, condensation, groundwater, post-event exposure and other viable sources. Test rainfall or weather evidence against the actual ingress route, maintenance condition, drain history and observed damage pattern.",
+    "For industrial or commercial premises, test the process being conducted, heat source, material handling, storage arrangement, combustibles, housekeeping, fire separation, ventilation, emergency controls, extinguishers, alarms, shut-down sequence and whether the activity and location match the declared insured operations. Do not label operational negligence, a breach or an exclusion unless the relevant current evidence and operative wording support that provisional issue.",
+    "Read every current policy, schedule, endorsement and clause page. Separately record period, location, insured interest, insured property classes, sum insured or sublimit, insured peril or extension, deductible, valuation basis, warranties, conditions, exclusions, debris or professional-fee extensions, business-interruption scope and any protective safeguard requirement. Map each material provision to the relevant current facts or exact factual gap, its provisional significance and the professional coverage decision still required.",
+    "Treat proof that insurers were on risk and the Assured had an interest as separate from proof of physical loss, proximate cause, compliance, cover and quantum. Do not state adequacy or underinsurance unless the supported comparable valuation inputs permit the approved deterministic assessment.",
+    "For safety and protective safeguards, identify the actual relevant device or procedure, its location, condition, maintenance or test evidence, use during the incident and relationship to the claimed damage. Availability of extinguishers, a regulator, a detector or a maintenance programme does not automatically prove compliance, causation or coverage; absence of a record does not automatically prove a breach.",
+    "Reconcile each claimed item at the smallest evidenced unit: room, building element, stock category, machine, component, vehicle, fixture, repair activity, labour, professional fee, debris or mitigation cost. Keep reported, inspected, damaged, repairable, replaced, unaffected, rejected, salvaged, destroyed and claimed scope distinct. A total-loss conclusion requires evidence of unfitness, repair economics, residual value, salvage and any required rejection, destruction or expert evidence.",
+    "Validate invoices, receipts, quotations, work orders, repair reports, purchase records, market comparisons and payment evidence separately. Include an item only when the evidence links it to the loss and adjustment basis; deduct unrelated, betterment, duplicated, unsupported or non-recoverable work. Quotes, estimates and market comparisons remain provisional valuation evidence unless independently supported as a claim or incurred cost.",
+    "For repair or replacement of machinery, equipment, fixtures or finishes, compare reasonable repair, cleaning, testing, component replacement and like-for-like replacement. Test feasibility, safety, expert or OEM requirements, useful life, betterment, depreciation, installation, commissioning, residual value and VAT or tax recovery before making an adjustment recommendation.",
+    "Treat salvage and mitigation as evidence-led issues. Record what was retained, segregated, repaired, sold, destroyed or disposed of; the supporting weights, quantities, buyer, price, receipts and authority; and whether the proceeds or costs belong in the adjustment. Do not assume a salvage value, recovery percentage or mitigation deduction.",
+    "Consider potential recovery separately for contractors, building managers, neighbouring owners or occupiers, utility providers, manufacturers, repairers, maintenance providers or other parties only where current evidence supports a duty, involvement or causal connection. Test contract, custody or control, notice, causation, admissions, inspection opportunity, limitation, evidence preservation, defences and recovery economics before recommending pursuit.",
+    "For each unresolved point, identify the exact missing document, report, test, witness statement, maintenance record, CCTV segment, invoice, payment evidence, weather record, expert opinion, policy continuation or reconciliation and state whether it would resolve cause, cover, quantum, mitigation, liability or recovery. Do not use generic requests for more documents.",
+    "Select the strongest supported outcome branch: no evidenced physical loss; partial repairable damage; evidenced total loss; covered property loss; an excluded or gradual-deterioration issue; a warranty or condition issue requiring approval; or an otherwise covered loss below the applicable deductible. Keep cause, coverage, quantum and recovery conclusions proportionate and explicitly reviewable.",
+    "Use current-claim photographs only to support material observations, comparisons, identification, extent, mitigation, repair, salvage or disposal. A photograph may support observed condition but cannot fill a missing policy term, invoice, test, chronology or causal proof.",
+    "The global ULA report specification, Director wording, no-fabrication rules, deterministic calculations, citation requirements, approved section order, Appendix limits and human approval gates override any legacy report practice or unsupported conclusion."
+  ]
+}

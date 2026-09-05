@@ -4,6 +4,7 @@ import { appClient } from "@/api/appClient";
 import { useAuth } from "@/lib/AuthContext";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
+import { PasswordInput } from "@/components/PasswordInput";
 import { Label } from "@/components/ui/label";
 import { LogIn, Mail, Lock, Loader2, Users, UserCheck, CheckCircle2, ShieldCheck, User } from "lucide-react";
 import AuthLayout from "@/components/AuthLayout";
@@ -119,6 +120,7 @@ export default function Login() {
   const navigate = useNavigate();
   const { isAuthenticated, checkUserAuth } = useAuth();
   const returnTo = safeReturnTo();
+  const showDevelopmentLogin = import.meta.env.DEV;
 
   // Redirect if already authenticated
   useEffect(() => {
@@ -178,16 +180,16 @@ export default function Login() {
         </>
       }
     >
-      <Button
+      {showDevelopmentLogin && <Button
         variant="outline"
         className="w-full h-12 text-sm font-semibold mb-6 border-primary/40 hover:bg-primary/5 text-primary flex items-center justify-center gap-2"
         onClick={() => setShowTeamModal(true)}
       >
         <Users className="w-5 h-5 text-primary" />
         1-Click Test Sign In (Personas &amp; Team)
-      </Button>
+      </Button>}
 
-      {showTeamModal && (
+      {showDevelopmentLogin && showTeamModal && (
         <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 backdrop-blur-sm p-4">
           <div className="bg-card border w-full max-w-lg rounded-xl shadow-2xl p-6 relative max-h-[90vh] flex flex-col">
             <div className="flex items-center justify-between pb-3 border-b mb-3">
@@ -371,15 +373,16 @@ export default function Login() {
           </div>
         </div>
         <div className="space-y-2">
-          <div className="flex items-center justify-between gap-4">
-            <Label htmlFor="password">ULA system password</Label>
-            <Link to="/forgot-password" className="shrink-0 text-xs text-primary underline-offset-4 hover:underline">Forgot password?</Link>
+          <div className="flex items-center justify-between">
+            <Label htmlFor="password">Password</Label>
+            <Link to="/forgot-password" className="text-xs text-primary hover:underline">
+              Forgot password?
+            </Link>
           </div>
           <div className="relative">
             <Lock className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-muted-foreground" aria-hidden="true" />
-            <Input
+            <PasswordInput
               id="password"
-              type="password"
               autoComplete="current-password"
               placeholder="•••••••• (default: ula123)"
               value={password}

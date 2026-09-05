@@ -9,6 +9,7 @@ import {
   leaveBalances,
   transitionLeave,
 } from "../../src/lib/leaveWorkflow.js";
+import { seededLeaveEmployees, ULA_2026_LEAVE_BASELINE } from "../../src/lib/leaveEmployees.js";
 import { createLeaveEmailService } from "../leave/leaveEmailService.mjs";
 import { createMicrosoftGraphMailClient, getMicrosoftGraphStatus } from "../integrations/microsoftGraphMail.mjs";
 
@@ -30,6 +31,33 @@ const requestInput = (overrides = {}) => ({
   note: "Family commitment",
   client_request_id: "client-request-1",
   ...overrides,
+});
+
+test("2026 employee seeds preserve the supplied annual and sick leave baseline", () => {
+  const employees = new Map(seededLeaveEmployees(2026).map((item) => [item.id, item]));
+
+  assert.deepEqual(
+    ["employee-rana-rizk", "employee-estefani-haddad", "employee-hovig-kalandjian", "employee-fares-fares"]
+      .map((id) => [id, employees.get(id).annual_leave_used, employees.get(id).sick_leave_used]),
+    [
+      ["employee-rana-rizk", 5, 5],
+      ["employee-estefani-haddad", 0, 1],
+      ["employee-hovig-kalandjian", 10.5, 3],
+      ["employee-fares-fares", 0, 0],
+    ],
+  );
+  assert.equal(employees.get("employee-feyez-dghayli").annual_leave_total, 16);
+  assert.equal(employees.get("employee-feyez-dghayli").annual_leave_used, 0);
+  assert.equal(employees.get("employee-annie-abdel-massih").annual_leave_used, 8);
+  assert.equal(employees.get("employee-annie-abdel-massih").sick_leave_used, 1);
+  assert.equal(employees.get("employee-annie-abdel-massih").annual_leave_total - employees.get("employee-annie-abdel-massih").annual_leave_used, 7);
+  assert.equal(employees.get("employee-rana-rizk").leave_balance_baseline, ULA_2026_LEAVE_BASELINE);
+
+  const nextYearRana = seededLeaveEmployees(2027).find((item) => item.id === "employee-rana-rizk");
+  assert.equal(nextYearRana.annual_leave_total, 15);
+  assert.equal(nextYearRana.annual_leave_used, 0);
+  assert.equal(nextYearRana.sick_leave_used, null);
+  assert.equal(nextYearRana.leave_balance_baseline, null);
 });
 
 test("working-day calculation is inclusive and excludes weekends", () => {

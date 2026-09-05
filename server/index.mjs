@@ -22,6 +22,8 @@ import { sendTestEmail, getEmailDiagnosticsStatus } from "./email/emailTestServi
 import { createAuthService } from "./auth/authService.mjs";
 import { createAuthHttp } from "./auth/authHttp.mjs";
 import { sendPasswordResetEmail } from "./auth/passwordResetMailer.mjs";
+import { createPostgresRepository } from "./db/postgresRepository.mjs";
+import { eventForLeave } from "../src/lib/leaveWorkflow.js";
 
 if (process.env.NODE_ENV !== "test") {
   dotenv.config();
@@ -30,18 +32,24 @@ if (process.env.NODE_ENV !== "test") {
 const serverFile = fileURLToPath(import.meta.url);
 const root = path.resolve(path.dirname(serverFile), "..");
 const port = Number(process.env.PORT || 8787);
+const host = process.env.HOST || "0.0.0.0";
 const maxFiles = Number(process.env.AI_MAX_FILES || 20);
 const maxFileBytes = Number(process.env.AI_MAX_FILE_BYTES || 30 * 1024 * 1024);
 const maxTotalBytes = Number(process.env.AI_MAX_TOTAL_BYTES || 50 * 1024 * 1024);
 const upload = multer({ storage: multer.memoryStorage(), limits: { files: maxFiles, fileSize: maxFileBytes } });
 const app = express();
-const authService = createAuthService({
+const postgresRepository = createPostgresRepository();
+const authService = postgresRepository?.auth || createAuthService({
   stateFile: process.env.AUTH_STATE_FILE || path.resolve(".data", "auth-state.json"),
 });
 const authHttp = createAuthHttp({
   service: authService,
+  createEmployeeAccount: postgresRepository?.createEmployeeAccount,
   sendResetEmail: (payload) => sendPasswordResetEmail(payload, { env: process.env }),
 });
+if (process.env.NODE_ENV === "production" && !postgresRepository) {
+  throw new Error("DATABASE_URL is required in production. JSON storage is not a production data store.");
+}
 const getLeaveEmailService = () => {
   if (process.env.NODE_ENV !== "test") {
     dotenv.config();
@@ -71,76 +79,103 @@ const diskStorage = multer.diskStorage({
 });
 const diskUpload = multer({ storage: diskStorage, limits: { fileSize: maxFileBytes, files: maxFiles } });
 
+const sendRepositoryError = (response, error) => response.status(Number(error.status) || 500).json({
+  error: error.message || "The request could not be completed.",
+  code: error.code || "database-error",
+});
+// The JSON/local development adapter has no server session.  Production always
+// requires PostgreSQL and therefore always enforces the authenticated path.
+const requireDocumentAccess = (request, response, next) => postgresRepository
+  ? authHttp.requireAuth(request, response, next)
+  : next();
+
 // --- Entity REST Endpoints ---
-app.get("/api/entities/:entity", (request, response) => {
+app.get("/api/entities/:entity", authHttp.requireAuth, async (request, response) => {
   const { entity } = request.params;
   if (!ENTITY_NAMES.includes(entity)) {
     return response.status(400).json({ error: `Unknown entity: ${entity}` });
   }
   try {
+    if (postgresRepository) {
+      const query = Object.fromEntries(Object.entries(request.query || {}).filter(([, value]) => value !== undefined && value !== ""));
+      return response.json(Object.keys(query).length ? await postgresRepository.filter(entity, query, request.authUser) : await postgresRepository.list(entity, request.authUser));
+    }
     const items = diskDb.list(entity, request.query);
     return response.json(items);
   } catch (err) {
-    return response.status(500).json({ error: err.message });
+    return sendRepositoryError(response, err);
   }
 });
 
-app.get("/api/entities/:entity/:id", (request, response) => {
+app.get("/api/entities/:entity/:id", authHttp.requireAuth, async (request, response) => {
   const { entity, id } = request.params;
   if (!ENTITY_NAMES.includes(entity)) {
     return response.status(400).json({ error: `Unknown entity: ${entity}` });
   }
   try {
+    if (postgresRepository) {
+      const item = await postgresRepository.get(entity, id, request.authUser);
+      return item ? response.json(item) : response.status(404).json({ error: "Not found" });
+    }
     const item = diskDb.get(entity, id);
     if (!item) return response.status(404).json({ error: `Not found` });
     return response.json(item);
   } catch (err) {
-    return response.status(500).json({ error: err.message });
+    return sendRepositoryError(response, err);
   }
 });
 
-app.post("/api/entities/:entity", (request, response) => {
+app.post("/api/entities/:entity", authHttp.requireAuth, async (request, response) => {
   const { entity } = request.params;
   if (!ENTITY_NAMES.includes(entity)) {
     return response.status(400).json({ error: `Unknown entity: ${entity}` });
   }
   try {
+    if (postgresRepository) return response.status(201).json(await postgresRepository.create(entity, request.body || {}, request.authUser));
     const created = diskDb.create(entity, request.body || {});
     return response.status(201).json(created);
   } catch (err) {
-    return response.status(500).json({ error: err.message });
+    return sendRepositoryError(response, err);
   }
 });
 
-app.put("/api/entities/:entity/:id", (request, response) => {
+app.put("/api/entities/:entity/:id", authHttp.requireAuth, async (request, response) => {
   const { entity, id } = request.params;
   if (!ENTITY_NAMES.includes(entity)) {
     return response.status(400).json({ error: `Unknown entity: ${entity}` });
   }
   try {
+    if (postgresRepository) {
+      const updated = await postgresRepository.update(entity, id, request.body || {}, request.authUser);
+      return updated ? response.json(updated) : response.status(404).json({ error: "Not found" });
+    }
     const updated = diskDb.update(entity, id, request.body || {});
     return response.json(updated);
   } catch (err) {
-    return response.status(500).json({ error: err.message });
+    return sendRepositoryError(response, err);
   }
 });
 
-app.delete("/api/entities/:entity/:id", (request, response) => {
+app.delete("/api/entities/:entity/:id", authHttp.requireAuth, async (request, response) => {
   const { entity, id } = request.params;
   if (!ENTITY_NAMES.includes(entity)) {
     return response.status(400).json({ error: `Unknown entity: ${entity}` });
   }
   try {
+    if (postgresRepository) {
+      const deleted = await postgresRepository.remove(entity, id, request.authUser);
+      return deleted ? response.json(deleted) : response.status(404).json({ error: "Not found" });
+    }
     const deleted = diskDb.delete(entity, id);
     if (!deleted) return response.status(404).json({ error: "Not found" });
     return response.json(deleted);
   } catch (err) {
-    return response.status(500).json({ error: err.message });
+    return sendRepositoryError(response, err);
   }
 });
 
 // --- Document Physical Storage Endpoints ---
-app.post("/api/documents/upload", diskUpload.single("file"), (request, response) => {
+app.post("/api/documents/upload", requireDocumentAccess, diskUpload.single("file"), async (request, response) => {
   if (!request.file) {
     return response.status(400).json({ error: "No file provided in request" });
   }
@@ -149,7 +184,7 @@ app.post("/api/documents/upload", diskUpload.single("file"), (request, response)
   const storageKey = filename;
   const fileUrl = `/api/documents/file/${filename}`;
 
-  return response.status(201).json({
+  const result = {
     storage_key: storageKey,
     file_url: fileUrl,
     file_name: originalname,
@@ -157,14 +192,28 @@ app.post("/api/documents/upload", diskUpload.single("file"), (request, response)
     file_mime_type: mimetype,
     storage_provider: "server_disk",
     reference: `server-document:${storageKey}`,
-  });
+  };
+  if (postgresRepository) {
+    try {
+      await postgresRepository.recordActivity(request.authUser, "upload:stored", "DocumentStorage", { id: storageKey, file_name: originalname }, null, { size, mime_type: mimetype });
+    } catch (error) {
+      fs.unlink(path.join(UPLOADS_DIR, filename), () => {});
+      return sendRepositoryError(response, error);
+    }
+  }
+  return response.status(201).json(result);
 });
 
-app.get("/api/documents/file/:filename", (request, response) => {
+app.get("/api/documents/file/:filename", requireDocumentAccess, async (request, response) => {
   try {
     const { filename } = request.params;
     const safeFilename = path.basename(filename);
     const filePath = path.resolve(UPLOADS_DIR, safeFilename);
+
+    if (postgresRepository) {
+      const document = await postgresRepository.getDocumentByStorageKey(safeFilename, request.authUser);
+      if (!document) return response.status(404).json({ error: "Document not found" });
+    }
 
     if (!fs.existsSync(filePath)) {
       return response.status(404).json({ error: "Document file not found on server" });
@@ -197,10 +246,19 @@ app.get("/api/documents/file/:filename", (request, response) => {
   }
 });
 
-app.get("/api/documents/:key", (request, response) => {
+app.get("/api/documents/:key", requireDocumentAccess, async (request, response) => {
   const { key } = request.params;
   const safeKey = path.basename(key);
   const filePath = path.join(UPLOADS_DIR, safeKey);
+
+  if (postgresRepository) {
+    try {
+      const document = await postgresRepository.getDocumentByStorageKey(safeKey, request.authUser);
+      if (!document) return response.status(404).json({ error: "Document not found" });
+    } catch (error) {
+      return sendRepositoryError(response, error);
+    }
+  }
 
   if (!fs.existsSync(filePath)) {
     return response.status(404).json({ error: "Document not found" });
@@ -215,7 +273,7 @@ app.get("/api/documents/:key", (request, response) => {
   });
 });
 
-app.delete("/api/documents/:key", (request, response) => {
+app.delete("/api/documents/:key", requireDocumentAccess, (request, response) => {
   const { key } = request.params;
   const safeKey = path.basename(key);
   const filePath = path.join(UPLOADS_DIR, safeKey);
@@ -230,8 +288,71 @@ app.delete("/api/documents/:key", (request, response) => {
   }
 });
 
+const deliverLeaveNotification = async ({ leave, employee, target, actor }) => {
+  const event = eventForLeave(leave, target);
+  try {
+    const delivery = await getLeaveEmailService().sendEvent({ ...event, leave, employee });
+    const updated = await postgresRepository.recordLeaveDelivery(leave.id, target, delivery, actor);
+    return { leave: updated, delivery, email_error: null };
+  } catch (error) {
+    const previousAttempts = Number(leave.email_delivery?.[target]?.attempts || 0);
+    const delivery = error.delivery || {
+      status: "failed",
+      attempts: previousAttempts + 1,
+      idempotency_key: event.idempotency_key,
+      error: error.message,
+      code: error.code || "leave-email-delivery-failed",
+      retryable: Number(error.status) !== 400 && Number(error.status) !== 403,
+    };
+    const updated = await postgresRepository.recordLeaveDelivery(leave.id, target, delivery, actor);
+    return { leave: updated, delivery, email_error: error.message };
+  }
+};
+
+app.post("/api/leave/requests", authHttp.requireAuth, async (request, response) => {
+  if (!postgresRepository) return response.status(501).json({ error: "The secured leave workflow requires SQL storage.", code: "sql-storage-required" });
+  try {
+    const created = await postgresRepository.submitLeave(request.body || {}, request.authUser);
+    if (!created.created) return response.json({ request: created.leave, employee: created.employee, created: false, delivery: null, email_error: null });
+    const notified = await deliverLeaveNotification({ leave: created.leave, employee: created.employee, target: "admin_notification", actor: request.authUser });
+    return response.status(201).json({ request: notified.leave, employee: created.employee, created: true, delivery: notified.delivery, email_error: notified.email_error });
+  } catch (error) {
+    return sendRepositoryError(response, error);
+  }
+});
+
+app.post("/api/leave/requests/:requestId/decision", authHttp.requireAuth, async (request, response) => {
+  if (!postgresRepository) return response.status(501).json({ error: "The secured leave workflow requires SQL storage.", code: "sql-storage-required" });
+  try {
+    const decided = await postgresRepository.decideLeave(request.params.requestId, request.body?.decision, request.authUser);
+    if (!decided.changed) return response.json({ request: decided.leave, employee: decided.employee, changed: false, delivery: null, email_error: null });
+    const notified = await deliverLeaveNotification({ leave: decided.leave, employee: decided.employee, target: "employee_notification", actor: request.authUser });
+    return response.json({ request: notified.leave, employee: decided.employee, changed: true, delivery: notified.delivery, email_error: notified.email_error });
+  } catch (error) {
+    return sendRepositoryError(response, error);
+  }
+});
+
+app.post("/api/leave/requests/:requestId/retry-email", authHttp.requireAuth, async (request, response) => {
+  if (!postgresRepository) return response.status(501).json({ error: "The secured leave workflow requires SQL storage.", code: "sql-storage-required" });
+  if (request.authUser.role !== "admin") return response.status(403).json({ error: "Administrator access is required.", code: "leave-admin-required" });
+  const target = request.body?.target;
+  if (!['admin_notification', 'employee_notification'].includes(target)) return response.status(400).json({ error: "Invalid email notification target.", code: "invalid-email-target" });
+  try {
+    const leave = await postgresRepository.get("Leave", request.params.requestId, request.authUser);
+    if (!leave) return response.status(404).json({ error: "Leave request not found.", code: "leave-request-not-found" });
+    const employee = await postgresRepository.get("Employee", leave.employee_id, request.authUser);
+    if (!employee) return response.status(404).json({ error: "Employee not found.", code: "employee-not-found" });
+    const notified = await deliverLeaveNotification({ leave, employee, target, actor: request.authUser });
+    return response.json({ request: notified.leave, employee, delivery: notified.delivery, email_error: notified.email_error });
+  } catch (error) {
+    return sendRepositoryError(response, error);
+  }
+});
+
 // Full DB sync backward compatibility
-app.get("/api/db", (_request, response) => {
+app.get("/api/db", (request, response) => {
+  if (postgresRepository || process.env.NODE_ENV === "production") return response.status(410).json({ error: "Full database synchronization is disabled when SQL storage is enabled." });
   try {
     return response.json(diskDb.getClaimsDb());
   } catch (err) {
@@ -240,6 +361,7 @@ app.get("/api/db", (_request, response) => {
 });
 
 app.post("/api/db", (request, response) => {
+  if (postgresRepository || process.env.NODE_ENV === "production") return response.status(410).json({ error: "Full database synchronization is disabled when SQL storage is enabled." });
   try {
     const payload = request.body || {};
     diskDb.setFullClaimsDb(payload);
@@ -250,6 +372,7 @@ app.post("/api/db", (request, response) => {
 });
 
 app.get("/api/auth-db", (_request, response) => {
+  if (postgresRepository || process.env.NODE_ENV === "production") return response.status(410).json({ error: "JSON authentication storage is disabled when SQL storage is enabled." });
   try {
     return response.json(diskDb.getAuthDb());
   } catch (err) {
@@ -258,6 +381,7 @@ app.get("/api/auth-db", (_request, response) => {
 });
 
 app.post("/api/auth-db", (request, response) => {
+  if (postgresRepository || process.env.NODE_ENV === "production") return response.status(410).json({ error: "JSON authentication storage is disabled when SQL storage is enabled." });
   try {
     const payload = request.body || {};
     diskDb.setFullAuthDb(payload);
@@ -312,16 +436,27 @@ export function logAiEvent(level, message, data = null) {
   }
 }
 
-app.get("/api/ai/logs", (_request, response) => response.json({ ok: true, logs: AI_LOGS }));
-app.delete("/api/ai/logs", (_request, response) => {
+app.get("/api/ai/logs", authHttp.requireAuth, authHttp.requireAdmin, (_request, response) => response.json({ ok: true, logs: AI_LOGS }));
+app.delete("/api/ai/logs", authHttp.requireAuth, authHttp.requireAdmin, (_request, response) => {
   AI_LOGS.length = 0;
   persistAiLogs();
   return response.json({ ok: true });
 });
 
-app.get("/api/health", (_request, response) => response.json({ ok: true }));
+app.get("/api/health", async (_request, response) => {
+  if (!postgresRepository) return response.json({ ok: true, storage: "local" });
+  try {
+    await postgresRepository.healthy();
+    return response.json({ ok: true, storage: "postgresql" });
+  } catch {
+    return response.status(503).json({ ok: false, storage: "postgresql" });
+  }
+});
 authHttp.registerRoutes(app);
-app.use("/api", authHttp.requireAuth);
+// The local-data adapter authenticates in the browser and does not mint a
+// server session. Keep its companion API routes available during development;
+// deployed SQL-backed instances continue to require the server session.
+app.use("/api", requireDocumentAccess);
 app.get("/api/ai/status", (_request, response) => response.json(getAIStatus()));
 app.get("/api/leave/email/status", (_request, response) => response.json(getLeaveEmailService().getStatus()));
 app.get("/api/email/diagnostics", (_request, response) => {
@@ -511,7 +646,7 @@ app.post("/api/ai/preflight", upload.array("files", maxFiles), async (request, r
       provider: "anthropic",
       model: resolvedModel,
     });
-    const preflightToken = issueAnthropicPreflightToken(fingerprint, local.stats);
+    const preflightToken = issueAnthropicPreflightToken(fingerprint, local.stats, local.originalEvidence);
     return response.json({
       ok: true,
       server_running: true,
@@ -540,6 +675,12 @@ app.post("/api/ai/preflight", upload.array("files", maxFiles), async (request, r
 });
 
 app.post("/api/leave/notifications", async (request, response) => {
+  if (postgresRepository) {
+    return response.status(410).json({
+      error: "Direct leave email dispatch is disabled. Use the secured leave workflow endpoint.",
+      code: "leave-direct-dispatch-disabled",
+    });
+  }
   try {
     const configuredBaseUrl = String(process.env.APP_BASE_URL || "").trim();
     const requestOrigin = request.get("origin");
@@ -566,6 +707,7 @@ app.post("/api/leave/notifications", async (request, response) => {
 app.post("/api/ai/analyze", upload.array("files", maxFiles), async (request, response) => {
   let activeProviderInfo = null;
   let anthropicFingerprint = null;
+  let preflightEvidence = null;
   try {
     const requestedProvider = request.body?.provider || undefined;
     const requestedModel = request.body?.model || undefined;
@@ -607,6 +749,7 @@ app.post("/api/ai/analyze", upload.array("files", maxFiles), async (request, res
         model: provider.model,
       });
       const preflight = consumeAnthropicPreflightToken(request.body?.preflight_token, anthropicFingerprint);
+      preflightEvidence = preflight.originalEvidence;
       const now = Date.now();
       for (const [fingerprint, record] of anthropicAnalysisRequests.entries()) {
         if (record.expiresAt < now) anthropicAnalysisRequests.delete(fingerprint);
@@ -648,7 +791,9 @@ app.post("/api/ai/analyze", upload.array("files", maxFiles), async (request, res
       file_names: files.map((f) => f.originalname || f.name),
     });
 
-    const evidence = await Promise.all(files.map((file, index) => extractEvidenceFile(file, { ...manifest[index], index })));
+    const evidence = preflightEvidence || await Promise.all(
+      files.map((file, index) => extractEvidenceFile(file, { ...manifest[index], index })),
+    );
     const totalExtractedChars = evidence.reduce((sum, item) => sum + evidenceText(item).length, 0);
     logAiEvent("info", `Extracted ${evidence.length} evidence document(s) (${totalExtractedChars.toLocaleString()} characters)`, {
       documents: evidence.map((item) => ({
@@ -756,12 +901,19 @@ app.post("/api/ai/analyze", upload.array("files", maxFiles), async (request, res
   }
 });
 
-app.use((error, _request, response, next) => {
+app.use((error, request, response, next) => {
   if (!error) return next();
   if (error instanceof multer.MulterError) {
     return response.status(413).json({ error: `AI analysis unavailable — ${error.message}`, code: "upload-limit" });
   }
-  return response.status(500).json({ error: "AI analysis unavailable — the analysis server failed.", code: "server-error" });
+  const isAiRequest = request.path === "/api/ai/preflight" || request.path === "/api/ai/analyze";
+  const message = isAiRequest && process.env.NODE_ENV !== "production"
+    ? `AI analysis unavailable — ${error.message || "the analysis server failed."}`
+    : "AI analysis unavailable — the analysis server failed.";
+  return response.status(Number(error.status) || 500).json({
+    error: message,
+    code: error.code || "server-error",
+  });
 });
 
 const dist = path.join(root, "dist");
@@ -774,8 +926,8 @@ if (fs.existsSync(dist)) {
 }
 
 if (process.argv[1] && path.resolve(process.argv[1]) === path.resolve(serverFile)) {
-  app.listen(port, "127.0.0.1", () => {
-    console.log(`ULA application server listening on http://127.0.0.1:${port}`);
+  app.listen(port, host, () => {
+    console.log(`ULA application server listening on http://${host}:${port}`);
   });
 }
 

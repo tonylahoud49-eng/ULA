@@ -33,25 +33,6 @@ export default function AnnualLeave() {
         appClient.entities.Leave.list(),
         appClient.auth.me().catch(() => null),
       ]);
-      if (user && user.role !== "admin") {
-        let matching = employeeRecords.find(
-          (e) => (e.email && user.email && e.email.trim().toLowerCase() === user.email.trim().toLowerCase()) ||
-                 (e.name && user.full_name && e.name.trim().toLowerCase() === user.full_name.trim().toLowerCase())
-        );
-        if (!matching && (user.full_name || user.email)) {
-          matching = await appClient.entities.Employee.create({
-            name: user.full_name || user.email.split("@")[0] || "Employee",
-            email: user.email || "",
-            department: "Operations",
-            role: "Staff",
-            annual_leave_total: 15,
-            annual_leave_used: 0,
-            toil_balance: 0,
-            year: new Date().getFullYear(),
-          });
-          employeeRecords = [...employeeRecords, matching];
-        }
-      }
       setEmployees(employeeRecords);
       setLeaves(leaveRecords);
       setCurrentUser(user);
@@ -75,7 +56,7 @@ export default function AnnualLeave() {
       <div className="docket-header">
         <div>
           <h2 className="docket-title">Annual leave control</h2>
-          <p className="docket-subtitle">Track the existing 15-day annual leave allowance, TOIL balances, requests, approvals, and team availability.</p>
+          <p className="docket-subtitle">{currentUser?.role === "admin" ? "Track annual leave, balances, requests, approvals, and team availability." : "Review your leave balance, requests, and personal availability."}</p>
         </div>
         <div className="flex gap-2 items-center flex-wrap">
           {currentUser?.role === "admin" && (
@@ -93,10 +74,10 @@ export default function AnnualLeave() {
       </div>
 
       <div className="metric-strip grid-cols-2 md:grid-cols-4">
-        <div className="metric-cell"><p className="docket-label">Employees</p><p className="mt-1 font-heading text-3xl font-semibold">{employees.length}</p></div>
+        <div className="metric-cell"><p className="docket-label">{currentUser?.role === "admin" ? "Employees" : "My profile"}</p><p className="mt-1 font-heading text-3xl font-semibold">{currentUser?.role === "admin" ? employees.length : 1}</p></div>
         <div className="metric-cell"><p className="docket-label">Pending requests</p><p className="mt-1 font-heading text-3xl font-semibold">{leaves.filter((l) => l.status === "Pending").length}</p></div>
         <div className="metric-cell"><p className="docket-label">Approved this period</p><p className="mt-1 font-heading text-3xl font-semibold">{leaves.filter((l) => l.status === "Approved").length}</p></div>
-        <div className="metric-cell"><p className="docket-label">Days remaining</p><p className="mt-1 font-heading text-3xl font-semibold">{totalRemaining}</p></div>
+        <div className="metric-cell"><p className="docket-label">Annual + TOIL remaining</p><p className="mt-1 font-heading text-3xl font-semibold">{totalRemaining}</p></div>
       </div>
 
       <div className="grid grid-cols-1 lg:grid-cols-2 gap-5">
@@ -105,7 +86,8 @@ export default function AnnualLeave() {
           <div className="space-y-3">
             {employees.length === 0 ? <p className="text-sm text-muted-foreground text-center py-6">No employees yet.</p> : employees.map((e) => {
               const annual = Math.max(0, (e.annual_leave_total ?? 15) - (e.annual_leave_used ?? 0));
-              const total = annual + (e.toil_balance ?? 0);
+              const annualUsed = e.annual_leave_used ?? 0;
+              const sickUsed = e.sick_leave_used;
               return (
                 <div key={e.id} className="flex items-center justify-between p-3 rounded-lg border border-border hover:bg-muted/30 gap-2">
                   <div className="flex-1 min-w-0">
@@ -124,10 +106,11 @@ export default function AnnualLeave() {
                       {e.department ? ` • ${e.department}` : ""}
                     </p>
                   </div>
-                  <div className="flex gap-3 text-right shrink-0">
-                    <div><p className="text-[11px] text-muted-foreground">Annual</p><p className="font-semibold text-sm">{annual}d</p></div>
+                  <div className="grid grid-cols-2 gap-x-4 gap-y-2 text-right shrink-0 sm:grid-cols-4">
+                    <div><p className="text-[11px] text-muted-foreground">Annual left</p><p className="font-semibold text-sm tabular-nums">{annual}d</p></div>
+                    <div><p className="text-[11px] text-muted-foreground">Annual taken</p><p className="font-semibold text-sm tabular-nums">{annualUsed}d</p></div>
+                    <div><p className="text-[11px] text-muted-foreground">Sick taken</p><p className="font-semibold text-sm tabular-nums">{sickUsed == null ? "—" : `${sickUsed}d`}</p></div>
                     <div><p className="text-[11px] text-muted-foreground">TOIL</p><p className="font-semibold text-sm">{e.toil_balance ?? 0}d</p></div>
-                    <div><p className="text-[11px] text-muted-foreground">Total</p><p className="font-semibold text-sm text-primary">{total}d</p></div>
                   </div>
                 </div>
               );
@@ -137,7 +120,7 @@ export default function AnnualLeave() {
 
         <Card className="docket-surface p-5 shadow-none">
           <div className="flex items-center justify-between mb-4">
-            <h3 className="font-heading text-xl font-semibold">Company calendar</h3>
+            <h3 className="font-heading text-xl font-semibold">{currentUser?.role === "admin" ? "Company calendar" : "My leave calendar"}</h3>
             <div className="flex items-center gap-2">
               <Button size="icon" variant="ghost" onClick={() => setViewDate(new Date(viewDate.getFullYear(), viewDate.getMonth() - 1, 1))}><ChevronLeft className="w-4 h-4" /></Button>
               <span className="text-sm font-medium w-32 text-center">{MONTHS[viewDate.getMonth()]} {viewDate.getFullYear()}</span>
@@ -508,7 +491,7 @@ function AddEmployeeDialog({ onAdded }) {
     if (!form.name || !validEmail) return;
     setSaving(true);
     try {
-      await appClient.entities.Employee.create({ ...form, annual_leave_total: 15, annual_leave_used: 0, toil_balance: 0, year: new Date().getFullYear() });
+      await appClient.entities.Employee.create({ ...form, annual_leave_total: 15, annual_leave_used: 0, sick_leave_used: 0, toil_balance: 0, year: new Date().getFullYear() });
       onAdded();
       setOpen(false);
       setForm({ name: "", email: "", department: "", role: "" });
@@ -549,6 +532,7 @@ function EditEmployeeDialog({ employee, onUpdated }) {
     role: employee.role || "",
     annual_leave_total: employee.annual_leave_total ?? 15,
     annual_leave_used: employee.annual_leave_used ?? 0,
+    sick_leave_used: employee.sick_leave_used ?? "",
     toil_balance: employee.toil_balance ?? 0,
   });
 
@@ -563,6 +547,7 @@ function EditEmployeeDialog({ employee, onUpdated }) {
         role: employee.role || "",
         annual_leave_total: employee.annual_leave_total ?? 15,
         annual_leave_used: employee.annual_leave_used ?? 0,
+        sick_leave_used: employee.sick_leave_used ?? "",
         toil_balance: employee.toil_balance ?? 0,
       });
     }
@@ -581,6 +566,7 @@ function EditEmployeeDialog({ employee, onUpdated }) {
         role: form.role.trim(),
         annual_leave_total: Number(form.annual_leave_total) || 15,
         annual_leave_used: Number(form.annual_leave_used) || 0,
+        sick_leave_used: form.sick_leave_used === "" ? null : Number(form.sick_leave_used) || 0,
         toil_balance: Number(form.toil_balance) || 0,
       });
       toast({
@@ -679,13 +665,14 @@ function EditEmployeeDialog({ employee, onUpdated }) {
           </div>
 
           <div className="pt-2 border-t space-y-2">
-            <Label className="text-slate-900 font-semibold">Leave Allowances & Balances</Label>
-            <div className="grid grid-cols-3 gap-2">
+            <Label className="text-slate-900 font-semibold">Leave allowances and usage</Label>
+            <div className="grid grid-cols-2 gap-2 sm:grid-cols-4">
               <div>
                 <Label className="text-[11px] text-muted-foreground">Annual Total</Label>
                 <Input
                   type="number"
                   min={0}
+                  step={0.5}
                   value={form.annual_leave_total}
                   onChange={(e) => setForm({ ...form, annual_leave_total: Number(e.target.value) })}
                   className="h-8 text-xs mt-0.5"
@@ -696,9 +683,22 @@ function EditEmployeeDialog({ employee, onUpdated }) {
                 <Input
                   type="number"
                   min={0}
+                  step={0.5}
                   value={form.annual_leave_used}
                   onChange={(e) => setForm({ ...form, annual_leave_used: Number(e.target.value) })}
                   className="h-8 text-xs mt-0.5"
+                />
+              </div>
+              <div>
+                <Label className="text-[11px] text-muted-foreground">Sick Taken</Label>
+                <Input
+                  type="number"
+                  min={0}
+                  step={0.5}
+                  value={form.sick_leave_used}
+                  onChange={(e) => setForm({ ...form, sick_leave_used: e.target.value === "" ? "" : Number(e.target.value) })}
+                  className="h-8 text-xs mt-0.5"
+                  placeholder="Unknown"
                 />
               </div>
               <div>
@@ -706,6 +706,7 @@ function EditEmployeeDialog({ employee, onUpdated }) {
                 <Input
                   type="number"
                   min={0}
+                  step={0.5}
                   value={form.toil_balance}
                   onChange={(e) => setForm({ ...form, toil_balance: Number(e.target.value) })}
                   className="h-8 text-xs mt-0.5"

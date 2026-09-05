@@ -17,6 +17,7 @@ export const ENTITY_NAMES = [
   "Employee",
   "Leave",
   "ReportVersion",
+  "AuditLog",
   "User",
 ];
 

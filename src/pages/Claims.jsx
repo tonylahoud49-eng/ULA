@@ -67,6 +67,7 @@ export default function Claims() {
         date_of_loss: "2023-11-14",
         vessel_name: "MSC ISABELLA",
         container_number: "MSCU1234567",
+        visibility: "private",
       });
 
       // 2. Dummy Invoice
@@ -226,6 +227,7 @@ export default function Claims() {
                     <th>Claim</th>
                     <th>Business Line</th>
                     <th>Insured</th>
+                    <th>Visibility</th>
                     <th>Status</th>
                     <th>Surveyor</th>
                     <th aria-label="Open claim" />
@@ -242,6 +244,7 @@ export default function Claims() {
                       </td>
                       <td>{claim.business_line || "Unclassified"}</td>
                       <td>{claim.insured || "—"}</td>
+                      <td><span className={`status-mark ${claim.visibility === "public" ? "border-primary/30 bg-primary/5 text-primary" : "border-border bg-muted text-muted-foreground"}`}>{claim.visibility === "public" ? "Public" : "Private"}</span></td>
                       <td>
                         <span className={`status-mark ${statusStyles[claim.status] || "border-border bg-muted text-muted-foreground"}`}>
                           {claim.status || "New"}

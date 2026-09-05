@@ -8,12 +8,30 @@ import { simpleParser } from "mailparser";
 const TEXT_EXTENSIONS = new Set([".txt", ".csv", ".json", ".xml", ".html", ".htm", ".md", ".rtf"]);
 const IMAGE_EXTENSIONS = new Set([".png", ".jpg", ".jpeg", ".webp", ".gif"]);
 const MAX_SEARCHABLE_VISUAL_PAGES = 24;
+const MAX_PDF_PAGES = Number.isFinite(Number(process.env.AI_MAX_PDF_PAGES))
+  ? Math.max(1, Math.floor(Number(process.env.AI_MAX_PDF_PAGES)))
+  : 80;
+const MAX_PDF_VISION_PAGES = Number.isFinite(Number(process.env.AI_MAX_PDF_VISION_PAGES))
+  ? Math.max(1, Math.floor(Number(process.env.AI_MAX_PDF_VISION_PAGES)))
+  : 40;
+const MAX_ANTHROPIC_NATIVE_PDF_BYTES = Number.isFinite(Number(process.env.ANTHROPIC_NATIVE_PDF_MAX_BYTES))
+  ? Math.max(1, Math.floor(Number(process.env.ANTHROPIC_NATIVE_PDF_MAX_BYTES)))
+  : 8 * 1024 * 1024;
 const SPARSE_SEARCHABLE_PAGE_CHARACTERS = 32;
 const MAX_ANTHROPIC_MANY_IMAGE_DIMENSION = 1_900;
 const MATERIAL_RASTER_MIN_WIDTH = 180;
 const MATERIAL_RASTER_MIN_HEIGHT = 180;
 const MATERIAL_RASTER_MIN_AREA = 80_000;
 const normalizeWhitespace = (value) => String(value || "").replace(/\u0000/g, "").replace(/[ \t]+/g, " ").replace(/\n{3,}/g, "\n\n").trim();
+
+export class EvidenceExtractionError extends Error {
+  constructor(message, { status = 422, code = "evidence-extraction-failed" } = {}) {
+    super(message);
+    this.name = "EvidenceExtractionError";
+    this.status = status;
+    this.code = code;
+  }
+}
 
 const pdfPageText = (items = []) => {
   const populated = items.filter((item) => String(item.str || "").trim());
@@ -59,12 +77,15 @@ const xmlText = (xml) => normalizeWhitespace(
     .replace(/&#39;/g, "'"),
 );
 
-async function renderPdfPageForVision(page, pageNumber) {
+async function renderPdfPageForVision(page, pageNumber, {
+  maxDimension = MAX_ANTHROPIC_MANY_IMAGE_DIMENSION,
+  jpegQuality = 72,
+} = {}) {
   const preferredScale = 1.25;
   const preferredViewport = page.getViewport({ scale: preferredScale });
   const largestPreferredDimension = Math.max(preferredViewport.width, preferredViewport.height);
-  const boundedScale = largestPreferredDimension > MAX_ANTHROPIC_MANY_IMAGE_DIMENSION
-    ? preferredScale * MAX_ANTHROPIC_MANY_IMAGE_DIMENSION / largestPreferredDimension
+  const boundedScale = largestPreferredDimension > maxDimension
+    ? preferredScale * maxDimension / largestPreferredDimension
     : preferredScale;
   const viewport = page.getViewport({ scale: boundedScale });
   const canvas = createCanvas(Math.ceil(viewport.width), Math.ceil(viewport.height));
@@ -84,8 +105,14 @@ async function renderPdfPageForVision(page, pageNumber) {
   return {
     page: pageNumber,
     mime_type: "image/jpeg",
-    buffer: canvas.toBuffer("image/jpeg", 72),
+    buffer: canvas.toBuffer("image/jpeg", jpegQuality),
   };
+}
+
+export function visionRenderOptionsForSelectedPages(selectedPageCount) {
+  if (selectedPageCount > 20) return { maxDimension: 900, jpegQuality: 48 };
+  if (selectedPageCount > 12) return { maxDimension: 1_200, jpegQuality: 60 };
+  return undefined;
 }
 
 const rasterDimensions = (value) => {
@@ -134,51 +161,86 @@ async function extractPdf(buffer) {
   ).replaceAll(path.sep, "/");
   const task = pdfjs.getDocument({ data: new Uint8Array(buffer), disableWorker: true, standardFontDataUrl, wasmUrl });
   const pdf = await task.promise;
-  const pages = [];
-  const visionImages = [];
-  const searchableVisualCandidates = [];
-  const imageOnlyPages = [];
-  for (let pageNumber = 1; pageNumber <= pdf.numPages; pageNumber += 1) {
-    const page = await pdf.getPage(pageNumber);
-    const content = await page.getTextContent();
-    const extracted = { page: pageNumber, ...pdfPageText(content.items) };
-    pages.push(extracted);
-    const imageOnly = !extracted.text;
-    if (imageOnly) {
-      imageOnlyPages.push(pageNumber);
-    } else if (await pdfPageHasMaterialRaster(page, pdfjs.OPS)) {
-      const textLength = extracted.text.length;
-      const sparseText = textLength <= SPARSE_SEARCHABLE_PAGE_CHARACTERS;
-      const materialClaimTerms = (extracted.text.match(/\b(?:survey|statement of facts|inspection|damage|damaged|deteriorat|temperature|logger|photograph|container|customs|claim)\b/gi) || []).length;
-      searchableVisualCandidates.push({
-        pageNumber,
-        sparseText,
-        // Rank the complete document before applying the cap. Otherwise early
-        // OCR policy scans can hide later SOFs, logger screens, and photographs.
-        priority: (sparseText ? 1_000_000 : 0) + materialClaimTerms * 10_000 - textLength,
-      });
+  try {
+    if (pdf.numPages > MAX_PDF_PAGES) {
+      throw new EvidenceExtractionError(
+        `PDF has ${pdf.numPages} pages; split it into files of at most ${MAX_PDF_PAGES} pages before analysis.`,
+        { status: 413, code: "pdf-page-limit" },
+      );
     }
-    page.cleanup();
-  }
+    const pages = [];
+    const visionImages = [];
+    const searchableVisualCandidates = [];
+    const imageOnlyPages = [];
+    for (let pageNumber = 1; pageNumber <= pdf.numPages; pageNumber += 1) {
+      const page = await pdf.getPage(pageNumber);
+      try {
+        const content = await page.getTextContent();
+        const extracted = { page: pageNumber, ...pdfPageText(content.items) };
+        pages.push(extracted);
+        const imageOnly = !extracted.text;
+        if (imageOnly) {
+          imageOnlyPages.push(pageNumber);
+        } else if (await pdfPageHasMaterialRaster(page, pdfjs.OPS)) {
+          const textLength = extracted.text.length;
+          const sparseText = textLength <= SPARSE_SEARCHABLE_PAGE_CHARACTERS;
+          const materialClaimTerms = (extracted.text.match(/\b(?:survey|statement of facts|inspection|damage|damaged|deteriorat|temperature|logger|photograph|container|customs|claim)\b/gi) || []).length;
+          searchableVisualCandidates.push({
+            pageNumber,
+            sparseText,
+            // Rank the complete document before applying the cap. Otherwise early
+            // OCR policy scans can hide later SOFs, logger screens, and photographs.
+            priority: (sparseText ? 1_000_000 : 0) + materialClaimTerms * 10_000 - textLength,
+          });
+        }
+      } finally {
+        page.cleanup();
+      }
+    }
 
-  const selectedSearchableVisualPages = searchableVisualCandidates
-    .sort((left, right) => right.priority - left.priority || left.pageNumber - right.pageNumber)
-    .slice(0, MAX_SEARCHABLE_VISUAL_PAGES);
-  const selectedPages = [
-    ...imageOnlyPages.map((pageNumber) => ({ pageNumber, reason: "image-only" })),
-    ...selectedSearchableVisualPages.map((candidate) => ({
-      pageNumber: candidate.pageNumber,
-      reason: candidate.sparseText ? "sparse-searchable-visual" : "material-raster-with-searchable-text",
-    })),
-  ].sort((left, right) => left.pageNumber - right.pageNumber);
+    const selectedSearchableVisualPages = searchableVisualCandidates
+      .sort((left, right) => right.priority - left.priority || left.pageNumber - right.pageNumber)
+      .slice(0, MAX_SEARCHABLE_VISUAL_PAGES);
+    const selectedPages = [
+      ...imageOnlyPages.map((pageNumber) => ({ pageNumber, reason: "image-only" })),
+      ...selectedSearchableVisualPages.map((candidate) => ({
+        pageNumber: candidate.pageNumber,
+        reason: candidate.sparseText ? "sparse-searchable-visual" : "material-raster-with-searchable-text",
+      })),
+    ].sort((left, right) => left.pageNumber - right.pageNumber);
+    if (selectedPages.length > MAX_PDF_VISION_PAGES) {
+      throw new EvidenceExtractionError(
+        `PDF contains ${selectedPages.length} pages requiring visual review; split it into files with at most ${MAX_PDF_VISION_PAGES} visual pages before analysis.`,
+        { status: 413, code: "pdf-vision-page-limit" },
+      );
+    }
 
-  for (const selected of selectedPages) {
-    const page = await pdf.getPage(selected.pageNumber);
-    const rendered = await renderPdfPageForVision(page, selected.pageNumber);
-    if (rendered) visionImages.push({ ...rendered, vision_reason: selected.reason });
-    page.cleanup();
+    // Claude natively understands PDFs. For a large scanned bundle, sending
+    // the original PDF is safer and more complete than rasterizing every page
+    // in-process; local page text remains available for citation verification.
+    if (selectedPages.length > MAX_SEARCHABLE_VISUAL_PAGES
+      && buffer.length <= MAX_ANTHROPIC_NATIVE_PDF_BYTES) {
+      return { pages, visionImages, nativePdf: true };
+    }
+
+    // A complete evidence set is retained, but a large scanned bundle must use
+    // a smaller raster for each page. This prevents native canvas allocations
+    // from accumulating across dozens of pages before Claude receives them.
+    const visionRenderOptions = visionRenderOptionsForSelectedPages(selectedPages.length);
+
+    for (const selected of selectedPages) {
+      const page = await pdf.getPage(selected.pageNumber);
+      try {
+        const rendered = await renderPdfPageForVision(page, selected.pageNumber, visionRenderOptions);
+        if (rendered) visionImages.push({ ...rendered, vision_reason: selected.reason });
+      } finally {
+        page.cleanup();
+      }
+    }
+    return { pages, visionImages, nativePdf: false };
+  } finally {
+    await task.destroy();
   }
-  return { pages, visionImages };
 }
 
 async function extractDocx(buffer) {
@@ -242,7 +304,7 @@ export async function extractEvidenceFile(file, metadata = {}) {
 
   try {
     if (mimeType === "application/pdf" || extension === ".pdf") {
-      const { pages, visionImages } = await extractPdf(file.buffer);
+      const { pages, visionImages, nativePdf } = await extractPdf(file.buffer);
       const searchablePageCount = pages.filter((page) => page.text).length;
       return {
         ...base,
@@ -252,6 +314,7 @@ export async function extractEvidenceFile(file, metadata = {}) {
         image_only_page_count: pages.length - searchablePageCount,
         vision_images: visionImages,
         vision_image_count: visionImages.length,
+        native_pdf: nativePdf,
         extraction_status: searchablePageCount ? "extracted" : "vision-required",
       };
     }
@@ -280,7 +343,15 @@ export async function extractEvidenceFile(file, metadata = {}) {
     }
     return { ...base, kind: "unsupported", pages: [], extraction_status: "unsupported", warning: `No text extractor is configured for ${extension || mimeType}.` };
   } catch (error) {
-    return { ...base, kind: mimeType.startsWith("image/") ? "image" : "unreadable", pages: [], extraction_status: "failed", warning: error.message || "Evidence extraction failed." };
+    return {
+      ...base,
+      kind: mimeType.startsWith("image/") ? "image" : "unreadable",
+      pages: [],
+      extraction_status: "failed",
+      warning: error.message || "Evidence extraction failed.",
+      error_status: Number(error.status) || 500,
+      error_code: error.code || "evidence-extraction-failed",
+    };
   }
 }
 

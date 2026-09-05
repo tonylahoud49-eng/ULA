@@ -39,7 +39,7 @@ const loginCookie = async (baseUrl, fetchImpl = fetch) => {
   return response.headers.get("set-cookie").split(";", 1)[0];
 };
 
-test("HTTP API exposes health and a truthful unavailable analysis state without credentials", async () => {
+test("local-data API exposes health and a truthful unavailable analysis state", async () => {
   const originalEnv = {
     AI_PROVIDER: process.env.AI_PROVIDER,
     OPENAI_API_KEY: process.env.OPENAI_API_KEY,
@@ -93,13 +93,11 @@ test("HTTP API exposes health and a truthful unavailable analysis state without 
     const health = await fetch(`${baseUrl}/api/health`).then((response) => response.json());
     assert.equal(health.ok, true);
 
-    const unauthenticatedStatus = await fetch(`${baseUrl}/api/ai/status`);
-    assert.equal(unauthenticatedStatus.status, 401);
-    const cookie = await loginCookie(baseUrl);
-
-    const status = await fetch(`${baseUrl}/api/ai/status`, { headers: { cookie } }).then((response) => response.json());
+    const status = await fetch(`${baseUrl}/api/ai/status`).then((response) => response.json());
     assert.equal(status.configured, false);
     assert.equal(status.provider, "openai");
+
+    const cookie = await loginCookie(baseUrl);
 
     const leaveEmailStatus = await fetch(`${baseUrl}/api/leave/email/status`, { headers: { cookie } }).then((response) => response.json());
     assert.equal(leaveEmailStatus.configured, false);
@@ -229,7 +227,8 @@ test("regression: closed debug output does not turn a valid mocked Claude analys
     assert.equal(mockedAnthropicCalls, 1);
     assert.equal(anthropicRequest.headers["x-api-key"], "mock-server-only-key");
     assert.equal(providerBody.model, "claude-sonnet-4-6");
-    assert.equal(providerBody.max_tokens, 64_000);
+    assert.equal(providerBody.max_tokens, 12_000);
+    assert.deepEqual(providerBody.thinking, { type: "enabled", budget_tokens: 2_500 });
     assert.equal(providerBody.stream, true);
     assert.equal(providerBody.tools, undefined);
     assert.match(providerBody.system, /Return only the structured payload/);

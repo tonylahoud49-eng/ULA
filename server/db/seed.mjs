@@ -178,6 +178,9 @@ export const SEEDED_DEMO_USERS = [
 export const ALL_SEEDED_ACCOUNTS = [...SEEDED_TEAM_MEMBERS, ...SEEDED_DEMO_USERS];
 
 export function seedUsers({ verbose = true } = {}) {
+  if (process.env.NODE_ENV === "production") {
+    throw new Error("The local JSON seeder is disabled in production. Provision PostgreSQL users through the secured admin workflow.");
+  }
   if (!fs.existsSync(DATA_DIR)) {
     fs.mkdirSync(DATA_DIR, { recursive: true });
   }

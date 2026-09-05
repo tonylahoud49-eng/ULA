@@ -94,12 +94,14 @@ test("production prompt requires concise fact-to-interpretation-to-conclusion re
   assert.match(SYSTEM_INSTRUCTIONS, /every analytical section, move from supported facts to professional interpretation\/significance and then a reasoned adjuster\/surveyor conclusion/i);
   assert.match(SYSTEM_INSTRUCTIONS, /never merely restate facts/i);
   assert.match(SYSTEM_INSTRUCTIONS, /Keep conclusions proportionate.*qualify uncertainty and alternatives.*never invent or pad/i);
-  assert.match(SYSTEM_INSTRUCTIONS, /Do not use "not established".*as a substitute for analysis/i);
+  assert.match(SYSTEM_INSTRUCTIONS, /Never use the phrase "not established" in client-facing analysis or report text/i);
   assert.match(SYSTEM_INSTRUCTIONS, /Do not suppress a defensible analysis merely because the conclusion is provisional/i);
-  assert.match(SYSTEM_INSTRUCTIONS, /Use "not established" only after testing the material hypotheses/i);
+  assert.match(SYSTEM_INSTRUCTIONS, /exact missing page, document, record, test, witness, or reconciliation/i);
+  assert.match(DIRECTOR_ANALYSIS_PROTOCOL, /review every page of every current-claim PDF in page-number order/i);
   assert.match(SYSTEM_INSTRUCTIONS, /preserve its substantive wording verbatim in report_introduction/i);
   assert.match(SYSTEM_INSTRUCTIONS, /party fields as named entities, not text buckets/i);
   assert.match(SYSTEM_INSTRUCTIONS, /Separately extract the exact policy or cover-note number/i);
+  assert.match(SYSTEM_INSTRUCTIONS, /Do not mistake a sum insured, premium, invoice, certificate, endorsement, claim/i);
   assert.match(SYSTEM_INSTRUCTIONS, /Never add the full shipment value to the value of damaged items/i);
   assert.match(SYSTEM_INSTRUCTIONS, /smaller affected quantity.*maximum supported loss scope/i);
   assert.match(SYSTEM_INSTRUCTIONS, /scanner watermark or a few OCR characters/i);
@@ -108,6 +110,7 @@ test("production prompt requires concise fact-to-interpretation-to-conclusion re
   assert.match(SYSTEM_INSTRUCTIONS, /interest and policy schedule; shipment routing; chronological surveyor notes/i);
   assert.match(SYSTEM_INSTRUCTIONS, /deductible percentage\/minimum\/maximum\/fixed\/franchise\/aggregate/i);
   assert.match(SYSTEM_INSTRUCTIONS, /Quotations, estimates, and pro-formas/i);
+  assert.match(SYSTEM_INSTRUCTIONS, /Never select an arbitrary quotation line or silently drop the balance/i);
   assert.match(SYSTEM_INSTRUCTIONS, /master\/house B\/L/i);
   assert.match(SYSTEM_INSTRUCTIONS, /amount-in-words/i);
   assert.match(SYSTEM_INSTRUCTIONS, /dangling connector.*p\..*pp\./i);
@@ -205,8 +208,34 @@ test("a surveyor's qualified cause opinion is not promoted to an express source 
 
   assert.equal(draft.normalizedRecord.cause_assessment.explicit_cause, null);
   assert.ok(draft.normalizedRecord.cause_assessment.hypotheses.some((item) => item.status === "reasoned_professional_opinion"));
-  assert.match(data.paragraphs.cause_of_loss_section[0], /not expressly established as a source fact/i);
+  assert.match(data.paragraphs.cause_of_loss_section[0], /not expressly stated as a source fact/i);
   assert.doesNotMatch(data.paragraphs.cause_of_loss_section[0], /^The proximate cause of loss is frost/i);
+});
+
+test("a damage label is not promoted to a definitive cause without express source attribution", () => {
+  const surveySource = {
+    ...source(2, "Survey inspection recorded 30 ceramic basins broken following unloading."),
+    document_name: "survey-report.pdf",
+  };
+  const analysis = {
+    business_line: "Marine Cargo (Non-Reefer)",
+    extracted_fields: [{
+      ...field("cause_of_loss", "Physical breakage during transit"),
+      sources: [surveySource],
+    }],
+    adjustment_line_items: [], document_types: [],
+    evidence_findings: [{
+      finding: "Survey inspection recorded 30 ceramic basins broken following unloading.",
+      confidence: 0.98,
+      sources: [surveySource],
+    }],
+  };
+  const draft = createUnifiedReportDraft({ claim: { business_line: "Marine Cargo (Non-Reefer)" }, documents: [], versions: [], generatedBy: "Test", analysis, evidence: [] });
+  const data = buildMasterReportData({ report: { normalized_claim_record: draft.normalizedRecord }, claim: {} });
+
+  assert.equal(draft.normalizedRecord.cause_assessment.explicit_cause, null);
+  assert.equal(data.paragraphs.cause_of_loss_section[0], "The reviewed evidence does not yet permit a defensible proximate-cause opinion; the decisive causal records are identified below.");
+  assert.doesNotMatch(data.paragraphs.cause_of_loss_section[0], /^The proximate cause of loss is Physical breakage during transit/i);
 });
 
 test("plain CIF is not treated as an insurance valuation basis", () => {
@@ -225,7 +254,7 @@ test("plain CIF is not treated as an insurance valuation basis", () => {
   const data = buildMasterReportData({ report: { normalized_claim_record: draft.normalizedRecord }, claim: {} });
 
   assert.equal(draft.normalizedRecord.facts.valuation_basis.value, null);
-  assert.match(data.paragraphs.adequacy_section[0], /cannot be established from the available evidence/i);
+  assert.match(data.paragraphs.adequacy_section[0], /requires a comparable invoice value, insured value, currency, and evidenced valuation basis/i);
   assert.doesNotMatch(data.paragraphs.adequacy_section[0], /no underinsurance/i);
 });
 
@@ -242,6 +271,21 @@ test("report parties require evidence and reject bill-of-lading OCR labels", () 
   assert.equal(draft.normalizedRecord.facts.applicant.value, null);
   assert.equal(draft.normalizedRecord.facts.consignee.value, null);
   assert.doesNotMatch(JSON.stringify(data), /WOODEN PACKAGE|At the request of ULA/i);
+});
+
+test("report party rendering removes adjoining invoice OCR and names the missing applicant evidence", () => {
+  const analysis = {
+    business_line: "Marine Cargo (Non-Reefer)",
+    extracted_fields: [field("consignee", "STE IMMOBILIERE CONGOLAISE DE REFERENCE SARL (SICOREF)Invoice No.:20260306")],
+    adjustment_line_items: [], document_types: [], evidence_findings: [],
+  };
+  const draft = createUnifiedReportDraft({ claim: { business_line: "Marine Cargo (Non-Reefer)" }, documents: [], versions: [], generatedBy: "Test", analysis, evidence: [] });
+  const data = buildMasterReportData({ report: { normalized_claim_record: draft.normalizedRecord }, claim: {} });
+
+  assert.equal(data.scalars.summary_consignee, "STE IMMOBILIERE CONGOLAISE DE REFERENCE SARL (SICOREF)");
+  assert.doesNotMatch(data.scalars.summary_consignee, /Invoice No/i);
+  assert.match(data.paragraphs.report_summary_intro[0], /appointment instruction and claim correspondence do not identify the Applicant/i);
+  assert.doesNotMatch(data.paragraphs.report_summary_intro[0], /No source-supported value is available/i);
 });
 
 test("conflicting salient dates are withheld from chronology and client arrival wording", () => {
@@ -299,7 +343,7 @@ test("transport conflicts, invoice words conflicts, and policy categories remain
   assert.match(record.facts.policy_warranties.value, /Warranted preliminary survey/i);
   assert.match(data.scalars.transport_document, /Master B\/L BRT0311410.*House B\/L CTL\/BEY\/2026-14/i);
   assert.match(data.paragraphs.shipment_routing.join(" "), /Conflicting evidence values were found for vessel name/i);
-  assert.match(data.paragraphs.adequacy_section[0], /cannot be established/i);
+  assert.match(data.paragraphs.adequacy_section[0], /requires a comparable invoice value, insured value, currency, and evidenced valuation basis/i);
 });
 
 test("dangling findings are identified before final issue and are not cut into the client narrative", () => {
@@ -329,6 +373,7 @@ test("production analysis performs a Director-grade evidence challenge before st
   assert.match(DIRECTOR_ANALYSIS_PROTOCOL, /Separate observed physical damage from inferred internal failure, contamination, hygiene, safety, fitness for purpose, repairability, and total loss/i);
   assert.match(DIRECTOR_ANALYSIS_PROTOCOL, /screening test identifies only what its evidenced method supports/i);
   assert.match(DIRECTOR_ANALYSIS_PROTOCOL, /Policy analysis must pair each material clause.*with the established current-claim facts/is);
+  assert.match(DIRECTOR_ANALYSIS_PROTOCOL, /create a separate policy_application finding for every material policy issue/i);
   assert.match(DIRECTOR_ANALYSIS_PROTOCOL, /policy-issue hierarchy.*independently established scope, territorial, duration, limit, or exclusion issue/is);
   assert.match(DIRECTOR_ANALYSIS_PROTOCOL, /which verified issue could control the provisional outcome.*leaving final legal effect and coverage approval/is);
   assert.match(DIRECTOR_ANALYSIS_PROTOCOL, /Quantum analysis must reconcile the scope of loss at the smallest evidenced unit/i);
@@ -360,7 +405,10 @@ test("production analysis performs a Director-grade evidence challenge before st
   assert.match(prompt, /alternative quantities and units in separate sourced records.*never concatenate/is);
   assert.match(prompt, /loss rows separate from deductible, salvage, recovery, and depreciation/is);
   assert.match(prompt, /cause_of_loss is only one concise express source-stated mechanism/is);
+  assert.match(prompt, /damage label such as "breakage during transit".*never an express cause/is);
+  assert.match(prompt, /expressly role-labelled legal entity.*adjoining invoice, policy, B\/L, contact, address, heading, or OCR fragment/is);
   assert.match(prompt, /Follow clauses across line or page breaks.*return null/is);
+  assert.match(prompt, /separately cited policy_application finding for each material policy issue/i);
   assert.match(prompt, /Produce client-ready synthesis, not an extraction dump/i);
   assert.match(prompt, /preserve draft\/original transport status/i);
   assert.match(prompt, /reconcile quotation lines, ancillary charges, VAT\/tax and deductible separately/i);
@@ -516,14 +564,15 @@ test("Director wording remains explicit without inventing conclusions when evide
   });
   const data = buildMasterReportData({ report: { normalized_claim_record: draft.normalizedRecord }, claim: {} });
 
-  assert.equal(data.paragraphs.cause_of_loss_section[0], "The proximate cause of loss is not established from the available evidence.");
-  assert.match(data.paragraphs.adequacy_section[0], /invoice values are adequately insured.*underinsurance cannot be established from the available evidence/i);
-  assert.match(data.paragraphs.conclusion_items[0], /cannot be stated as fair & reasonable.*not established/i);
+  assert.equal(data.paragraphs.cause_of_loss_section[0], "The reviewed evidence does not yet permit a defensible proximate-cause opinion; the decisive causal records are identified below.");
+  assert.match(data.paragraphs.adequacy_section[0], /invoice values are adequately insured.*requires a comparable invoice value/i);
+  assert.match(data.paragraphs.conclusion_items[0], /cannot be stated as fair & reasonable.*reconciled adjustment schedule/i);
   assert.doesNotMatch(data.paragraphs.conclusion_items[0], /USD\s+[0-9,.]+/);
-  assert.match(data.paragraphs.conclusion_items[2], /^Cover advice:.*cannot be advised/i);
+  assert.match(data.paragraphs.conclusion_items[2], /^Cover advice:.*operative policy wording required to assess cover/i);
   assert.match(data.paragraphs.conclusion_items[3], /^Liable-party position: No liable party is established/i);
   assert.equal(data.paragraphs.conclusion_items.at(-1), DIRECTOR_CONCLUSION_CLOSING);
   assert.equal(data.paragraphs.assessors_section[0], DIRECTOR_ASSESSOR_WORDING);
+  assert.doesNotMatch(draft.content, /\bnot established\b/i);
   assert.equal(draft.normalizedRecord.report_quality.approval_required_before_issue, true);
 });
 
@@ -573,7 +622,7 @@ test("conflicting values cannot become Director cause or underinsurance assertio
   assert.equal(draft.normalizedRecord.facts.cause_of_loss.status, "conflict");
   assert.equal(draft.normalizedRecord.facts.insured_value.status, "conflict");
   assert.doesNotMatch(data.paragraphs.cause_of_loss_section[0], /^The proximate cause of loss is (?:Heavy impact during transit|Pre-shipment breakage)\./);
-  assert.match(data.paragraphs.adequacy_section[0], /cannot be established from the available evidence/i);
+  assert.match(data.paragraphs.adequacy_section[0], /requires a comparable invoice value, insured value, currency, and evidenced valuation basis/i);
   assert.doesNotMatch(data.paragraphs.adequacy_section[0], /there is (?:no )?underinsurance on|there is underinsurance of/i);
 });
 
@@ -691,14 +740,14 @@ test("non-reefer regression keeps composite evidence, deductions, cause, policy,
   assert.equal(record.cause_assessment.explicit_cause, null);
   assert.equal(record.cause_assessment.assessment_level, "provisional_evidence_based_opinion");
   assert.ok(!record.cause_assessment.hypotheses.some((item) => /sealed transit|pre-shipment quantity/i.test(item.hypothesis)));
-  assert.match(data.paragraphs.cause_of_loss_section[0], /not expressly established as a source fact/i);
+  assert.match(data.paragraphs.cause_of_loss_section[0], /not expressly stated as a source fact/i);
   assert.match(data.paragraphs.cause_of_loss_section.join(" "), /consistent with handling impact or cargo movement/i);
   assert.match(data.paragraphs.conclusion_items[0], /cannot be stated as fair & reasonable/i);
   assert.doesNotMatch(data.paragraphs.conclusion_items[0], /USD 471\.40 is considered fair/i);
   assert.doesNotMatch(data.paragraphs.report_summary_opinion.join(" "), /471\.\s+40/);
   assert.match(data.paragraphs.conclusion_items[2], /deductible and valuation provision may apply/i);
   assert.doesNotMatch(data.paragraphs.conclusion_items[2], /claimed quantity is covered/i);
-  assert.match(data.scalars.transport_document, /^Bill of Lading: Not established/i);
+  assert.match(data.scalars.transport_document, /^Bill of Lading: Transport reference requires confirmation from the transport document\./i);
   assert.match(data.scalars.summary_assured, /Example Imports Ltd \(Assured\).*Example Export Cooperative \(Shipper\)/i);
   assert.match(data.paragraphs.report_summary_intro[1], /Example Imports Ltd as the Assured.*Example Export Cooperative as the shipper/i);
   assert.equal(data.scalars.approval_date, "Pending professional approval");

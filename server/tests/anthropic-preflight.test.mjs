@@ -66,11 +66,11 @@ test("Anthropic local preflight extracts text and calculates safety statistics w
   assert.ok(result.stats.estimated_request_bytes > 0);
   assert.equal(result.stats.selected_provider, "anthropic");
   assert.equal(result.stats.selected_model, "claude-sonnet-4-6");
-  assert.equal(result.stats.max_output_tokens, 64_000);
+  assert.equal(result.stats.max_output_tokens, 12_000);
   assert.equal(result.stats.model_context_tokens, 1_000_000);
   assert.equal(
     result.stats.estimated_input_plus_max_output_tokens,
-    result.stats.estimated_input_tokens + 64_000,
+    result.stats.estimated_input_tokens + 12_000,
   );
   assert.ok(result.stats.estimated_context_headroom_tokens > 0);
   assert.equal(result.stats.raw_pdf_files_sent, 0);

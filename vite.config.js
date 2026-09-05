@@ -1,10 +1,17 @@
 import react from "@vitejs/plugin-react";
-import { defineConfig } from "vite";
+import { defineConfig, loadEnv } from "vite";
 import { fileURLToPath } from "node:url";
 
-export default defineConfig({
+export default defineConfig(({ mode }) => {
+  const env = loadEnv(mode, process.cwd(), "");
+  if (mode === "production" && env.VITE_SQL_BACKEND !== "true") {
+    throw new Error("Production builds require VITE_SQL_BACKEND=true.");
+  }
+
+  return {
   plugins: [react()],
   server: {
+    host: "0.0.0.0",
     proxy: {
       "/api": "http://127.0.0.1:8787",
     },
@@ -38,4 +45,5 @@ export default defineConfig({
       },
     },
   },
+  };
 });

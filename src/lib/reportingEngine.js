@@ -5,7 +5,7 @@ import {
 } from "./reportTemplates.js";
 import { buildMasterReportData, sanitizeReportValue } from "./masterReportDocx.js";
 
-export const REQUIRES_CONFIRMATION = "Not established from the reviewed evidence";
+export const REQUIRES_CONFIRMATION = "Specific supporting evidence required";
 
 const isPlaceholder = (value) => /^(?:requires confirmation|to be confirmed|unknown|not (?:available|provided|stated|assigned|established(?: from (?:the )?reviewed evidence)?)|n\/?a|null|undefined|-+)\.?$/i.test(String(value ?? "").trim());
 const isPresent = (value) => value !== undefined && value !== null && String(value).trim() !== "" && !isPlaceholder(value);
@@ -1091,9 +1091,15 @@ function buildCauseAssessment(facts, findings) {
   const supportedCauseSourceText = (supportedCause?.sources || [])
     .map((source) => source.supporting_text || "")
     .join(" ");
+  // A short damage label (for example, "physical breakage during transit") is
+  // not, by itself, a source-stated causal mechanism. The source must actually
+  // attribute the loss before the report can use a definitive cause lead.
+  const sourceExpresslyStatesCause = /\b(?:proximate\s+)?(?:cause|nature)\s+of\s+(?:loss|damage|claim)\s*(?:is|was|:|-)|\b(?:loss|damage)\s+(?:was|is)\s+(?:caused|occasioned|attributable)\s+(?:by|to)\b|\b(?:caused|occasioned|attributable|arising|resulting)\s+(?:by|from)\b|\bdue\s+to\b|\bas\s+a\s+result\s+of\b/i
+    .test(supportedCauseSourceText);
   const causeIsQualifiedOpinion = /\b(?:we are led to believe|in our opinion|on balance|likely|probably|appears?|suggests?|may|might|could|consistent with|estimated)\b/i
     .test(`${supportedCauseText} ${supportedCauseSourceText}`);
   const explicitCause = supportedCause
+    && sourceExpresslyStatesCause
     && !causeIsQualifiedOpinion
     && supportedCauseText.length <= 240
     && (supportedCauseText.match(/;/g) || []).length <= 1
@@ -1270,6 +1276,31 @@ function buildPolicyAnalysis(facts, chronology, validationChecks, findings = [])
   ].filter((fact) => isPresent(fact?.value));
   const wording = wordingFacts.map((fact) => fact.value).join(" ");
   const findingsText = findings.map((finding) => finding.finding || "").join(" ");
+  const policyIssueTopic = (finding) => {
+    const text = String(finding || "");
+    if (/preliminary\s+survey/i.test(text)) return "Preliminary-survey warranty";
+    if (/warehouse\s+to\s+warehouse|attachment|duration|inception/i.test(text)) return "Transit attachment / duration";
+    if (/deductible|excess/i.test(text)) return "Deductible / excess";
+    if (/valu(?:ation|e)|uplift|insured value|underinsurance/i.test(text)) return "Valuation / insured value";
+    if (/exclu(?:de|sion)|excluded/i.test(text)) return "Exclusion";
+    if (/packing|stowage|lashing/i.test(text)) return "Packing / stowage condition";
+    if (/warrant(?:y|ed|ies)|condition precedent|condition/i.test(text)) return "Warranty / condition";
+    if (/survey|attendance/i.test(text)) return "Survey condition";
+    return "Current policy application";
+  };
+  const policyIssueMappings = findings
+    .filter((finding) => finding.analysis_domain === "policy_application" && isPresent(finding.finding) && (finding.sources || []).length)
+    .filter((finding, index, items) => items.findIndex((candidate) =>
+      normalizeComparable(candidate.finding) === normalizeComparable(finding.finding)) === index)
+    .slice(0, 12)
+    .map((finding) => ({
+      topic: policyIssueTopic(finding.finding),
+      status: "evidence_available_for_review",
+      assessment: finding.finding,
+      review_question: "Does the cited current policy wording apply to the cited current facts, and with what approved coverage effect?",
+      material_gap: null,
+      sources: uniqueSources(finding.sources || []),
+    }));
   const topics = [
     ["Transit attachment / duration", /warehouse\s+to\s+warehouse|transit|attachment|inception/i],
     ["Packing warranty", /professionally packed|packing|packed/i],
@@ -1325,7 +1356,7 @@ function buildPolicyAnalysis(facts, chronology, validationChecks, findings = [])
     entries.push({ topic: "Transit attachment / duration", status: timing.status, assessment: timing.statement, sources: timing.sources });
   }
   return {
-    entries,
+    entries: [...policyIssueMappings, ...entries],
     has_wording: wordingFacts.length > 0,
     chronology_events_reviewed: chronology.length,
     status: !wordingFacts.length ? "wording_not_established" : entries.length ? "requires_professional_determination" : "wording_requires_issue_mapping",
@@ -2205,7 +2236,10 @@ const statusText = (status) => ({
 }[status] || String(status || "Review required").replaceAll("_", " "));
 
 const conciseText = (value, length = 480) => {
-  const text = String(value || "").replace(/\s+/g, " ").trim();
+  const text = String(value || "")
+    .replace(/\bnot established from (?:the )?(?:reviewed|available) evidence\b/gi, "requires the specific supporting evidence identified below")
+    .replace(/\bnot established\b/gi, "requires further specific evidence")
+    .replace(/\s+/g, " ").trim();
   if (text.length <= length) return text;
   const completeSentences = text.match(/[^.!?]+[.!?]+/g)?.map((item) => item.trim()).filter(Boolean) || [];
   if (!completeSentences.length) return text;
@@ -2248,7 +2282,7 @@ export function createUnifiedReportDraft({ claim, documents, versions, generated
     }).join("\n")
     : "- No uploaded evidence file is registered for this claim.";
   const outstandingDocuments = normalizedRecord.outstanding_documents.length
-    ? normalizedRecord.outstanding_documents.map((item) => `- **${item}** — substantive evidence was not established across the uploaded file set.`).join("\n")
+    ? normalizedRecord.outstanding_documents.map((item) => `- **${item}** — obtain the substantive current-claim evidence required for the related decision.`).join("\n")
     : "- No template-required document category is presently outstanding; substantive sufficiency remains subject to human review.";
   const chronologyRows = normalizedRecord.chronology.length
     ? normalizedRecord.chronology.map((event, eventIndex) => `| ${eventIndex + 1} | ${event.date} | ${event.label}${citation(event, index)} |`).join("\n")
@@ -2262,7 +2296,7 @@ export function createUnifiedReportDraft({ claim, documents, versions, generated
     : "| Evidence reconciliation | Not testable from current evidence | No cross-document or arithmetic validation could be completed. |";
   const policyRows = normalizedRecord.policy_analysis.entries.length
     ? normalizedRecord.policy_analysis.entries.map((entry) => `| ${entry.topic} | ${statusText(entry.status)} | ${entry.assessment}${citation(entry, index)} |`).join("\n")
-    : "| Policy clauses / warranties | Not established | No substantive policy wording was retained in the normalized evidence. |";
+    : "| Policy clauses / warranties | Evidence required | Obtain the operative policy schedule, clauses, endorsements, warranties, conditions, exclusions, valuation basis, and deductible wording before policy application. |";
 
   const financialRows = [
     ["Presented claim / gross quantum", financials.presented_claim],
@@ -2286,12 +2320,12 @@ export function createUnifiedReportDraft({ claim, documents, versions, generated
       ? `The evidence states a concluded amount of **${amountText(financials.concluded_indemnity, currency)}**, but the available adjustment components do not fully reproduce it. It is retained as source-stated, not arithmetic-validated. Unresolved evidence items: ${financials.requires_confirmation.join("; ")}.`
       : financials.provisional_indemnity !== null
         ? `The evidenced arithmetic produces a provisional amount of ${amountText(financials.provisional_indemnity, currency)} after the supported valuation uplift and deductions. It is not presented as a concluded indemnity because the remaining adjustment and coverage matters require confirmation: ${financials.requires_confirmation.join("; ") || REQUIRES_CONFIRMATION}.`
-        : `A concluded indemnity cannot yet be calculated without assumptions. Evidence not established across the reviewed file set: ${financials.requires_confirmation.join("; ") || REQUIRES_CONFIRMATION}. Invoice or insured values have not been substituted for a presented claim.`;
+        : `A concluded indemnity cannot yet be calculated without assumptions. Required evidence or reconciliation: ${financials.requires_confirmation.join("; ") || REQUIRES_CONFIRMATION}. Invoice or insured values have not been substituted for a presented claim.`;
   const policyLimit = parseNumber(facts.insured_value.value) ?? parseNumber(facts.policy_limit.value);
   const invoiceValue = financials.invoice_value;
   const adequacy = policyLimit !== null && invoiceValue !== null
     ? `The documented insured value / policy limit is **${amountText(policyLimit, currency)}** and the documented invoice value is **${amountText(invoiceValue, currency)}**. The difference is **${amountText(policyLimit - invoiceValue, currency)}** and the invoice represents **${(invoiceValue / policyLimit * 100).toFixed(2)}%** of that value / limit. The arithmetic is validated, but the applicable valuation basis and any underinsurance consequence remain matters for professional review.${citation(isPresent(facts.insured_value.value) ? facts.insured_value : facts.policy_limit, index)}`
-    : `${REQUIRES_CONFIRMATION}. The evidence does not establish both a comparable insured value and invoice value.`;
+    : `${REQUIRES_CONFIRMATION}: obtain both a comparable insured value and invoice value in the same supported currency, together with the valuation basis.`;
 
   const causeBody = (() => {
     const assessment = normalizedRecord.cause_assessment;

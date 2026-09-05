@@ -5,8 +5,9 @@ import path from "node:path";
 import { diskDb, UPLOADS_DIR } from "../db/diskDb.mjs";
 
 test("diskDb creates, reads, updates, and deletes entities on disk", async () => {
+  const claimNumber = `TEST-2026-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
   const testClaim = {
-    claim_number: "TEST-2026-9999",
+    claim_number: claimNumber,
     title: "Test Cargo Loss",
     business_line: "Marine Cargo (Non-Reefer)",
     status: "New",
@@ -15,7 +16,7 @@ test("diskDb creates, reads, updates, and deletes entities on disk", async () =>
   // 1. Create
   const created = diskDb.create("Claim", testClaim);
   assert.ok(created.id);
-  assert.equal(created.claim_number, "TEST-2026-9999");
+  assert.equal(created.claim_number, claimNumber);
 
   // 2. Get
   const fetched = diskDb.get("Claim", created.id);
@@ -24,7 +25,7 @@ test("diskDb creates, reads, updates, and deletes entities on disk", async () =>
   assert.equal(fetched.title, "Test Cargo Loss");
 
   // 3. List with query
-  const list = diskDb.list("Claim", { claim_number: "TEST-2026-9999" });
+  const list = diskDb.list("Claim", { claim_number: claimNumber });
   assert.equal(list.length, 1);
   assert.equal(list[0].id, created.id);
 

@@ -3,6 +3,7 @@ import { appClient } from "@/api/appClient";
 import { Card } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
+import { PasswordInput } from "@/components/PasswordInput";
 import { Label } from "@/components/ui/label";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle, DialogTrigger } from "@/components/ui/dialog";
@@ -179,7 +180,7 @@ function AddEmployeeDialog({ onCreated }) {
           <Field label="Job title" id="employee-job-title"><Input id="employee-job-title" required placeholder="e.g. Claims Handler" value={form.job_title} onChange={(event) => setField("job_title", event.target.value)} /></Field>
           <div className="grid gap-4 sm:grid-cols-2">
             <div className="space-y-1.5"><Label>Application access</Label><Select value={form.role} onValueChange={(value) => setField("role", value)}><SelectTrigger><SelectValue /></SelectTrigger><SelectContent><SelectItem value="user">Employee</SelectItem><SelectItem value="admin">Administrator</SelectItem></SelectContent></Select></div>
-            <Field label="Temporary app password" id="employee-password"><Input id="employee-password" type="password" minLength={8} required autoComplete="new-password" placeholder="Minimum 8 characters" value={form.password} onChange={(event) => setField("password", event.target.value)} /></Field>
+            <Field label="Temporary app password" id="employee-password"><PasswordInput id="employee-password" minLength={8} required autoComplete="new-password" placeholder="Minimum 8 characters" value={form.password} onChange={(event) => setField("password", event.target.value)} /></Field>
           </div>
           <p className="text-xs leading-5 text-muted-foreground">This password opens ULA Claims Hub only. It does not create or change the employee's Microsoft Outlook password.</p>
           <DialogFooter><Button type="button" variant="ghost" onClick={() => handleOpen(false)}>Cancel</Button><Button type="submit" disabled={saving || !form.full_name.trim() || !form.job_title.trim() || !validEmail || !validPassword}>{saving ? "Adding employee…" : "Add Employee"}</Button></DialogFooter>
@@ -220,7 +221,7 @@ function ResetPasswordDialog({ account }) {
       <DialogContent className="sm:max-w-[430px]">
         <DialogHeader><DialogTitle>Reset app password</DialogTitle><DialogDescription>Set a new password for {account.full_name}. Their Outlook password is not affected.</DialogDescription></DialogHeader>
         <form onSubmit={submit} className="space-y-4 py-1">
-          <Field label="New app password" id={`reset-password-${account.id}`}><Input id={`reset-password-${account.id}`} type="password" minLength={8} required autoComplete="new-password" value={password} onChange={(event) => setPassword(event.target.value)} /></Field>
+          <Field label="New app password" id={`reset-password-${account.id}`}><PasswordInput id={`reset-password-${account.id}`} minLength={8} required autoComplete="new-password" value={password} onChange={(event) => setPassword(event.target.value)} /></Field>
           <p className="text-xs text-muted-foreground">Use at least 8 characters.</p>
           <DialogFooter><Button type="button" variant="ghost" onClick={() => handleOpen(false)}>Cancel</Button><Button type="submit" disabled={saving || password.length < 8}>{saving ? "Updating…" : "Update password"}</Button></DialogFooter>
         </form>

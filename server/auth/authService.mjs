@@ -37,7 +37,7 @@ export const createPasswordHash = (password) => {
   return `scrypt$${salt}$${derived}`;
 };
 
-const verifyPassword = (password, storedHash) => {
+export const verifyPassword = (password, storedHash) => {
   const value = String(password || "");
   const stored = String(storedHash || "");
   if (stored.startsWith("legacy-sha256$")) {
@@ -61,7 +61,7 @@ const defaultState = (seedUsers) => ({
 
 export function createAuthService({
   stateFile = path.resolve(".data", "auth-state.json"),
-  seedUsers = SEEDED_AUTH_USERS,
+  seedUsers = process.env.NODE_ENV === "production" ? [] : SEEDED_AUTH_USERS,
   now = () => Date.now(),
 } = {}) {
   let lock = Promise.resolve();
@@ -222,6 +222,9 @@ export function createAuthService({
     user.password_hash = createPasswordHash(password);
     user.password_status = "set";
     user.password_updated_at = new Date(now()).toISOString();
+    for (const [sessionHash, session] of Object.entries(state.sessions)) {
+      if (session.user_id === user.id) delete state.sessions[sessionHash];
+    }
     await writeState(state);
     return { ok: true };
   });

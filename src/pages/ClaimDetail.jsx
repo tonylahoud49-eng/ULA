@@ -23,7 +23,7 @@ import {
   AlertDialogHeader,
   AlertDialogTitle,
 } from "@/components/ui/alert-dialog";
-import { ArrowLeft, Download, FileText, Sparkles, AlertTriangle, Save, CheckCircle, ClipboardCheck, ShieldCheck, Trash2 } from "lucide-react";
+import { ArrowLeft, Download, FileText, FileCheck2, Sparkles, AlertTriangle, Save, CheckCircle, ClipboardCheck, ShieldCheck, Trash2 } from "lucide-react";
 import DocumentUploader from "@/components/DocumentUploader";
 import ReactMarkdown from "react-markdown";
 import { toast } from "@/components/ui/use-toast";
@@ -305,12 +305,16 @@ export default function ClaimDetail() {
     setAnalysisProgress({ active: true, progress: 10, stage: "Running local safety and request-size checks...", step: 1, totalSteps: 4 });
     let timer1;
     let timer2;
+    const separator = selectedProvider.indexOf(":");
+    const requestedProvider = separator >= 0 ? selectedProvider.slice(0, separator) : selectedProvider;
+    const requestedModel = separator >= 0 ? selectedProvider.slice(separator + 1) : undefined;
 
     try {
       const res = await appClient.functions.invoke("analyseClaim", {
         claim_id: id,
-        provider: selectedProvider,
-        disable_fallback: selectedProvider === "anthropic" || !enableFallback,
+        provider: requestedProvider,
+        model: requestedModel,
+        disable_fallback: requestedProvider === "anthropic" || !enableFallback,
         on_preflight: (stats) => {
           setPreflightStats(stats);
           setAnalysisProgress({ active: true, progress: 25, stage: "Preflight passed. Starting protected Claude analysis...", step: 1, totalSteps: 4 });
@@ -329,7 +333,6 @@ export default function ClaimDetail() {
       setAnalysis(res.data.analysis);
 
       // Warning toast if fallback occurred
-      const requestedProvider = selectedProvider;
       const actualProvider = res.data.analysis.provider;
       if (requestedProvider && actualProvider && requestedProvider.toLowerCase() !== actualProvider.toLowerCase()) {
         toast({
@@ -540,6 +543,7 @@ function EditForm({ form, setForm }) {
   return (
     <div className="grid grid-cols-2 md:grid-cols-3 gap-4">
       <Field label="Business Line"><Select value={form.business_line} onValueChange={(v) => set("business_line", v)}><SelectTrigger><SelectValue /></SelectTrigger><SelectContent>{BUSINESS_LINES.map((l) => <SelectItem key={l} value={l}>{l}</SelectItem>)}</SelectContent></Select></Field>
+      <Field label="Employee visibility"><Select value={form.visibility || "private"} onValueChange={(v) => set("visibility", v)}><SelectTrigger><SelectValue /></SelectTrigger><SelectContent><SelectItem value="private">Private — creator and admins</SelectItem><SelectItem value="public">Public — all employees</SelectItem></SelectContent></Select></Field>
       <Field label="Status"><Select value={form.status} onValueChange={(v) => set("status", v)}><SelectTrigger><SelectValue /></SelectTrigger><SelectContent>{STATUSES.map((s) => <SelectItem key={s} value={s}>{s}</SelectItem>)}</SelectContent></Select></Field>
       <Field label="Priority"><Select value={form.priority} onValueChange={(v) => set("priority", v)}><SelectTrigger><SelectValue /></SelectTrigger><SelectContent>{["Low","Medium","High","Critical"].map((p) => <SelectItem key={p} value={p}>{p}</SelectItem>)}</SelectContent></Select></Field>
       <Field label="Insured"><Input value={form.insured || ""} onChange={(e) => set("insured", e.target.value)} /></Field>

@@ -10,6 +10,7 @@ import {
 } from "../claimAnalysisSchema.mjs";
 import { safeAiDebugLog, safeAiDiagnosticLog } from "../debugLog.mjs";
 import { sanitizeReferenceNarrative } from "../referenceLayer.mjs";
+import { enforceAnalysisCoverage } from "../analysisCoverage.mjs";
 import { SYSTEM_INSTRUCTIONS, promptText } from "./openaiProvider.mjs";
 import {
   prepareClaimContextForAnthropic,
@@ -18,8 +19,20 @@ import {
 
 const ANTHROPIC_MESSAGES_URL = "https://api.anthropic.com/v1/messages";
 const DEFAULT_MODEL = "claude-sonnet-4-6";
-const DEFAULT_MAX_OUTPUT_TOKENS = 64_000;
+const DEFAULT_MAX_OUTPUT_TOKENS = 12_000;
 const MAX_SONNET_4_6_OUTPUT_TOKENS = 64_000;
+const SONNET_4_6_THINKING_BUDGET_TOKENS = 2_500;
+const ANTHROPIC_LOSS_ADJUSTER_REASONING_PROTOCOL = `Claude loss-adjuster decision workflow:
+1. Use the bounded internal thinking budget efficiently to investigate the complete current claim before encoding any output. First establish the evidence record page by page; then reason from that record. Commit to the strongest supported analysis and do not repeatedly revisit a decision unless contrary evidence requires it. Do not expose private reasoning or intermediate notes.
+2. Build an internal party-role, document, chronology, routing, custody, quantity, condition, policy, and financial matrix. Resolve repeated facts and preserve genuine conflicts. Treat claim metadata as context only.
+3. Reconcile the physical loss at the smallest supported unit. Distinguish shipped, delivered, claimed, counted, witnessed, damaged, missing, accepted, repairable, salvaged, and total-loss quantities. Identify who counted what, when, where, and in whose presence.
+4. Perform a real causation analysis. Separate observation from mechanism and timing. Develop the viable causal hypotheses, test each against custody, physical consistency, contemporaneous records, supporting evidence, contrary evidence, and missing proof, then state the strongest proportionate professional opinion. A generic reported-cause label is not analysis.
+5. Apply the actual current policy issue by issue. For each material clause, extension, warranty, condition, exclusion, limit, deductible, valuation term, and transit provision, pair the complete wording with the current fact that engages it or the precise missing fact. Explain its provisional significance while leaving final coverage approval reviewable.
+6. Reconcile quantum and mitigation without doing the application's arithmetic. Identify the presented claim basis, supported damaged-item quantities and rates, valuation basis, provisional items, VAT/tax status, deductible terms, salvage, recovery, depreciation, and every mismatch or unsupported amount. Never substitute shipment value, insured value, quotation, or estimate for a presented claim.
+7. Analyze liability and recovery party by party, including contractual role, custody stage, notice, admissions, defenses, time limits, and documents needed to preserve recovery. Do not assign liability from damage location or carrier involvement alone.
+8. Before returning the structured result, conduct an adversarial senior-review audit: challenge the leading cause, coverage position, quantity scope, quantum basis, liable-party position, and every conclusion against competing evidence; check cross-section consistency; remove OCR contamination and generic filler; and ensure each material domain contains a cited fact-to-significance-to-conclusion finding.
+
+The required product is the completed professional analysis, not a document extraction summary. Where evidence permits a qualified conclusion, give it with its basis, limitations, and alternatives. Where it does not, identify the exact evidence or decision needed and why it matters.`;
 const ANTHROPIC_JSON_CONTRACT = `Return only the structured payload: no Markdown fences, preface, trailing commentary, or extra keys.
 Confidence is 0..1. Exact values:
 business_line=${JSON.stringify(BUSINESS_LINES)}
@@ -36,11 +49,14 @@ Every record includes every schema key; use "", false, 0, or [] where inapplicab
 - missing_document: key=document_type; text=reason; details=missing_information.
 - finding: key=analysis_domain; text=finding; confidence; source_refs. Use general only if no professional domain applies.
 - summary, warning, review: complete item in text; other keys use defaults.
-Return exactly one classification and one summary; other kinds may repeat. Never omit a material claim finding, conflict, cause/coverage/liability/quantum/salvage/recovery issue.
-Be concise: no repeated facts; summary <=4 short sentences; rationale/basis/warning/review <=1 sentence. A finding may use a compact analytical paragraph of up to 4 sentences, normally <=700 characters, linking facts, significance, alternatives and provisional assessment. Split distinct issues. Cite strong non-duplicate support and both conflict sides. supporting_text is exact and normally <=240 characters. Return only detected document_types and required missing_documents.`;
+Return exactly one classification and one summary; other kinds may repeat. The payload has a hard limit of 48 sources and 64 records. Within that limit, prioritise one classification, one summary, up to 8 document types, 24 material fields, 12 adjustment lines, 8 material findings, and 6 decision-specific missing-document records. Add warning or review records only when they add a distinct material point. Reuse citations and consolidate repeated facts; do not produce a page-by-page extraction, duplicate records, or a record for an irrelevant schema field. Full page review is mandatory, but the structured payload must contain only the material result of that review.
+Never omit a material claim finding, conflict, cause/coverage/liability/quantum/salvage/recovery issue. If evidence is extensive, preserve the strongest cited position for each distinct issue and combine only non-material supporting detail into that issue's concise finding.
+Be concise: summary <=3 short sentences; rationale/basis/warning/review <=1 sentence and <=280 characters. A finding may use a compact analytical paragraph of up to 3 sentences and <=480 characters, linking facts, significance, alternatives and provisional assessment. Split distinct issues. Cite no more than two strong non-duplicate sources per record and both conflict sides where material. supporting_text is exact and <=180 characters. Return only detected document_types and required missing_documents.`;
 const ANTHROPIC_SYSTEM_INSTRUCTIONS = `${SYSTEM_INSTRUCTIONS}
 
 Calculation boundary: Claude understands documents and extracts source-stated financial inputs, but does not calculate claim totals. The application performs arithmetic, reconciliation, validation, and adjustment calculations.
+
+${ANTHROPIC_LOSS_ADJUSTER_REASONING_PROTOCOL}
 
 ${ANTHROPIC_JSON_CONTRACT}`;
 
@@ -587,6 +603,60 @@ function groundedEvidencePage(evidence, primaryPattern, corroboratingPatterns = 
   return null;
 }
 
+const POLICY_REFERENCE_PATTERN = /\b(?:policy|cover\s*note)\s*(?:no\b\.?|number\b)\s*[:#-]?\s*([A-Z0-9][A-Z0-9./-]{4,})\b/ig;
+const validPolicyReference = (value) => /^[A-Z0-9][A-Z0-9./-]{4,}$/i.test(String(value || "").trim())
+  && /\d/.test(String(value || ""));
+const policyReferencePriority = (pageText) => {
+  const text = String(pageText || "");
+  return (/\b(?:insurance\s+policy|policy\s+(?:schedule|wording|conditions|terms)|special\s+clauses|warrant(?:y|ies)|exclusions?)\b/i.test(text) ? 20 : 0)
+    - (/\b(?:premium\s+advice|debit\s+note|credit\s+note|invoice|certificate|endorsement|claim\s+(?:no\.?|number))\b/i.test(text) ? 30 : 0);
+};
+
+function citedPolicyReferencePriority(source, evidence) {
+  const document = findEvidenceDocument(source, evidence);
+  if (!document) return null;
+  const page = (document.pages || []).find((item) => item.page === source.page)
+    || (document.pages || []).find((item) => String(item.text || "").includes(String(source.supporting_text || "")));
+  return page ? policyReferencePriority(page.text) : null;
+}
+
+function deterministicPolicyNumber(evidence) {
+  const candidates = [];
+  for (const document of evidence) {
+    for (const page of document.pages || []) {
+      const pageText = String(page.text || "");
+      POLICY_REFERENCE_PATTERN.lastIndex = 0;
+      let match;
+      while ((match = POLICY_REFERENCE_PATTERN.exec(pageText))) {
+        const value = match[1].trim();
+        if (!validPolicyReference(value)) continue;
+        candidates.push({
+          value,
+          priority: policyReferencePriority(pageText),
+          source: {
+            document_id: document.document_id,
+            document_name: document.document_name,
+            page: Number.isInteger(page.page) && page.page > 0 ? page.page : null,
+            supporting_text: evidenceExcerpt(pageText, match.index, match[0].length),
+            confidence: 0.98,
+            evidence_mode: "extracted_text",
+          },
+        });
+      }
+    }
+  }
+  if (!candidates.length) return null;
+  candidates.sort((left, right) => right.priority - left.priority
+    || left.source.document_id.localeCompare(right.source.document_id)
+    || (left.source.page || 0) - (right.source.page || 0));
+  const preferred = candidates[0];
+  const equallyPreferredValues = new Set(candidates
+    .filter((candidate) => candidate.priority === preferred.priority)
+    .map((candidate) => candidate.value.toUpperCase()));
+  if (equallyPreferredValues.size > 1) return { conflict: true, candidates };
+  return preferred;
+}
+
 function deterministicDocumentTypes(evidence) {
   const transportDetails = [
     /\bshipper\b/i,
@@ -815,6 +885,33 @@ function enforceAnthropicGrounding(parsed, evidence, { verifiedClassificationRec
     }
     return { ...field, sources, requires_confirmation: field.value === null || field.requires_confirmation };
   });
+  const recoveredPolicyNumber = deterministicPolicyNumber(evidence);
+  const policyNumberIndex = fields.findIndex((field) => field.field === "policy_number");
+  const currentPolicyNumber = policyNumberIndex >= 0 ? fields[policyNumberIndex] : null;
+  const currentPolicyPriority = currentPolicyNumber?.sources?.length
+    ? Math.max(...currentPolicyNumber.sources
+      .map((source) => citedPolicyReferencePriority(source, evidence))
+      .filter((priority) => priority !== null))
+    : null;
+  const shouldRecoverPolicyNumber = recoveredPolicyNumber
+    && (!currentPolicyNumber
+      || !validPolicyReference(currentPolicyNumber.value)
+      || (currentPolicyPriority !== null && currentPolicyPriority < recoveredPolicyNumber.priority));
+  if (recoveredPolicyNumber?.conflict) {
+    warnings.push("Multiple equally authoritative expressly labelled policy references were found; policy number remains subject to confirmation rather than selecting one silently.");
+  } else if (shouldRecoverPolicyNumber) {
+    const recoveredField = {
+      field: "policy_number",
+      value: recoveredPolicyNumber.value,
+      normalized_value: recoveredPolicyNumber.value,
+      confidence: recoveredPolicyNumber.source.confidence,
+      requires_confirmation: false,
+      sources: [recoveredPolicyNumber.source],
+    };
+    if (policyNumberIndex >= 0) fields[policyNumberIndex] = recoveredField;
+    else fields.push(recoveredField);
+    warnings.push("The policy number was recovered from an expressly labelled policy reference after Claude returned no usable or less authoritative policy identifier.");
+  }
 
   const evidenceFindings = parsed.evidence_findings.flatMap((finding) => {
     const sources = verifySources(finding.sources);
@@ -960,86 +1057,19 @@ const canonicalEnumValue = (value, allowed) => {
 };
 
 function normalizeAnthropicEnumCasing(value) {
-  const parsed = structuredClone(value || {});
-  if (!parsed.classification) {
-    parsed.classification = { business_line: "Other / Requires Review", confidence: 0.8, rationale: "", sources: [] };
-  } else {
+  const parsed = structuredClone(value);
+  if (parsed?.classification) {
     parsed.classification.business_line = canonicalEnumValue(parsed.classification.business_line, BUSINESS_LINES);
-    parsed.classification.confidence = parsed.classification.confidence ?? 0.9;
-    parsed.classification.rationale = parsed.classification.rationale ?? "";
-    parsed.classification.sources = parsed.classification.sources ?? [];
   }
-
-  if (parsed.document_types !== undefined || parsed.documents !== undefined) {
-    const rawDocumentTypes = Array.isArray(parsed.document_types) ? parsed.document_types : (Array.isArray(parsed.documents) ? parsed.documents : []);
-    parsed.document_types = rawDocumentTypes.map((item) => ({
-      document_type: canonicalEnumValue(item.document_type || "Supporting Evidence", DOCUMENT_TYPES),
-      confidence: item.confidence ?? 0.95,
-      sufficient_information: item.sufficient_information ?? true,
-      rationale: item.rationale ?? "",
-      sources: item.sources ?? [],
-    }));
+  for (const item of parsed?.document_types || []) {
+    item.document_type = canonicalEnumValue(item.document_type, DOCUMENT_TYPES);
   }
-
-  if (parsed.missing_documents !== undefined || parsed.missing !== undefined) {
-    const rawMissing = Array.isArray(parsed.missing_documents) ? parsed.missing_documents : (Array.isArray(parsed.missing) ? parsed.missing : []);
-    parsed.missing_documents = rawMissing.map((item) => ({
-      document_type: canonicalEnumValue(item.document_type || "Policy", DOCUMENT_TYPES),
-      reason: typeof item.reason === "string" ? item.reason : (item.reason?.reason || item.reason?.message || "Missing document"),
-      missing_information: (item.missing_information || []).map((m) => typeof m === "string" ? m : (m?.item || m?.field || m?.name || JSON.stringify(m))),
-    }));
+  for (const item of parsed?.missing_documents || []) {
+    item.document_type = canonicalEnumValue(item.document_type, DOCUMENT_TYPES);
   }
-
-  if (parsed.fields !== undefined) {
-    const rawFields = Array.isArray(parsed.fields) ? parsed.fields : [];
-    parsed.fields = rawFields.map((field) => ({
-      field: canonicalEnumValue(field.field || "loss_description", CLAIM_FIELDS),
-      value: field.value ?? null,
-      normalized_value: field.normalized_value ?? field.value ?? null,
-      confidence: field.confidence ?? 0.9,
-      requires_confirmation: field.requires_confirmation ?? false,
-      sources: field.sources ?? [],
-    }));
+  for (const field of parsed?.fields || []) {
+    field.field = canonicalEnumValue(field.field, CLAIM_FIELDS);
   }
-
-  if (parsed.adjustment_line_items !== undefined || parsed.adjustments !== undefined || parsed.line_items !== undefined) {
-    const rawAdjustments = Array.isArray(parsed.adjustment_line_items)
-      ? parsed.adjustment_line_items
-      : (Array.isArray(parsed.adjustments) ? parsed.adjustments : (Array.isArray(parsed.line_items) ? parsed.line_items : []));
-    parsed.adjustment_line_items = rawAdjustments.map((item) => ({
-      description: item.description || "Adjustment",
-      quantity: item.quantity ?? null,
-      unit_price: item.unit_price ?? null,
-      adjusted_value: String(item.adjusted_value ?? "0.00"),
-      currency: item.currency ?? "USD",
-      basis: item.basis ?? "",
-      confidence: item.confidence ?? 0.95,
-      sources: item.sources ?? [],
-    }));
-  }
-
-  if (parsed.evidence_findings !== undefined || parsed.findings !== undefined || parsed.facts !== undefined) {
-    const rawFindings = Array.isArray(parsed.evidence_findings)
-      ? parsed.evidence_findings
-      : (Array.isArray(parsed.findings) ? parsed.findings : (Array.isArray(parsed.facts) ? parsed.facts : []));
-    parsed.evidence_findings = rawFindings.map((item) => ({
-      finding: typeof item.finding === "string" ? item.finding : (item?.finding?.finding || item?.finding?.text || item?.description || (typeof item === "string" ? item : JSON.stringify(item))),
-      confidence: item.confidence ?? 0.9,
-      sources: item.sources ?? [],
-    }));
-  }
-
-  parsed.summary = typeof parsed.summary === "string" ? parsed.summary : (parsed.summary?.summary || parsed.summary?.text || "");
-  const rawWarnings = Array.isArray(parsed.warnings) ? parsed.warnings : [];
-  parsed.warnings = rawWarnings.map((w) =>
-    typeof w === "string" ? w : (w?.warning || w?.message || w?.text || w?.description || JSON.stringify(w))
-  );
-  const rawReview = Array.isArray(parsed.human_review_required)
-    ? parsed.human_review_required
-    : (Array.isArray(parsed.review_required) ? parsed.review_required : []);
-  parsed.human_review_required = rawReview.map((h) =>
-    typeof h === "string" ? h : (h?.item || h?.reason || h?.action || h?.description || h?.message || h?.text || JSON.stringify(h))
-  );
 
   const sourceGroups = [
     parsed?.classification?.sources,
@@ -1050,9 +1080,7 @@ function normalizeAnthropicEnumCasing(value) {
   ];
   for (const sources of sourceGroups) {
     for (const source of sources || []) {
-      source.evidence_mode = canonicalEnumValue(source.evidence_mode || "extracted_text", EVIDENCE_MODES);
-      source.confidence = source.confidence ?? 0.9;
-      source.supporting_text = source.supporting_text || "";
+      source.evidence_mode = canonicalEnumValue(source.evidence_mode, EVIDENCE_MODES);
     }
   }
   return parsed;
@@ -1097,7 +1125,8 @@ function successfulResponseError(body, status, requestId) {
 
 function parseAnthropicStructuredResponse(body, status, requestId) {
   if (body?.type === "error") throw providerError(status, body, requestId);
-  if (["max_tokens", "refusal", "pause_turn", "tool_use", "stop_sequence"].includes(body?.stop_reason)) {
+  const reachedOutputCap = body?.stop_reason === "max_tokens";
+  if (["refusal", "pause_turn", "tool_use", "stop_sequence"].includes(body?.stop_reason)) {
     throw successfulResponseError(body, status, requestId);
   }
 
@@ -1138,13 +1167,20 @@ function parseAnthropicStructuredResponse(body, status, requestId) {
       type: "invalid_structured_schema",
     }, requestId);
   }
-  return claimAnalysisSchema.parse(completeUnsupportedClaimFields(validation.data));
+  const parsed = claimAnalysisSchema.parse(completeUnsupportedClaimFields(validation.data));
+  return reachedOutputCap
+    ? {
+        ...parsed,
+        warnings: [...parsed.warnings, "Claude reached its output cap after returning a complete structured payload; review the cited issue ledger before final issue."],
+        human_review_required: [...parsed.human_review_required, "Confirm the cited issue ledger is complete before final issue because Claude reached its output cap."],
+      }
+    : parsed;
 }
 
 function contentBlocks(claim, evidence, files, styleReferences) {
   const content = [{
     type: "text",
-    text: `${promptText(claim, evidence, styleReferences)}\n\nReturn only evidence-supported non-null fields; missing fields are completed locally. Preserve every material distinct finding and conflict, but do not duplicate narrative or citations. Use the available finding records to carry the completed professional issue analysis, not only extracted observations. Before encoding the response, confirm that cause, policy application, quantum, mitigation, liability/recovery, alternatives, and material evidence gaps have each been addressed where relevant.`,
+    text: promptText(claim, evidence, styleReferences),
   }];
   const sentImageHashes = new Set();
   const includeImage = (buffer) => {
@@ -1156,6 +1192,13 @@ function contentBlocks(claim, evidence, files, styleReferences) {
   evidence.forEach((item, index) => {
     const file = files[index];
     if (!file) return;
+    if (item.kind === "pdf" && item.native_pdf) {
+      content.push({ type: "text", text: `[Native PDF evidence: ${item.document_name}]` });
+      content.push({
+        type: "document",
+        source: { type: "base64", media_type: "application/pdf", data: file.buffer.toString("base64") },
+      });
+    }
     if (item.kind === "image" && includeImage(file.buffer)) {
       content.push({
         type: "image",
@@ -1179,14 +1222,31 @@ function contentBlocks(claim, evidence, files, styleReferences) {
       });
     });
   });
+  content.push({
+    type: "text",
+    text: `<final_task>Apply the Claude loss-adjuster decision workflow to all evidence above. Use the bounded thinking budget efficiently for the multi-step investigation and senior-review audit, then reserve the remaining output budget for one complete structured payload. Return only material, evidence-supported non-null fields; missing fields are completed locally. Preserve every material conflict without duplicating facts, narrative, or citations. Use finding records for the completed professional issue analysis, not an observation dump. Before encoding the structured payload, verify that chronology/custody, condition/extent, competing cause hypotheses, policy application, quantum/mitigation, liability/recovery, and decision-specific evidence gaps have each been addressed where relevant. Return only the required structured payload; do not reveal private reasoning or intermediate notes.</final_task>`,
+  });
   return content;
 }
 
 function buildAnthropicRequestBody({ model, maxOutputTokens, claim, evidence, files, styleReferences = [] }) {
+  const thinking = /claude-(?:sonnet|opus)-4-6/i.test(model) && maxOutputTokens >= 4_096
+    ? {
+      type: "enabled",
+      budget_tokens: Math.min(SONNET_4_6_THINKING_BUDGET_TOKENS, Math.floor(maxOutputTokens / 4)),
+    }
+    : { type: "adaptive" };
   return {
     model,
     max_tokens: maxOutputTokens,
     stream: true,
+    thinking,
+    output_config: {
+      format: {
+        type: "json_schema",
+        schema: structuredOutputSchema(),
+      },
+    },
     system: ANTHROPIC_SYSTEM_INSTRUCTIONS,
     messages: [{ role: "user", content: contentBlocks(claim, evidence, files, styleReferences) }],
   };
@@ -1296,10 +1356,13 @@ export function createAnthropicProvider({
         response_id: body.id || requestId,
         provider_api_status: response.status,
         analyzed_at: new Date().toISOString(),
-        analysis: enforceAnthropicGrounding(
-          sanitizeReferenceNarrative(parsed, styleReferences),
+        analysis: enforceAnalysisCoverage(
+          enforceAnthropicGrounding(
+            sanitizeReferenceNarrative(parsed, styleReferences),
+            evidence,
+            { verifiedClassificationRecovery },
+          ),
           evidence,
-          { verifiedClassificationRecovery },
         ),
       };
     },
@@ -1311,12 +1374,14 @@ export const anthropicProviderInternals = {
   completeUnsupportedClaimFields,
   defaultMaxOutputTokens: DEFAULT_MAX_OUTPUT_TOKENS,
   jsonContract: ANTHROPIC_JSON_CONTRACT,
+  lossAdjusterReasoningProtocol: ANTHROPIC_LOSS_ADJUSTER_REASONING_PROTOCOL,
   maxSonnet46OutputTokens: MAX_SONNET_4_6_OUTPUT_TOKENS,
   measureJsonSchemaComplexity,
   resolveMaxOutputTokens,
   systemInstructions: ANTHROPIC_SYSTEM_INSTRUCTIONS,
   contentBlocks,
   deterministicBusinessLine,
+  deterministicPolicyNumber,
   enforceAnthropicGrounding,
   anthropicTextCandidates,
   buildRequestBody: buildAnthropicRequestBody,

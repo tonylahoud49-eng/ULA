@@ -62,6 +62,8 @@ export function createLeaveWorkflowStore({
     for (const seed of seededLeaveEmployees()) {
       const existing = byEmail.get(normalizeLeaveEmail(seed.email));
       if (existing) {
+        const shouldApplyLeaveBaseline = seed.leave_balance_baseline
+          && existing.leave_balance_baseline !== seed.leave_balance_baseline;
         existing.name = seed.name;
         existing.email = seed.email;
         existing.role = seed.role;
@@ -70,7 +72,16 @@ export function createLeaveWorkflowStore({
         existing.annual_leave_total = Number(existing.annual_leave_total ?? 15);
         existing.annual_leave_used = Number(existing.annual_leave_used ?? 0);
         existing.annual_leave_year = Number(existing.annual_leave_year ?? new Date().getFullYear());
+        existing.sick_leave_used = existing.sick_leave_used == null ? null : Number(existing.sick_leave_used);
         existing.toil_balance = Number(existing.toil_balance ?? 0);
+        if (shouldApplyLeaveBaseline) {
+          existing.annual_leave_entitlement_days = seed.annual_leave_entitlement_days;
+          existing.annual_leave_total = seed.annual_leave_total;
+          existing.annual_leave_used = seed.annual_leave_used;
+          existing.annual_leave_year = seed.annual_leave_year;
+          existing.sick_leave_used = seed.sick_leave_used;
+          existing.leave_balance_baseline = seed.leave_balance_baseline;
+        }
       } else {
         state.Employee.push(seed);
         byEmail.set(normalizeLeaveEmail(seed.email), seed);
@@ -114,6 +125,7 @@ export function createLeaveWorkflowStore({
       annual_leave_entitlement_days: 15,
       annual_leave_total: 15,
       annual_leave_used: 0,
+      sick_leave_used: 0,
       annual_leave_year: year,
       toil_balance: input.toil_balance,
       created_date: new Date().toISOString(),

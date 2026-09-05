@@ -48,11 +48,16 @@ export function anthropicSafetyLimits(env = process.env) {
 }
 
 export function validateAnthropicConfiguration(env = process.env) {
-  const provider = "anthropic";
+  const provider = String(env.AI_PROVIDER || "").trim().toLowerCase();
   const apiKey = String(env.ANTHROPIC_API_KEY || "").trim();
-  const model = String(env.ANTHROPIC_MODEL || "claude-sonnet-4-6").trim();
+  const model = String(env.ANTHROPIC_MODEL || "").trim();
+  if (provider !== "anthropic") {
+    throw new AnthropicPreflightError("AI_PROVIDER must be set to anthropic before Claude analysis.", {
+      code: "anthropic-provider-not-selected",
+    });
+  }
   if (!apiKey) {
-    throw new AnthropicPreflightError("ANTHROPIC_API_KEY is missing from the server environment (.env).", {
+    throw new AnthropicPreflightError("ANTHROPIC_API_KEY is missing from the server environment.", {
       code: "anthropic-api-key-missing",
     });
   }
@@ -158,15 +163,16 @@ function fullRequestBody(model, maxOutputTokens, claim, evidence, files, styleRe
 }
 
 function estimateInputTokens(requestBody, evidence) {
-  const textCharacters = (requestBody.system?.length || 0)
-    + (requestBody.output_config ? JSON.stringify(requestBody.output_config).length : 0)
-    + (requestBody.messages?.[0]?.content || [])
+  const textCharacters = requestBody.system.length
+    + JSON.stringify(requestBody.output_config).length
+    + requestBody.messages[0].content
       .filter((block) => block.type === "text")
       .reduce((total, block) => total + String(block.text || "").length, 0);
   const images = evidence.reduce((total, item) => total
     + (item.kind === "image" ? 1 : 0)
     + (item.vision_images?.length || 0)
-    + (item.embedded_images?.length || 0), 0);
+    + (item.embedded_images?.length || 0)
+    + (item.native_pdf ? (item.pages?.length || 1) : 0), 0);
   return Math.ceil(textCharacters / 4) + (images * 2_000);
 }
 
@@ -232,15 +238,24 @@ export async function validateAnthropicClaimLocally({
     });
   }
   const extractedTextCharacters = evidence.reduce((total, item) => total + evidenceText(item).length, 0);
-  if (!extractedTextCharacters) {
+  if (!extractedTextCharacters && !evidence.some((item) => item.native_pdf)) {
     throw new AnthropicPreflightError("No extracted document text is available for analysis.", {
       code: "preflight-no-extracted-text",
     });
   }
   if (evidence.some((item) => item.extraction_status === "failed")) {
-    throw new AnthropicPreflightError("At least one required document extraction dependency failed.", {
-      status: 500,
-      code: "preflight-extraction-failed",
+    const failed = evidence.find((item) => item.extraction_status === "failed");
+    throw new AnthropicPreflightError(failed.warning || "At least one required document could not be extracted.", {
+      status: failed.error_status || 500,
+      code: failed.error_code || "preflight-extraction-failed",
+    });
+  }
+  const incompletePdf = evidence.find((item) => item.kind === "pdf" && (!Array.isArray(item.pages)
+    || !item.pages.length
+    || item.pages.some((page, index) => page.page !== index + 1)));
+  if (incompletePdf) {
+    throw new AnthropicPreflightError(`${incompletePdf.document_name} does not have complete sequential page coverage for analysis.`, {
+      code: "preflight-incomplete-page-coverage",
     });
   }
 
@@ -274,6 +289,7 @@ export async function validateAnthropicClaimLocally({
     extracted_text_bytes: Buffer.byteLength(evidence.map((item) => evidenceText(item)).join("\n")),
     sent_text_characters: sentTextCharacters,
     sent_visual_count: sentVisuals,
+    native_pdf_count: prepared.evidence.filter((item) => item.native_pdf).length,
     raw_pdf_files_sent: 0,
     estimated_request_bytes: requestBytes,
     estimated_input_tokens: estimatedInputTokens,
@@ -286,7 +302,13 @@ export async function validateAnthropicClaimLocally({
     claim_context_fields: Object.keys(claimContext),
     system_instruction_characters: requestBody.system.length,
     json_contract_characters: anthropicProviderInternals.jsonContract.length,
-    json_schema_characters: requestBody.output_config?.format?.schema ? JSON.stringify(requestBody.output_config.format.schema).length : 0,
+    json_schema_characters: JSON.stringify(requestBody.output_config.format.schema).length,
+    json_schema_complexity: anthropicProviderInternals.measureJsonSchemaComplexity(
+      requestBody.output_config.format.schema,
+    ),
+    legal_reference_count: legalReferences.length,
+    legal_reference_characters: legalReferences.reduce((total, item) => total + item.excerpt.length, 0),
+    legal_reference_sources: [...new Set(legalReferences.map((item) => item.title))],
     limits,
     local_reduction: prepared.stats,
     payload_summary: prepared.evidence.map((item) => ({
@@ -328,7 +350,7 @@ export function requestFingerprint({ claim, manifest, files, provider, model }) 
   return hash.digest("hex");
 }
 
-export function issueAnthropicPreflightToken(fingerprint, stats = null) {
+export function issueAnthropicPreflightToken(fingerprint, stats = null, originalEvidence = null) {
   const now = Date.now();
   for (const [existingToken, record] of preflightTokens.entries()) {
     if (record.expiresAt < now) {
@@ -338,7 +360,10 @@ export function issueAnthropicPreflightToken(fingerprint, stats = null) {
     }
   }
   const token = crypto.randomUUID();
-  preflightTokens.set(token, { fingerprint, stats, expiresAt: now + PREFLIGHT_TTL_MS });
+  // The full analysis runs immediately after preflight. Reusing this already
+  // extracted evidence prevents a second PDF render cycle and its peak-memory
+  // spike; the one-time token is consumed after that request.
+  preflightTokens.set(token, { fingerprint, stats, originalEvidence, expiresAt: now + PREFLIGHT_TTL_MS });
   return token;
 }
 

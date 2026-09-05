@@ -216,7 +216,7 @@ test("current six-document claim completes mocked Anthropic-to-DOCX production p
   const provider = createAnthropicProvider({
     apiKey: "mock-audit-key",
     model: "claude-sonnet-4-6",
-    maxOutputTokens: 64_000,
+    maxOutputTokens: 12_000,
     fetchImpl: async (url, options) => {
       providerCalls += 1;
       requestUrl = url;
@@ -268,11 +268,19 @@ test("current six-document claim completes mocked Anthropic-to-DOCX production p
   assert.equal(requestOptions.headers["anthropic-version"], "2023-06-01");
   assert.equal(requestOptions.headers["x-api-key"], "mock-audit-key");
   assert.equal(requestBody.model, "claude-sonnet-4-6");
-  assert.equal(requestBody.max_tokens, 64_000);
+  assert.equal(requestBody.max_tokens, 12_000);
   assert.equal(requestBody.stream, true);
   assert.equal(requestBody.tools, undefined);
+  assert.deepEqual(requestBody.thinking, { type: "enabled", budget_tokens: 2_500 });
+  assert.equal(requestBody.output_config.effort, undefined);
   assert.equal(requestBody.output_config.format.type, "json_schema");
   assert.deepEqual(requestBody.output_config.format.schema, anthropicProviderInternals.structuredOutputSchema());
+  assert.doesNotMatch(JSON.stringify(requestBody.output_config.format.schema), /maxItems/);
+  assert.match(requestBody.system, /Claude loss-adjuster decision workflow/i);
+  assert.match(requestBody.system, /develop the viable causal hypotheses, test each against custody, physical consistency, contemporaneous records/i);
+  assert.match(requestBody.system, /Apply the actual current policy issue by issue/i);
+  assert.match(requestBody.system, /conduct an adversarial senior-review audit/i);
+  assert.match(requestBody.messages[0].content.at(-1).text, /Use the bounded thinking budget efficiently.*reserve the remaining output budget/is);
   assert.equal(draft.normalizedRecord.financials.presented_claim, 42_200);
   assert.notEqual(draft.normalizedRecord.financials.presented_claim, 0);
   assert.equal(draft.normalizedRecord.financials.concluded_indemnity, 39_700);
@@ -341,7 +349,7 @@ test("exact paid-run nullable transport failure now completes the full productio
   const provider = createAnthropicProvider({
     apiKey: "mock-audit-key",
     model: "claude-sonnet-4-6",
-    maxOutputTokens: 64_000,
+    maxOutputTokens: 24_000,
     fetchImpl: async () => {
       providerCalls += 1;
       return new Response(JSON.stringify(anthropicMessageFixture(undefined, {
@@ -437,6 +445,110 @@ test("all paid-request failure classes stop after one mocked Anthropic transport
   }
 });
 
+test("a structurally complete payload at Claude's output cap remains usable without a second request", async () => {
+  const transport = canonicalAnalysisToAnthropicTransportFixture(currentClaimMockAnalysis());
+  let calls = 0;
+  const provider = createAnthropicProvider({
+    apiKey: "mock-output-cap-key",
+    fetchImpl: async () => {
+      calls += 1;
+      return new Response(JSON.stringify(anthropicMessageFixture(undefined, {
+        content: [{ type: "text", text: JSON.stringify(transport) }],
+        stop_reason: "max_tokens",
+      })), { status: 200, headers: { "request-id": "req_complete_at_cap" } });
+    },
+  });
+  const files = paidRequestEvidenceFixture.map((item) => ({
+    mimetype: item.mime_type,
+    buffer: Buffer.from(item.pages[0].text),
+  }));
+
+  const result = await provider.analyze({
+    claim: { id: "complete-at-cap" },
+    evidence: paidRequestEvidenceFixture,
+    files,
+  });
+
+  assert.equal(calls, 1);
+  assert.equal(result.analysis.classification.business_line, "Air Shipment (NET)");
+  assert.ok(result.analysis.warnings.some((item) => /output cap after returning a complete structured payload/i.test(item)));
+  assert.ok(result.analysis.human_review_required.some((item) => /cited issue ledger is complete/i.test(item)));
+});
+
+test("grounding recovers an exact labelled policy number without replacing it with a premium-advice reference", () => {
+  const evidence = [{
+    document_id: "combined-docs",
+    document_name: "Combined docs.pdf",
+    mime_type: "application/pdf",
+    kind: "pdf",
+    pages: [
+      { page: 1, text: "MARINE INSURANCE POLICY BY SEA\nPolicy No: ZK-MAA-0104947\nSpecial Clauses and Exclusions" },
+      { page: 2, text: "PREMIUM ADVICE\nPolicy Number: ZK-MAA-1104947\nThe Sum Insured is EUR 10,000" },
+    ],
+  }];
+  const evidenceSource = (page, supportingText) => ({
+    document_id: "combined-docs",
+    document_name: "Combined docs.pdf",
+    page,
+    supporting_text: supportingText,
+    confidence: 0.95,
+    evidence_mode: "extracted_text",
+  });
+  const grounded = anthropicProviderInternals.enforceAnthropicGrounding({
+    classification: {
+      business_line: "Marine Cargo (Non-Reefer)",
+      confidence: 0.9,
+      rationale: "The policy concerns sea cargo.",
+      sources: [evidenceSource(1, "MARINE INSURANCE POLICY BY SEA")],
+    },
+    document_types: [],
+    fields: [{
+      field: "policy_number",
+      value: "Sum",
+      normalized_value: "Sum",
+      confidence: 0.9,
+      requires_confirmation: false,
+      sources: [evidenceSource(2, "The Sum Insured is EUR 10,000")],
+    }],
+    adjustment_line_items: [],
+    missing_documents: [],
+    evidence_findings: [],
+    summary: "Policy details require review.",
+    warnings: [],
+    human_review_required: [],
+  }, evidence);
+
+  const policyNumber = grounded.fields.find((item) => item.field === "policy_number");
+  assert.equal(policyNumber.value, "ZK-MAA-0104947");
+  assert.equal(policyNumber.sources[0].page, 1);
+  assert.match(policyNumber.sources[0].supporting_text, /Policy No:\s*ZK-MAA-0104947/i);
+  assert.ok(grounded.warnings.some((item) => /recovered from an expressly labelled policy reference/i.test(item)));
+});
+
+test("grounding corrects a policy number cited only from a lower-authority premium advice", () => {
+  const evidence = [{
+    document_id: "policy-file",
+    document_name: "policy-and-advice.pdf",
+    kind: "pdf",
+    pages: [
+      { page: 1, text: "MARINE INSURANCE POLICY\nPolicy Number: MAR-2026-0001\nSpecial Clauses" },
+      { page: 2, text: "PREMIUM ADVICE\nPolicy Number: MAR-2026-9999" },
+    ],
+  }];
+  const source = (page, supportingText) => ({
+    document_id: "policy-file", document_name: "policy-and-advice.pdf", page, supporting_text: supportingText,
+    confidence: 0.9, evidence_mode: "extracted_text",
+  });
+  const grounded = anthropicProviderInternals.enforceAnthropicGrounding({
+    classification: { business_line: "Other / Requires Review", confidence: 0.8, rationale: "Policy evidence supplied.", sources: [source(1, "MARINE INSURANCE POLICY")] },
+    document_types: [],
+    fields: [{ field: "policy_number", value: "MAR-2026-9999", normalized_value: "MAR-2026-9999", confidence: 0.9, requires_confirmation: false, sources: [source(2, "Policy Number: MAR-2026-9999")] }],
+    adjustment_line_items: [], missing_documents: [], evidence_findings: [], summary: "Policy needs review.", warnings: [], human_review_required: [],
+  }, evidence);
+
+  assert.equal(grounded.fields.find((item) => item.field === "policy_number").value, "MAR-2026-0001");
+});
+
 test("production request preparation excludes prior reports and emits duplicate image bytes once", () => {
   const context = prepareClaimContextForAnthropic({
     id: "claim-context-audit",
@@ -485,4 +597,27 @@ test("production request preparation excludes prior reports and emits duplicate 
   assert.equal(imageBlocks.length, 1);
   assert.equal(JSON.stringify(body).split(encoded).length - 1, 1);
   assert.doesNotMatch(JSON.stringify(body), /PRIOR_(?:AI_OUTPUT|NORMALIZED_REPORT|REPORT_TEXT)_SENTINEL/);
+});
+
+test("large scanned PDF evidence is sent to Claude as one native PDF document", () => {
+  const pdf = Buffer.from("%PDF-1.7 complete scanned evidence");
+  const body = anthropicProviderInternals.buildRequestBody({
+    model: "claude-sonnet-4-6",
+    maxOutputTokens: 24_000,
+    claim: { id: "native-pdf-claim" },
+    evidence: [{
+      document_id: "combined-docs",
+      document_name: "Combined docs.pdf",
+      mime_type: "application/pdf",
+      kind: "pdf",
+      native_pdf: true,
+      pages: [{ page: 1, text: "Policy Number: POL-44" }],
+    }],
+    files: [{ mimetype: "application/pdf", buffer: pdf }],
+  });
+
+  const documentBlocks = body.messages[0].content.filter((block) => block.type === "document");
+  assert.equal(documentBlocks.length, 1);
+  assert.equal(documentBlocks[0].source.media_type, "application/pdf");
+  assert.equal(documentBlocks[0].source.data, pdf.toString("base64"));
 });

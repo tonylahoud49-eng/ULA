@@ -117,6 +117,7 @@ export default function AIReporting() {
   const [edited, setEdited] = useState({});
   const [generating, setGenerating] = useState(false);
   const [loadingDummy, setLoadingDummy] = useState(false);
+  const [newClaimVisibility, setNewClaimVisibility] = useState("");
   const navigate = useNavigate();
   const readiness = useMemo(() => reportReadiness(edited || {}, documents), [edited, documents]);
 
@@ -139,7 +140,7 @@ export default function AIReporting() {
   const createClaim = async () => {
     const year = new Date().getFullYear();
     const number = `ULA-${year}-${String(claims.length + 1).padStart(4, "0")}`;
-    const created = await appClient.entities.Claim.create({ claim_number: number, title: "New AI Claim", business_line: "Unclassified", status: "New", priority: "Medium" });
+    const created = await appClient.entities.Claim.create({ claim_number: number, title: "New AI Claim", business_line: "Unclassified", status: "New", priority: "Medium", visibility: newClaimVisibility });
     await selectClaim(created.id);
     setClaims((current) => [created, ...current]);
   };
@@ -165,6 +166,7 @@ export default function AIReporting() {
         date_of_loss: "2023-11-14",
         vessel_name: "MSC ISABELLA",
         container_number: "MSCU1234567",
+        visibility: newClaimVisibility,
       });
       await attachDummyEvidencePack(created.id);
       await selectClaim(created.id);
@@ -203,12 +205,16 @@ export default function AIReporting() {
     setAnalysisProgress({ active: true, progress: 10, stage: "Running local safety and request-size checks...", step: 1, totalSteps: 4 });
     let timer1;
     let timer2;
+    const separator = selectedProvider.indexOf(":");
+    const requestedProvider = separator >= 0 ? selectedProvider.slice(0, separator) : selectedProvider;
+    const requestedModel = separator >= 0 ? selectedProvider.slice(separator + 1) : undefined;
 
     try {
       const response = await appClient.functions.invoke("analyseClaim", {
         claim_id: selectedClaimId,
-        provider: selectedProvider,
-        disable_fallback: selectedProvider === "anthropic" || !enableFallback,
+        provider: requestedProvider,
+        model: requestedModel,
+        disable_fallback: requestedProvider === "anthropic" || !enableFallback,
         on_preflight: (stats) => {
           setPreflightStats(stats);
           setAnalysisProgress({ active: true, progress: 25, stage: "Preflight passed. Starting protected Claude analysis...", step: 1, totalSteps: 4 });
@@ -227,7 +233,6 @@ export default function AIReporting() {
       setAnalysis(response.data.analysis);
 
       // Warning toast if fallback occurred
-      const requestedProvider = selectedProvider;
       const actualProvider = response.data.analysis.provider;
       if (requestedProvider && actualProvider && requestedProvider.toLowerCase() !== actualProvider.toLowerCase()) {
         toast({
@@ -293,11 +298,18 @@ export default function AIReporting() {
         <Card className="docket-surface overflow-hidden shadow-none">
           <div className="flex flex-col justify-between gap-3 border-b bg-muted/35 p-5 sm:flex-row sm:items-center">
             <div><h3 className="font-heading text-xl font-semibold">Select a claim</h3><p className="mt-1 text-xs text-muted-foreground">The business line determines the unified report template.</p></div>
-            <div className="flex gap-2">
-              <Button variant="outline" onClick={createDummyTestClaim} disabled={loadingDummy}>
+            <div className="flex flex-wrap items-center gap-2">
+              <Select value={newClaimVisibility} onValueChange={setNewClaimVisibility}>
+                <SelectTrigger className="w-[210px]"><SelectValue placeholder="Choose claim visibility" /></SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="private">Private — only me and admins</SelectItem>
+                  <SelectItem value="public">Public — all employees</SelectItem>
+                </SelectContent>
+              </Select>
+              <Button variant="outline" onClick={createDummyTestClaim} disabled={loadingDummy || !newClaimVisibility}>
                 <Sparkles className="w-4 h-4 mr-2 text-primary" /> {loadingDummy ? "Generating..." : "Create Test Claim with Evidence"}
               </Button>
-              <Button onClick={createClaim}><Wand2 className="w-4 h-4 mr-2" /> Create New AI Claim</Button>
+              <Button onClick={createClaim} disabled={!newClaimVisibility}><Wand2 className="w-4 h-4 mr-2" /> Create New AI Claim</Button>
             </div>
           </div>
           <div className="max-h-[430px] divide-y overflow-y-auto scrollbar-thin">
@@ -421,6 +433,7 @@ function ReviewStep({ analysis, edited, setEdited, readiness, onSave, onBack, on
         <div className="flex flex-col justify-between gap-3 border-b bg-muted/35 p-5 sm:flex-row sm:items-center"><div><h3 className="font-heading text-xl font-semibold">Review extracted and entered facts</h3><p className="mt-1 text-xs text-muted-foreground">Empty values remain explicit gaps. Saving does not approve any professional determination.</p></div><Button size="sm" variant="outline" onClick={onSave}>Save Changes</Button></div>
         <div className="grid grid-cols-1 gap-4 p-5 sm:grid-cols-2 xl:grid-cols-3">
           <RField label="Business Line"><Select value={edited.business_line || "Unclassified"} onValueChange={(value) => set("business_line", value)}><SelectTrigger><SelectValue /></SelectTrigger><SelectContent>{BUSINESS_LINES.map((line) => <SelectItem key={line} value={line}>{line}</SelectItem>)}</SelectContent></Select></RField>
+          <RField label="Employee visibility"><Select value={edited.visibility || "private"} onValueChange={(value) => set("visibility", value)}><SelectTrigger><SelectValue /></SelectTrigger><SelectContent><SelectItem value="private">Private — creator and admins</SelectItem><SelectItem value="public">Public — all employees</SelectItem></SelectContent></Select></RField>
           <RField label="Insured"><Input value={edited.insured || ""} onChange={(event) => set("insured", event.target.value)} /></RField>
           <RField label="Insurer"><Input value={edited.insurer || ""} onChange={(event) => set("insurer", event.target.value)} /></RField>
           <RField label="Broker"><Input value={edited.broker || ""} onChange={(event) => set("broker", event.target.value)} /></RField>
