@@ -4,6 +4,7 @@ import { claimAnalysisSchema } from "../claimAnalysisSchema.mjs";
 import { sanitizeReferenceNarrative, selectApplicableStyleReferences, splitAnalysisReferences } from "../referenceLayer.mjs";
 import { evidenceText } from "../../evidence/extractEvidence.mjs";
 import { buildAnalysisCoveragePlan, enforceAnalysisCoverage } from "../analysisCoverage.mjs";
+import { calculateAiUsage } from "../billingCalculator.mjs";
 
 const DIRECTOR_ANALYSIS_PROTOCOL = `Director-grade analysis protocol:
 - Work through the claim in two internal passes before encoding the response. Pass 1 builds the complete sourced fact, document, party-role, chronology, policy, quantity, financial, and condition record. Pass 2 challenges the proposed analysis against the evidence, the applicable owner-approved methodology profile, material alternatives, contradictions, and missing proof. Return only the final structured result; do not expose private chain-of-thought.
@@ -402,11 +403,19 @@ export function createOpenAIProvider({ apiKey, model, client } = {}) {
         text: { format: zodTextFormat(claimAnalysisSchema, "ula_claim_analysis") },
       });
       if (!response.output_parsed) throw new Error("The AI provider returned no structured analysis.");
+
+      const usage = calculateAiUsage({
+        provider: "openai",
+        model: resolvedModel,
+        rawUsage: response.usage,
+      });
+
       return {
         provider: "openai",
         model: resolvedModel,
         response_id: response.id,
         analyzed_at: new Date().toISOString(),
+        usage,
         analysis: enforceAnalysisCoverage(enforceGrounding(response.output_parsed, evidence, styleReferences), evidence),
       };
     },

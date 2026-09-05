@@ -2,6 +2,7 @@ import OpenAI from "openai";
 import { zodResponseFormat } from "openai/helpers/zod";
 import { claimAnalysisSchema } from "../claimAnalysisSchema.mjs";
 import { SYSTEM_INSTRUCTIONS, promptText, toDataUrl, enforceGrounding, parseStructuredJson } from "./openaiProvider.mjs";
+import { calculateAiUsage } from "../billingCalculator.mjs";
 
 /**
  * Groq provider — uses the OpenAI SDK pointed at Groq's ultra-fast LPU endpoint.
@@ -72,11 +73,18 @@ export function createGroqProvider({ apiKey, model, client } = {}) {
 
       const parsed = claimAnalysisSchema.parse(parseStructuredJson(choice.message.content));
 
+      const usage = calculateAiUsage({
+        provider: "groq",
+        model: response.model || resolvedModel,
+        rawUsage: response?.usage,
+      });
+
       return {
         provider: "groq",
         model: response.model || resolvedModel,
         response_id: response.id || null,
         analyzed_at: new Date().toISOString(),
+        usage,
         analysis: enforceGrounding(parsed, evidence),
       };
     },

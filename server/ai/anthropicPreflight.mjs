@@ -293,6 +293,7 @@ export async function validateAnthropicClaimLocally({
     raw_pdf_files_sent: 0,
     estimated_request_bytes: requestBytes,
     estimated_input_tokens: estimatedInputTokens,
+    estimated_cost_usd: Number((estimatedInputTokens / 1_000_000 * 3.00).toFixed(4)),
     selected_provider: "anthropic",
     selected_model: model,
     max_output_tokens: maxOutputTokens,

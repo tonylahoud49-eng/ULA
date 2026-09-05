@@ -458,6 +458,138 @@ authHttp.registerRoutes(app);
 // deployed SQL-backed instances continue to require the server session.
 app.use("/api", requireDocumentAccess);
 app.get("/api/ai/status", (_request, response) => response.json(getAIStatus()));
+
+app.get("/api/ai/billing-history", async (request, response) => {
+  try {
+    const historyItems = [];
+    const seenRunKeys = new Set();
+
+    // 1. Gather from AI_LOGS
+    for (const entry of AI_LOGS) {
+      if (entry?.data?.usage || entry?.data?.type === "ai_analysis_completed") {
+        const usage = entry.data?.usage;
+        if (!usage && !entry.data?.model) continue;
+
+        const key = `${entry.data?.claim_id || "claim"}_${entry.timestamp}_${entry.data?.model || ""}`;
+        if (seenRunKeys.has(key)) continue;
+        seenRunKeys.add(key);
+
+        historyItems.push({
+          id: entry.id,
+          timestamp: entry.timestamp,
+          claim_id: entry.data?.claim_id || null,
+          claim_number: entry.data?.claim_number || "—",
+          claim_title: entry.data?.claim_title || "Claim Analysis",
+          provider: entry.data?.provider || "anthropic",
+          model: entry.data?.model || "claude-sonnet-4-6",
+          business_line: entry.data?.business_line || null,
+          usage: usage || {
+            input_tokens: 0,
+            output_tokens: 0,
+            total_tokens: 0,
+            cache_read_input_tokens: 0,
+            estimated_cost_usd: 0,
+            is_free_tier: false,
+          },
+        });
+      }
+    }
+
+    // 2. Gather from Claims database (if claim has ai_analysis.usage)
+    let claims = [];
+    if (postgresRepository) {
+      try {
+        claims = await postgresRepository.list("Claim", request.authUser || null);
+      } catch {
+        claims = [];
+      }
+    } else {
+      claims = diskDb.list("Claim") || [];
+    }
+
+    for (const claim of (Array.isArray(claims) ? claims : [])) {
+      if (claim?.ai_analysis?.usage) {
+        const usage = claim.ai_analysis.usage;
+        const timestamp = claim.ai_analysis.analyzed_at || claim.updated_at || claim.created_at || new Date().toISOString();
+        const key = `${claim.id}_${timestamp}_${claim.ai_analysis.model || ""}`;
+        if (!seenRunKeys.has(key)) {
+          seenRunKeys.add(key);
+          historyItems.push({
+            id: `claim-${claim.id}-${Date.parse(timestamp) || Date.now()}`,
+            timestamp,
+            claim_id: claim.id,
+            claim_number: claim.claim_number || "—",
+            claim_title: claim.title || "Claim Analysis",
+            provider: claim.ai_analysis.provider || "anthropic",
+            model: claim.ai_analysis.model || "claude-sonnet-4-6",
+            business_line: claim.ai_analysis.business_line || claim.business_line || null,
+            usage,
+          });
+        }
+      }
+    }
+
+    // Sort descending by timestamp
+    historyItems.sort((a, b) => new Date(b.timestamp) - new Date(a.timestamp));
+
+    // Compute aggregated summary KPIs
+    let totalCostUsd = 0;
+    let totalTokens = 0;
+    let totalInputTokens = 0;
+    let totalOutputTokens = 0;
+    let totalCacheReadTokens = 0;
+    let totalSavingsUsd = 0;
+    let freeTierRunsCount = 0;
+    let paidTierRunsCount = 0;
+
+    for (const item of historyItems) {
+      const u = item.usage;
+      const cost = Number(u.estimated_cost_usd || 0);
+      const isFree = u.is_free_tier === true || cost === 0;
+
+      totalCostUsd += cost;
+      totalTokens += Number(u.total_tokens || 0);
+      totalInputTokens += Number(u.input_tokens || 0);
+      totalOutputTokens += Number(u.output_tokens || 0);
+      totalCacheReadTokens += Number(u.cache_read_input_tokens || 0);
+      totalSavingsUsd += Number(u.estimated_savings_usd || 0);
+
+      if (isFree) {
+        freeTierRunsCount += 1;
+      } else {
+        paidTierRunsCount += 1;
+      }
+    }
+
+    return response.json({
+      ok: true,
+      summary: {
+        total_runs_count: historyItems.length,
+        free_tier_runs_count: freeTierRunsCount,
+        paid_tier_runs_count: paidTierRunsCount,
+        total_cost_usd: Number(totalCostUsd.toFixed(4)),
+        total_savings_usd: Number(totalSavingsUsd.toFixed(4)),
+        total_tokens: totalTokens,
+        total_input_tokens: totalInputTokens,
+        total_output_tokens: totalOutputTokens,
+        total_cache_read_tokens: totalCacheReadTokens,
+      },
+      items: historyItems,
+    });
+  } catch (error) {
+    return response.status(500).json({ error: error.message, code: "billing-history-failed" });
+  }
+});
+
+app.delete("/api/ai/billing-history", (_request, response) => {
+  for (let i = AI_LOGS.length - 1; i >= 0; i--) {
+    if (AI_LOGS[i]?.data?.usage || AI_LOGS[i]?.data?.type === "ai_analysis_completed") {
+      AI_LOGS.splice(i, 1);
+    }
+  }
+  persistAiLogs();
+  return response.json({ ok: true });
+});
 app.get("/api/leave/email/status", (_request, response) => response.json(getLeaveEmailService().getStatus()));
 app.get("/api/email/diagnostics", (_request, response) => {
   dotenv.config({ override: true });
@@ -827,9 +959,16 @@ app.post("/api/ai/analyze", upload.array("files", maxFiles), async (request, res
     const result = await provider.analyze({ claim, evidence, files, styleReferences });
 
     logAiEvent("info", `Received successful analysis from ${provider.name} (${provider.model})`, {
+      type: "ai_analysis_completed",
+      provider: provider.name,
+      model: provider.model,
+      claim_id: claim.id,
+      claim_number: claim.claim_number || "—",
+      claim_title: claim.title || "Claim Analysis",
       business_line: result.analysis?.classification?.business_line,
       confidence: result.analysis?.classification?.confidence,
       summary_preview: (result.analysis?.summary || "").slice(0, 160),
+      usage: result.usage || null,
     });
 
     safeAiDebugLog("[ULA AI debug] Detected document categories", evidence.map((item) => ({
@@ -844,6 +983,7 @@ app.post("/api/ai/analyze", upload.array("files", maxFiles), async (request, res
     result.analysis.warnings = [...new Set([...result.analysis.warnings, ...extractionWarnings])];
     const responsePayload = {
       ...result,
+      usage: result.usage || null,
       evidence_register: evidence.map(({ pages: _pages, embedded_images: _embeddedImages, vision_images: _visionImages, ...item }) => item),
       evidence_snapshot: evidence.map((item) => ({
         document_id: item.document_id,

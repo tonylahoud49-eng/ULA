@@ -16,6 +16,7 @@ import {
   prepareClaimContextForAnthropic,
   prepareEvidenceForAnthropic,
 } from "../../evidence/prepareAnthropicEvidence.mjs";
+import { calculateAiUsage } from "../billingCalculator.mjs";
 
 const ANTHROPIC_MESSAGES_URL = "https://api.anthropic.com/v1/messages";
 const DEFAULT_MODEL = "claude-sonnet-4-6";
@@ -1181,6 +1182,7 @@ function contentBlocks(claim, evidence, files, styleReferences) {
   const content = [{
     type: "text",
     text: promptText(claim, evidence, styleReferences),
+    cache_control: { type: "ephemeral" },
   }];
   const sentImageHashes = new Set();
   const includeImage = (buffer) => {
@@ -1350,12 +1352,17 @@ export function createAnthropicProvider({
       });
       if (!response.ok) throw providerError(response.status, body, requestId);
       const parsed = parseAnthropicStructuredResponse(body, response.status, requestId);
+      const usage = calculateAnthropicUsage({
+        model: body.model || resolvedModel,
+        usage: body.usage,
+      });
       return {
         provider: "anthropic",
         model: body.model || resolvedModel,
         response_id: body.id || requestId,
         provider_api_status: response.status,
         analyzed_at: new Date().toISOString(),
+        usage,
         analysis: enforceAnalysisCoverage(
           enforceAnthropicGrounding(
             sanitizeReferenceNarrative(parsed, styleReferences),
@@ -1369,7 +1376,16 @@ export function createAnthropicProvider({
   };
 }
 
+export function calculateAnthropicUsage({ model, usage } = {}) {
+  return calculateAiUsage({
+    provider: "anthropic",
+    model,
+    rawUsage: usage,
+  });
+}
+
 export const anthropicProviderInternals = {
+  calculateAnthropicUsage,
   anthropicTransportSchema,
   completeUnsupportedClaimFields,
   defaultMaxOutputTokens: DEFAULT_MAX_OUTPUT_TOKENS,

@@ -271,6 +271,16 @@ test("regression: closed debug output does not turn a valid mocked Claude analys
     assert.equal(duplicateResponse.status, 200);
     assert.equal(duplicateBody.duplicate_request_reused, true);
     assert.equal(mockedAnthropicCalls, 1);
+
+    const billingHistoryResponse = await realFetch(`${baseUrl}/api/ai/billing-history`, {
+      headers: { cookie },
+    });
+    assert.equal(billingHistoryResponse.status, 200);
+    const billingHistory = await billingHistoryResponse.json();
+    assert.equal(billingHistory.ok, true);
+    assert.ok(billingHistory.items.length >= 1, "Billing history contains recorded analysis run");
+    assert.ok(billingHistory.summary.total_runs_count >= 1);
+    assert.equal(typeof billingHistory.summary.total_cost_usd, "number");
   } finally {
     console.info = realConsoleInfo;
     globalThis.fetch = realFetch;

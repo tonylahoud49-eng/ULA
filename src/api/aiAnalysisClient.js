@@ -118,6 +118,7 @@ export function mapAnalysis(result) {
     human_review_required: raw.human_review_required,
     classification_rationale: raw.classification.rationale,
     evidence_snapshot: Array.isArray(result.evidence_snapshot) ? result.evidence_snapshot : [],
+    usage: result.usage || null,
   };
 }
 

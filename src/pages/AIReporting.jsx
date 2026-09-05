@@ -5,6 +5,7 @@ import {
   ArrowLeft,
   ArrowRight,
   CheckCircle,
+  Coins,
   FileText,
   Link2,
   Loader2,
@@ -15,6 +16,13 @@ import {
 import { appClient } from "@/api/appClient";
 import { Button } from "@/components/ui/button";
 import { Card } from "@/components/ui/card";
+import {
+  Dialog,
+  DialogContent,
+  DialogHeader,
+  DialogTitle,
+  DialogTrigger,
+} from "@/components/ui/dialog";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
@@ -24,6 +32,8 @@ import DocumentUploader from "@/components/DocumentUploader";
 import { REPORT_WORKFLOW_ROLES, reportReadiness } from "@/lib/reportTemplates";
 import AIAnalysisProgressCard, { formatModelDisplayName } from "@/components/AIAnalysisProgressCard";
 import AIModelSelector from "@/components/AIModelSelector";
+import AITokenWatch from "@/components/AITokenWatch";
+import AIBillingHistory from "@/components/AIBillingHistory";
 
 const BUSINESS_LINES = ["Yacht", "Property", "Marine Cargo (Reefer/GFS)", "Marine Cargo (Non-Reefer)", "Bulk Vessel", "Air Shipment (NET)", "Land Shipment", "Fidelity Claims", "Requires Review", "Unclassified"];
 const STEPS = ["Select Claim", "Upload Evidence", "AI Analysis", "Review & Edit", "Generate Report"];
@@ -118,6 +128,7 @@ export default function AIReporting() {
   const [generating, setGenerating] = useState(false);
   const [loadingDummy, setLoadingDummy] = useState(false);
   const [newClaimVisibility, setNewClaimVisibility] = useState("");
+  const [billingOpen, setBillingOpen] = useState(false);
   const navigate = useNavigate();
   const readiness = useMemo(() => reportReadiness(edited || {}, documents), [edited, documents]);
 
@@ -289,7 +300,34 @@ export default function AIReporting() {
           <h2 className="docket-title">Controlled reporting workspace</h2>
           <p className="docket-subtitle">Register evidence, analyze every source with the configured document-understanding service, verify every suggestion, and generate a unified ULA draft for professional review.</p>
         </div>
-        <span className="status-mark border-amber-300 bg-amber-50 text-amber-800"><ShieldCheck className="h-3.5 w-3.5" /> Human approval required</span>
+        <div className="flex flex-wrap items-center gap-2.5">
+          <Dialog open={billingOpen} onOpenChange={setBillingOpen}>
+            <DialogTrigger asChild>
+              <Button variant="outline" size="sm" className="gap-1.5 text-xs h-8 border-border/80 hover:bg-muted">
+                <Coins className="h-3.5 w-3.5 text-emerald-600" />
+                Token & Billing History
+              </Button>
+            </DialogTrigger>
+            <DialogContent className="max-w-5xl max-h-[85vh] overflow-y-auto">
+              <DialogHeader>
+                <DialogTitle className="flex items-center gap-2 font-heading text-lg">
+                  <Coins className="h-5 w-5 text-emerald-600" />
+                  AI Consumption & Billing Ledger
+                </DialogTitle>
+              </DialogHeader>
+              <AIBillingHistory
+                onSelectClaim={(id) => {
+                  setBillingOpen(false);
+                  selectClaim(id);
+                }}
+              />
+            </DialogContent>
+          </Dialog>
+
+          <span className="status-mark border-amber-300 bg-amber-50 text-amber-800">
+            <ShieldCheck className="h-3.5 w-3.5" /> Human approval required
+          </span>
+        </div>
       </div>
 
       <Stepper step={step} />
@@ -358,6 +396,11 @@ export default function AIReporting() {
               <h3 className="font-heading text-xl font-semibold">Ready to review {documents.length} source document(s)</h3>
               <p className="mx-auto mt-2 max-w-md text-sm text-muted-foreground">All registered evidence is submitted to the configured AI provider for content-based classification and extraction. Unsupported facts remain marked for confirmation.</p>
               {analysisError && <div className="mx-auto mt-4 max-w-xl rounded-md border border-destructive/30 bg-destructive/5 p-3 text-left text-sm text-destructive" role="alert"><strong>AI analysis unavailable.</strong> {analysisError.replace(/^AI analysis unavailable\s*[—-]\s*/i, "")}</div>}
+              {preflightStats && (
+                <div className="mx-auto mt-4 max-w-xl text-left">
+                  <AITokenWatch mode="pre_run" preflight={preflightStats} provider={selectedProvider} />
+                </div>
+              )}
               <div className="mt-6 flex flex-col items-center justify-center gap-3 sm:flex-row">
                 <AIModelSelector
                   value={selectedProvider}
@@ -374,7 +417,7 @@ export default function AIReporting() {
         </div>
       )}
 
-      {step === 3 && claim && <ReviewStep analysis={analysis} edited={edited} setEdited={setEdited} readiness={readiness} onSave={saveEdits} onBack={() => setStep(2)} onNext={() => setStep(4)} />}
+      {step === 3 && claim && <ReviewStep analysis={analysis} edited={edited} setEdited={setEdited} readiness={readiness} onSave={saveEdits} onBack={() => setStep(2)} onNext={() => setStep(4)} selectedProvider={selectedProvider} />}
 
       {step === 4 && claim && (
         <Card className="docket-surface overflow-hidden shadow-none">
@@ -390,6 +433,16 @@ export default function AIReporting() {
             ))}
           </div>
           <div className="border-t p-6 text-center">
+            {(analysis?.usage || claim?.ai_analysis?.usage) && (
+              <div className="mx-auto mb-5 max-w-2xl text-left">
+                <AITokenWatch
+                  mode="post_run"
+                  usage={analysis?.usage || claim?.ai_analysis?.usage}
+                  provider={analysis?.provider || claim?.ai_analysis?.provider}
+                  model={analysis?.model || claim?.ai_analysis?.model}
+                />
+              </div>
+            )}
             <p className="mx-auto max-w-2xl text-sm text-muted-foreground">The generated document remains a draft. Cause, coverage, adjustment, liability, recommendations, and conclusion require professional review; only an authorized approver may issue the final version.</p>
             <Button onClick={generateReport} disabled={generating} className="mt-5">{generating ? <><Loader2 className="animate-spin" /> Generating report…</> : <><Sparkles /> Generate Draft Report</>}</Button>
             <div className="mt-5"><Button variant="ghost" onClick={() => setStep(3)}><ArrowLeft /> Back to review</Button></div>
@@ -413,13 +466,22 @@ function Stepper({ step }) {
   );
 }
 
-function ReviewStep({ analysis, edited, setEdited, readiness, onSave, onBack, onNext }) {
+function ReviewStep({ analysis, edited, setEdited, readiness, onSave, onBack, onNext, selectedProvider }) {
   const set = (key, value) => setEdited({ ...edited, [key]: value });
   const number = (key, value) => setEdited({ ...edited, [key]: value === "" ? undefined : Number(value) });
   const confidenceClass = analysis?.confidence >= 80 ? "text-emerald-700" : analysis?.confidence >= 60 ? "text-amber-700" : "text-red-700";
 
   return (
     <div className="space-y-4">
+      {analysis?.usage && (
+        <AITokenWatch
+          mode="post_run"
+          usage={analysis.usage}
+          provider={analysis.provider || selectedProvider}
+          model={analysis.model}
+          className="mb-1"
+        />
+      )}
       <div className="grid gap-4 lg:grid-cols-[minmax(0,1fr)_300px]">
         <Card className="docket-surface border-primary/30 bg-primary/5 p-4 shadow-none">
           <div className="flex items-start justify-between gap-4"><div><p className="text-sm font-semibold">Template classification: <span className="text-primary">{analysis?.template_name || readiness.template.name}</span></p><p className="mt-1 text-xs leading-5 text-muted-foreground">{analysis?.summary || "Completeness analysis has not been run."}</p></div>{analysis && <div className="text-right"><p className="docket-label">Confidence</p><p className={`font-heading text-2xl font-semibold ${confidenceClass}`}>{analysis.confidence}%</p></div>}</div>

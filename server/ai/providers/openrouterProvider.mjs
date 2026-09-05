@@ -3,6 +3,7 @@ import { zodResponseFormat } from "openai/helpers/zod";
 import { BUSINESS_LINES, DOCUMENT_TYPES, claimAnalysisSchema } from "../claimAnalysisSchema.mjs";
 import { evidenceText } from "../../evidence/extractEvidence.mjs";
 import { SYSTEM_INSTRUCTIONS, promptText, toDataUrl, enforceGrounding, parseStructuredJson } from "./openaiProvider.mjs";
+import { calculateAiUsage } from "../billingCalculator.mjs";
 
 /**
  * OpenRouter provider — uses the OpenAI SDK pointed at OpenRouter's API.
@@ -285,11 +286,18 @@ export function createOpenRouterProvider({
         throw lastParseError;
       }
 
+      const usage = calculateAiUsage({
+        provider: "openrouter",
+        model: response?.model || responseModel,
+        rawUsage: response?.usage,
+      });
+
       return {
         provider: "openrouter",
-        model: response.model || responseModel,
-        response_id: response.id || null,
+        model: response?.model || responseModel,
+        response_id: response?.id || null,
         analyzed_at: new Date().toISOString(),
+        usage,
         analysis: enforceGrounding(parsed, evidence, styleReferences),
       };
     },

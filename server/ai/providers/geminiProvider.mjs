@@ -1,6 +1,7 @@
 import OpenAI from "openai";
 import { BUSINESS_LINES, DOCUMENT_TYPES, claimAnalysisSchema } from "../claimAnalysisSchema.mjs";
 import { SYSTEM_INSTRUCTIONS, promptText, toDataUrl, enforceGrounding, parseStructuredJson } from "./openaiProvider.mjs";
+import { calculateAiUsage } from "../billingCalculator.mjs";
 
 /**
  * Gemini provider — uses the OpenAI SDK pointed at Google's OpenAI-compatible endpoint.
@@ -209,11 +210,18 @@ export function createGeminiProvider({ apiKey, model, client } = {}) {
         throw new Error(`The AI provider returned invalid structured output: ${parseError.message}`);
       }
 
+      const usage = calculateAiUsage({
+        provider: "gemini",
+        model: resolvedModel,
+        rawUsage: response?.usage,
+      });
+
       return {
         provider: "gemini",
         model: resolvedModel,
         response_id: response.id || null,
         analyzed_at: new Date().toISOString(),
+        usage,
         analysis: enforceGrounding(parsed, evidence, styleReferences),
       };
     },

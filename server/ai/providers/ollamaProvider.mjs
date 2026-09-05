@@ -2,6 +2,7 @@ import OpenAI from "openai";
 import { zodResponseFormat } from "openai/helpers/zod";
 import { claimAnalysisSchema } from "../claimAnalysisSchema.mjs";
 import { SYSTEM_INSTRUCTIONS, promptText, toDataUrl, enforceGrounding, parseStructuredJson } from "./openaiProvider.mjs";
+import { calculateAiUsage } from "../billingCalculator.mjs";
 
 /**
  * Ollama provider — connects to local or network Ollama instance via its OpenAI-compatible /v1 endpoint.
@@ -74,11 +75,18 @@ export function createOllamaProvider({ host, model, client } = {}) {
 
       const parsed = claimAnalysisSchema.parse(parseStructuredJson(choice.message.content));
 
+      const usage = calculateAiUsage({
+        provider: "ollama",
+        model: response.model || resolvedModel,
+        rawUsage: response?.usage,
+      });
+
       return {
         provider: "ollama",
         model: response.model || resolvedModel,
         response_id: response.id || null,
         analyzed_at: new Date().toISOString(),
+        usage,
         analysis: enforceGrounding(parsed, evidence),
       };
     },

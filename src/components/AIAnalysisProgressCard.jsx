@@ -120,6 +120,7 @@ export default function AIAnalysisProgressCard({ progress, provider, model, pref
             ["Sent text", formatBytes(preflight.sent_text_characters)],
             ["Visual inputs", preflight.sent_visual_count || 0],
             ["Estimated input", `${Number(preflight.estimated_input_tokens || 0).toLocaleString()} tokens`],
+            ["Estimated cost", `$${Number(preflight.estimated_cost_usd || (Number(preflight.estimated_input_tokens || 0) / 1_000_000 * 3.00)).toFixed(4)} USD`],
             ["Request size", formatBytes(preflight.estimated_request_bytes)],
             ["Provider", preflight.selected_provider],
             ["Model", preflight.selected_model],

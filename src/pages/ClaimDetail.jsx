@@ -30,6 +30,7 @@ import { toast } from "@/components/ui/use-toast";
 import { REPORT_LIFECYCLE, reportReadiness } from "@/lib/reportTemplates";
 import AIAnalysisProgressCard, { formatModelDisplayName } from "@/components/AIAnalysisProgressCard";
 import AIModelSelector from "@/components/AIModelSelector";
+import AITokenWatch from "@/components/AITokenWatch";
 import { MAX_REPORT_PHOTOGRAPHS, selectReportPhotographs } from "@/lib/reportPhotoSelection";
 
 const BUSINESS_LINES = ["Yacht", "Property", "Marine Cargo (Reefer/GFS)", "Marine Cargo (Non-Reefer)", "Bulk Vessel", "Air Shipment (NET)", "Land Shipment", "Fidelity Claims", "Requires Review", "Unclassified"];
@@ -396,8 +397,25 @@ export default function ClaimDetail() {
         </div>
       </div>
 
+      {preflightStats && !analysisProgress.active && !analysis?.usage && (
+        <AITokenWatch mode="pre_run" preflight={preflightStats} provider={selectedProvider} />
+      )}
+
       {analysisProgress.active && (
-        <AIAnalysisProgressCard progress={analysisProgress} provider={selectedProvider} preflight={preflightStats} />
+        <div className="space-y-3">
+          <AIAnalysisProgressCard progress={analysisProgress} provider={selectedProvider} preflight={preflightStats} />
+          <AITokenWatch mode="in_flight" elapsedSeconds={analysisProgress.step * 3} provider={selectedProvider} />
+        </div>
+      )}
+
+      {analysis?.usage && (
+        <AITokenWatch
+          mode="post_run"
+          usage={analysis.usage}
+          provider={analysis.provider || selectedProvider}
+          model={analysis.model}
+          className="mb-2"
+        />
       )}
 
       <ReleaseChain claim={claim} documents={documents} reports={reports} readiness={readiness} />
