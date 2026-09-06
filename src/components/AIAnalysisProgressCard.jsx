@@ -22,8 +22,10 @@ export function formatModelDisplayName(provider, model) {
     return `Groq · ${clean}`;
   }
   if (p === "gemini" || m.includes("gemini")) {
+    if (m.includes("3.7-flash") || m.includes("3.7")) return "Gemini 3.7 Flash";
     if (m.includes("3.6-flash") || m.includes("3.6")) return "Gemini 3.6 Flash";
     if (m.includes("2.5-flash") || m.includes("2.5")) return "Gemini 2.5 Flash";
+    if (m.includes("2.0-flash") || m.includes("2.0")) return "Gemini 2.0 Flash";
     if (m.includes("1.5-pro") || m.includes("pro")) return "Gemini 1.5 Pro";
     return `Gemini · ${model || "Flash"}`;
   }

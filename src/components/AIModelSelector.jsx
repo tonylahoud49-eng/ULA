@@ -31,6 +31,7 @@ export const POPULAR_MODELS = [
   { value: "groq:openai/gpt-oss-120b", label: "gpt-oss-120b", provider: "groq", model: "openai/gpt-oss-120b", org: "Groq" },
 
   // Google Gemini (Free Tier & High Speed)
+  { value: "gemini:gemini-3.7-flash", label: "gemini-3.7-flash", provider: "gemini", model: "gemini-3.7-flash", org: "Google Free", free: true },
   { value: "gemini:gemini-2.0-flash", label: "gemini-2.0-flash", provider: "gemini", model: "gemini-2.0-flash", org: "Google Free", free: true },
   { value: "gemini:gemini-1.5-flash", label: "gemini-1.5-flash", provider: "gemini", model: "gemini-1.5-flash", org: "Google Free", free: true },
   { value: "gemini:gemini-2.5-flash", label: "gemini-2.5-flash", provider: "gemini", model: "gemini-2.5-flash", org: "Google Free", free: true },

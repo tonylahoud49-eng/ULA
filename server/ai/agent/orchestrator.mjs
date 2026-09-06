@@ -67,7 +67,7 @@ export class AutonomousAdjusterOrchestrator extends EventEmitter {
     this.emitPhase("reconciliation_triage", `Reconciliation complete: ${reconDetail} (${reconciliation.missing_mandatory_docs.length ? `Missing: ${reconciliation.missing_mandatory_docs.join(", ")}` : "All mandatory documents verified"})`, 58);
 
     // Phase 3: Coverage, Warranties & Cause Audit
-    this.emitPhase("coverage_cause_audit", `Loading Loss Adjuster Brain playbooks & auditing proximate cause via ${this.mode === "free" ? "Gemini 2.0 Flash" : "Claude 3.7 Sonnet"}...`, 68);
+    this.emitPhase("coverage_cause_audit", `Loading Loss Adjuster Brain playbooks & auditing proximate cause via ${this.mode === "free" ? "Gemini 3.7 Flash" : "Claude 3.7 Sonnet"}...`, 68);
     const audit = await evaluateCoverageAndCause({
       claim: this.claim,
       dossier: { ...dossier, documents: newDocIndex, reconciliation },

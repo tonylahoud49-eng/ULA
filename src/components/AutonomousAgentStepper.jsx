@@ -61,7 +61,7 @@ export default function AutonomousAgentStepper({ claim, onReportGenerated, class
     setActivityLogs([]);
 
     const modeLabels = {
-      hybrid: "⚡ Hybrid Balanced (Gemini 2.0 Flash + Sonnet 3.7)",
+      hybrid: "⚡ Hybrid Balanced (Gemini 3.7 Flash + Sonnet 3.7)",
       free: "🌿 Max Savings (100% Free Gemini Flash Tier)",
       forensic: "🔬 Ultra Forensic (Pure Claude Sonnet)",
     };
@@ -211,7 +211,7 @@ export default function AutonomousAgentStepper({ claim, onReportGenerated, class
             className="text-xs border border-border rounded-md px-2.5 py-1.5 bg-background font-medium focus:ring-1 focus:ring-primary"
             aria-label="Agent Execution Mode"
           >
-            <option value="hybrid">⚡ Hybrid Balanced (Gemini 2.0 Flash + Sonnet 3.7)</option>
+            <option value="hybrid">⚡ Hybrid Balanced (Gemini 3.7 Flash + Sonnet 3.7)</option>
             <option value="free">🌿 Max Savings (100% Free Gemini Flash Tier)</option>
             <option value="forensic">🔬 Ultra Forensic (Pure Claude Sonnet)</option>
           </select>

@@ -17,7 +17,7 @@ export async function indexDocumentWithReader({
   cachedDoc = null,
   claimContext = {},
   providerName = "gemini",
-  modelName = "gemini-2.0-flash",
+  modelName = process.env.GEMINI_MODEL || "gemini-3.7-flash",
 }) {
   const currentHash = computeFileHash(file.buffer);
 

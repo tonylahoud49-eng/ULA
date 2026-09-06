@@ -10,7 +10,7 @@ const DEFAULT_CONFIG = {
   enable_dossier_caching: true,
   enable_prompt_caching: true,
   primary_reader_provider: "gemini",
-  primary_reader_model: "gemini-2.0-flash",
+  primary_reader_model: process.env.GEMINI_MODEL || "gemini-3.7-flash",
   primary_brain_provider: "anthropic",
   primary_brain_model: "claude-sonnet-4-6",
 };
@@ -18,7 +18,12 @@ const DEFAULT_CONFIG = {
 export async function getAgentConfig() {
   try {
     const raw = await fs.readFile(CONFIG_PATH, "utf8");
-    return { ...DEFAULT_CONFIG, ...JSON.parse(raw) };
+    const parsed = JSON.parse(raw);
+    // If config has legacy gemini-2.0-flash, upgrade to configured GEMINI_MODEL if present
+    if (parsed.primary_reader_model === "gemini-2.0-flash" && process.env.GEMINI_MODEL) {
+      parsed.primary_reader_model = process.env.GEMINI_MODEL;
+    }
+    return { ...DEFAULT_CONFIG, ...parsed };
   } catch {
     return { ...DEFAULT_CONFIG };
   }
