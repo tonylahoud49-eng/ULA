@@ -34,7 +34,44 @@ export default function BrainKnowledgeModal({ triggerButton, open, onOpenChange 
   const [uploading, setUploading] = useState(false);
   const [selectedBusinessLine, setSelectedBusinessLine] = useState("Marine Cargo (Reefer)");
   const [showHowItLearns, setShowHowItLearns] = useState(false);
+  const [deletingReportId, setDeletingReportId] = useState(null);
   const { toast } = useToast();
+
+  const handleRemoveReport = async (lr) => {
+    const identifier = lr.fingerprint || lr.claim_id || lr.report_file_name;
+    const name = lr.report_file_name || lr.claim_number || identifier;
+    if (
+      !window.confirm(
+        `Are you sure you want to remove "${name}" from the Brain? Its learned knowledge and playbooks will be unlinked.`
+      )
+    ) {
+      return;
+    }
+    setDeletingReportId(identifier);
+    try {
+      const res = await fetch(`/api/ai/brain/reports/${encodeURIComponent(identifier)}`, {
+        method: "DELETE",
+      });
+      const data = await res.json();
+      if (res.ok && data.ok) {
+        toast({
+          title: "Report Removed from Brain",
+          description: `Successfully removed "${name}".`,
+        });
+        await fetchBrainData();
+      } else {
+        throw new Error(data.error || "Failed to remove report.");
+      }
+    } catch (err) {
+      toast({
+        variant: "destructive",
+        title: "Removal Failed",
+        description: err.message || "Failed to remove report from Brain.",
+      });
+    } finally {
+      setDeletingReportId(null);
+    }
+  };
 
   const fetchBrainData = async () => {
     setLoading(true);
@@ -379,6 +416,7 @@ export default function BrainKnowledgeModal({ triggerButton, open, onOpenChange 
                         <th className="p-2.5 font-medium">Report File</th>
                         <th className="p-2.5 font-medium">Learned Via</th>
                         <th className="p-2.5 font-medium">Date</th>
+                        <th className="p-2.5 font-medium text-right pr-3">Action</th>
                       </tr>
                     </thead>
                     <tbody className="divide-y">
@@ -389,6 +427,24 @@ export default function BrainKnowledgeModal({ triggerButton, open, onOpenChange 
                           <td className="p-2.5 truncate max-w-[160px]" title={lr.report_file_name}>{lr.report_file_name}</td>
                           <td className="p-2.5 font-mono text-[0.7rem] text-muted-foreground">{lr.model}</td>
                           <td className="p-2.5 text-muted-foreground">{new Date(lr.learned_at).toLocaleDateString()}</td>
+                          <td className="p-2.5 text-right pr-3">
+                            <Button
+                              variant="ghost"
+                              size="sm"
+                              className="h-6 w-6 p-0 text-muted-foreground hover:text-destructive transition-colors"
+                              title={`Remove ${lr.report_file_name || "report"} from Brain`}
+                              disabled={deletingReportId === (lr.fingerprint || lr.claim_id || lr.report_file_name)}
+                              onClick={() => handleRemoveReport(lr)}
+                            >
+                              <Trash2
+                                className={`h-3.5 w-3.5 ${
+                                  deletingReportId === (lr.fingerprint || lr.claim_id || lr.report_file_name)
+                                    ? "animate-spin"
+                                    : ""
+                                }`}
+                              />
+                            </Button>
+                          </td>
                         </tr>
                       ))}
                     </tbody>

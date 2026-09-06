@@ -6,6 +6,7 @@ import {
   sanitizeBrainKnowledge,
   getBrainStyleReferences,
   seedBrainWithApprovedReferences,
+  removeLearnedReport,
 } from "../ai/brain/brainEngine.mjs";
 
 test("ensureBrainStorage and getBrainManifest initialize correctly", async () => {
@@ -63,5 +64,20 @@ test("seedBrainWithApprovedReferences loads the 6 ULA reference profiles into br
 
   const refs = await getBrainStyleReferences();
   assert.ok(refs.length >= 6);
+});
+
+test("removeLearnedReport removes a specific report from manifest and updates counts", async () => {
+  await seedBrainWithApprovedReferences();
+  const manifestBefore = await getBrainManifest();
+  const targetReport = manifestBefore.learned_reports.find((r) => r.report_file_name === "land-shipments-approved.json");
+  assert.ok(targetReport);
+
+  const removeRes = await removeLearnedReport(targetReport.fingerprint);
+  assert.ok(removeRes.ok);
+  assert.equal(removeRes.removed_report.fingerprint, targetReport.fingerprint);
+
+  const manifestAfter = await getBrainManifest();
+  assert.equal(manifestAfter.total_learned_reports, manifestBefore.total_learned_reports - 1);
+  assert.ok(!manifestAfter.learned_reports.some((r) => r.fingerprint === targetReport.fingerprint));
 });
 

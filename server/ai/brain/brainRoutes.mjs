@@ -7,6 +7,7 @@ import {
   purgeBrainProfile,
   removeBrainRule,
   seedBrainWithApprovedReferences,
+  removeLearnedReport,
 } from "./brainEngine.mjs";
 import { extractEvidenceFile } from "../../evidence/extractEvidence.mjs";
 
@@ -176,6 +177,28 @@ export function createBrainRouter() {
       return res.status(500).json({
         ok: false,
         error: error.message || "Failed to seed benchmark references.",
+      });
+    }
+  });
+
+  /**
+   * DELETE /api/ai/brain/reports/:identifier
+   * Removes a specific learned report from the Brain store.
+   */
+  router.delete("/reports/:identifier", async (req, res) => {
+    try {
+      const { identifier } = req.params;
+      const result = await removeLearnedReport(identifier);
+      return res.json({
+        ok: true,
+        message: `Report "${result.removed_report?.report_file_name || identifier}" successfully removed from the Brain.`,
+        ...result,
+      });
+    } catch (error) {
+      console.error("[ULA Brain Remove Report Error]", error);
+      return res.status(404).json({
+        ok: false,
+        error: error.message || "Failed to remove report from Brain.",
       });
     }
   });

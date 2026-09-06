@@ -586,3 +586,67 @@ export async function seedBrainWithApprovedReferences() {
   };
 }
 
+/**
+ * Remove a specific learned report from the Brain store by fingerprint, claim_id, or report_file_name.
+ */
+export async function removeLearnedReport(identifier) {
+  await ensureBrainStorage();
+  const manifest = await getBrainManifest();
+  manifest.learned_reports = manifest.learned_reports || [];
+  manifest.business_lines = manifest.business_lines || {};
+
+  const targetId = String(identifier || "").trim();
+  if (!targetId) {
+    throw new Error("A valid report identifier (fingerprint or claim_id) is required.");
+  }
+
+  const index = manifest.learned_reports.findIndex(
+    (r) => r.fingerprint === targetId || r.claim_id === targetId || r.report_file_name === targetId
+  );
+
+  if (index === -1) {
+    throw new Error(`Learned report with identifier "${targetId}" not found.`);
+  }
+
+  const [removedReport] = manifest.learned_reports.splice(index, 1);
+  manifest.total_learned_reports = manifest.learned_reports.length;
+  manifest.updated_at = new Date().toISOString();
+
+  const businessLine = removedReport.business_line;
+  if (businessLine) {
+    const remainingCount = manifest.learned_reports.filter((r) => r.business_line === businessLine).length;
+    if (remainingCount > 0) {
+      manifest.business_lines[businessLine] = remainingCount;
+    } else {
+      delete manifest.business_lines[businessLine];
+    }
+
+    // Update or remove profile on disk if no reports remain
+    const safeKey = businessLine.toLowerCase().replace(/[^a-z0-9]+/g, "_");
+    const profilePath = path.join(PROFILES_DIR, `${safeKey}.json`);
+    try {
+      if (remainingCount === 0) {
+        await fs.unlink(profilePath);
+      } else {
+        const raw = await fs.readFile(profilePath, "utf8");
+        const profile = JSON.parse(raw);
+        profile.ingested_reports_count = remainingCount;
+        profile.last_updated = new Date().toISOString();
+        await fs.writeFile(profilePath, JSON.stringify(profile, null, 2), "utf8");
+      }
+    } catch {
+      // Profile file might not exist
+    }
+  }
+
+  await fs.writeFile(MANIFEST_PATH, JSON.stringify(manifest, null, 2), "utf8");
+
+  return {
+    ok: true,
+    removed_report: removedReport,
+    total_learned_reports: manifest.total_learned_reports,
+    business_lines: manifest.business_lines,
+  };
+}
+
+
