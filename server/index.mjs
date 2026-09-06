@@ -25,6 +25,7 @@ import { sendPasswordResetEmail } from "./auth/passwordResetMailer.mjs";
 import { createPostgresRepository } from "./db/postgresRepository.mjs";
 import { eventForLeave } from "../src/lib/leaveWorkflow.js";
 import { createBrainRouter } from "./ai/brain/brainRoutes.mjs";
+import { createAgentRouter } from "./ai/agent/agentRoutes.mjs";
 
 if (process.env.NODE_ENV !== "test") {
   dotenv.config();
@@ -561,6 +562,7 @@ authHttp.registerRoutes(app);
 app.use("/api", requireDocumentAccess);
 app.get("/api/ai/status", (_request, response) => response.json(getAIStatus()));
 app.use("/api/ai/brain", createBrainRouter());
+app.use("/api/agent", createAgentRouter());
 
 app.get("/api/ai/billing-history", async (request, response) => {
   try {
