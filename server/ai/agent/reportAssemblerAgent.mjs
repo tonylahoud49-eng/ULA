@@ -46,7 +46,7 @@ export function assembleMasterAgentReport({
     quantum,
     reconciliation,
     audit,
-    confidence: audit.confidence || 94,
+    confidence: Number(audit.confidence ?? 94) <= 1 ? Math.round(Number(audit.confidence ?? 0.94) * 100) : Math.round(Number(audit.confidence ?? 94)),
     summary: audit.summary || point2,
     template_name: claim.business_line || "Master Marine Report",
     missing_documents: reconciliation.missing_mandatory_docs || [],

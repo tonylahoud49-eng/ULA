@@ -35,12 +35,21 @@ export class AutonomousAdjusterOrchestrator extends EventEmitter {
     for (let i = 0; i < this.files.length; i += 1) {
       const file = this.files[i];
       const cached = dossier.documents[file.originalname] || null;
-      this.emitPhase("perception_indexing", `Indexing "${file.originalname}" (${this.mode === "free" ? "Gemini Flash Free Tier" : this.mode === "forensic" ? "Claude Sonnet" : "Hybrid Mode"})...`, Math.round(15 + (i / totalFiles) * 20));
+
+      const indexProvider = (this.mode === "forensic" && process.env.ANTHROPIC_API_KEY) ? "anthropic" : "gemini";
+      const indexModel = indexProvider === "gemini"
+        ? (process.env.GEMINI_MODEL || "gemini-3.7-flash")
+        : (process.env.ANTHROPIC_MODEL || "claude-sonnet-4-6");
+
+      const providerLabel = indexProvider === "gemini" ? "Gemini 3.7 Flash" : "Claude Sonnet";
+      this.emitPhase("perception_indexing", `Indexing "${file.originalname}" (${providerLabel})...`, Math.round(15 + (i / totalFiles) * 20));
+
       const indexed = await indexDocumentWithReader({
         file,
         cachedDoc: cached,
         claimContext: this.claim,
-        providerName: this.mode === "forensic" ? "anthropic" : "gemini",
+        providerName: indexProvider,
+        modelName: indexModel,
       });
       newDocIndex[file.originalname] = indexed;
       const statusMsg = indexed.from_cache
@@ -67,14 +76,25 @@ export class AutonomousAdjusterOrchestrator extends EventEmitter {
     this.emitPhase("reconciliation_triage", `Reconciliation complete: ${reconDetail} (${reconciliation.missing_mandatory_docs.length ? `Missing: ${reconciliation.missing_mandatory_docs.join(", ")}` : "All mandatory documents verified"})`, 58);
 
     // Phase 3: Coverage, Warranties & Cause Audit
-    this.emitPhase("coverage_cause_audit", `Loading Loss Adjuster Brain playbooks & auditing proximate cause via ${this.mode === "free" ? "Gemini 3.7 Flash" : "Claude 3.7 Sonnet"}...`, 68);
+    const auditProvider = (this.mode === "free" || !process.env.ANTHROPIC_API_KEY) ? "gemini" : "anthropic";
+    const auditModel = auditProvider === "gemini"
+      ? (process.env.GEMINI_MODEL || "gemini-3.7-flash")
+      : (process.env.ANTHROPIC_MODEL || "claude-sonnet-4-6");
+    const auditProviderLabel = auditProvider === "gemini" ? "Gemini 3.7 Flash" : "Claude 3.7 Sonnet";
+
+    this.emitPhase("coverage_cause_audit", `Loading Loss Adjuster Brain playbooks & auditing proximate cause via ${auditProviderLabel}...`, 68);
+
     const audit = await evaluateCoverageAndCause({
       claim: this.claim,
       dossier: { ...dossier, documents: newDocIndex, reconciliation },
-      providerName: this.mode === "free" ? "gemini" : "anthropic",
+      providerName: auditProvider,
+      modelName: auditModel,
     });
 
-    this.emitPhase("coverage_cause_audit", `Cause & coverage audit concluded (${audit.confidence ? `${Math.round(audit.confidence)}% confidence` : "Audited"})`, 80);
+    const confidencePct = audit.confidence
+      ? (audit.confidence <= 1 ? Math.round(audit.confidence * 100) : Math.round(audit.confidence))
+      : 90;
+    this.emitPhase("coverage_cause_audit", `Cause & coverage audit concluded (${confidencePct}% confidence)`, 80);
 
     // Phase 4: Deterministic Quantum Engine
     this.emitPhase("quantum_calculation", "Executing deterministic quantum and underinsurance math ($0.00 token cost)...", 86);

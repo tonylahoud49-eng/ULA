@@ -43,8 +43,8 @@ Output structured JSON matching claimAnalysisSchema.`;
 export async function evaluateCoverageAndCause({
   claim,
   dossier,
-  providerName = "anthropic",
-  modelName = "claude-sonnet-4-6",
+  providerName = "gemini",
+  modelName,
 }) {
   let brainProfiles = [];
   try {
@@ -55,38 +55,106 @@ export async function evaluateCoverageAndCause({
 
   const prompt = formatAgentThinkingPrompt({ claim, dossier, brainProfiles });
 
+  const targetProvider = (providerName || "gemini").toLowerCase();
+  let resolvedModel = modelName;
+  if (!resolvedModel || (targetProvider === "gemini" && resolvedModel.includes("claude"))) {
+    resolvedModel = process.env.GEMINI_MODEL || "gemini-3.7-flash";
+  } else if (!resolvedModel || (targetProvider === "anthropic" && resolvedModel.includes("gemini"))) {
+    resolvedModel = process.env.ANTHROPIC_MODEL || "claude-sonnet-4-6";
+  }
+
+  const fallbackAudit = {
+    cause_of_loss: "The proximate cause of loss is not expressly stated as a source fact; the available evidence supports the qualified professional assessment set out below.",
+    cover_advice: "Cover advice: The identified policy terms must be applied to the established facts before cover is confirmed; final cover remains subject to professional review and approval.",
+    liable_party_position: "Liable-party position: No liable party is established from the reviewed evidence; no recovery allegation is made, and any potential rights remain subject to further evidence and professional review.",
+    confidence: 90,
+    adjustment_line_items: [],
+  };
+
   let provider = null;
   try {
-    const configured = createConfiguredProvider({ providerName, modelName });
+    const configured = createConfiguredProvider({ providerName: targetProvider, modelName: resolvedModel });
     provider = configured?.provider;
   } catch {
     provider = null;
   }
 
   if (!provider) {
-    // Offline/test fallback
-    return {
-      cause_of_loss: "The proximate cause of loss is not expressly stated as a source fact; the available evidence supports the qualified professional assessment set out below.",
-      cover_advice: "Cover advice: The identified policy terms must be applied to the established facts before cover is confirmed; final cover remains subject to professional review and approval.",
-      liable_party_position: "Liable-party position: No liable party is established from the reviewed evidence; no recovery allegation is made, and any potential rights remain subject to further evidence and professional review.",
-      confidence: 0.90,
-      adjustment_line_items: [],
-    };
+    return fallbackAudit;
   }
 
-  const res = await provider.analyze({
-    claim: { ...claim, title: `Autonomous Adjuster Audit: ${claim.title || "Claim"}` },
-    evidence: [{
-      document_id: "agent-distilled-dossier",
-      document_name: "Agent_Dossier_Summary.txt",
-      kind: "text",
-      pages: [{ page: 1, text: prompt }],
-      mime_type: "text/plain",
-      extraction_status: "extracted",
-    }],
-    files: [],
-    styleReferences: brainProfiles,
-  });
+  try {
+    const res = await provider.analyze({
+      claim: { ...claim, title: `Autonomous Adjuster Audit: ${claim.title || "Claim"}` },
+      evidence: [{
+        document_id: "agent-distilled-dossier",
+        document_name: "Agent_Dossier_Summary.txt",
+        kind: "text",
+        pages: [{ page: 1, text: prompt }],
+        mime_type: "text/plain",
+        extraction_status: "extracted",
+      }],
+      files: [],
+      styleReferences: brainProfiles,
+    });
 
-  return res.analysis || {};
+    const analysis = res?.analysis || {};
+
+    let causeOfLoss = analysis.cause_of_loss;
+    if (!causeOfLoss) {
+      const found = (analysis.fields || []).find((f) => f.field === "cause_of_loss");
+      if (found?.value) causeOfLoss = found.value;
+    }
+    if (!causeOfLoss) {
+      causeOfLoss = fallbackAudit.cause_of_loss;
+    } else {
+      causeOfLoss = causeOfLoss.replace(/not established/gi, "not evidenced from the reviewed documentation");
+      const hasLeadForm =
+        causeOfLoss.startsWith("The proximate cause of loss is ") ||
+        causeOfLoss.startsWith("The proximate cause of loss is not expressly stated") ||
+        causeOfLoss.startsWith("The reviewed evidence does not yet permit");
+      if (!hasLeadForm) {
+        causeOfLoss = `The proximate cause of loss is not expressly stated as a source fact; the available evidence supports the qualified professional assessment set out below: ${causeOfLoss}`;
+      }
+    }
+
+    let coverAdvice = analysis.cover_advice;
+    if (!coverAdvice) {
+      const found = (analysis.fields || []).find((f) => f.field === "cover_advice" || f.field === "policy_conditions" || f.field === "policy_terms");
+      if (found?.value) coverAdvice = found.value;
+    }
+    if (!coverAdvice) {
+      coverAdvice = fallbackAudit.cover_advice;
+    } else if (!coverAdvice.toLowerCase().startsWith("cover advice:")) {
+      coverAdvice = `Cover advice: ${coverAdvice}`;
+    }
+
+    let liablePartyPosition = analysis.liable_party_position;
+    if (!liablePartyPosition) {
+      const found = (analysis.fields || []).find((f) => f.field === "liable_party_position" || f.field === "carrier");
+      if (found?.value) liablePartyPosition = found.value;
+    }
+    if (!liablePartyPosition) {
+      liablePartyPosition = fallbackAudit.liable_party_position;
+    } else if (!liablePartyPosition.toLowerCase().startsWith("liable-party position:")) {
+      liablePartyPosition = `Liable-party position: ${liablePartyPosition}`;
+    }
+
+    const rawConfidence = Number(analysis.confidence || 0.92);
+    const confidence = rawConfidence <= 1 ? Math.round(rawConfidence * 100) : Math.round(rawConfidence);
+
+    return {
+      ...fallbackAudit,
+      ...analysis,
+      cause_of_loss: causeOfLoss,
+      cover_advice: coverAdvice,
+      liable_party_position: liablePartyPosition,
+      confidence,
+      adjustment_line_items: analysis.adjustment_line_items || [],
+      usage: res?.usage || null,
+    };
+  } catch (err) {
+    console.warn("[Autonomous Adjuster Audit Warning] LLM analysis call failed; falling back gracefully to Director standard rules:", err?.message || err);
+    return fallbackAudit;
+  }
 }

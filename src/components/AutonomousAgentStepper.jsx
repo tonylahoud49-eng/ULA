@@ -106,27 +106,29 @@ export default function AutonomousAgentStepper({ claim, onReportGenerated, class
             const jsonStr = trimmed.slice(5).trim();
             if (!jsonStr) continue;
 
+            let event = null;
             try {
-              const event = JSON.parse(jsonStr);
-
-              if (event.type === "progress") {
-                if (event.progress !== undefined) setProgress(event.progress);
-                if (event.name) setActivePhase(event.name);
-                if (event.description) {
-                  setStatusMessage(event.description);
-                  addLog(event.description, event.name);
-                }
-              } else if (event.type === "complete") {
-                finalReport = event.report;
-                setProgress(100);
-                setActivePhase("complete");
-                setStatusMessage("✓ Autonomous investigation certified and complete.");
-                addLog("Master investigation report assembled and passed Director quality gates.");
-              } else if (event.type === "error") {
-                throw new Error(event.error || "Agent execution encountered an error.");
-              }
+              event = JSON.parse(jsonStr);
             } catch (parseErr) {
               console.warn("Could not parse agent stream event:", parseErr);
+              continue;
+            }
+
+            if (event.type === "progress") {
+              if (event.progress !== undefined) setProgress(event.progress);
+              if (event.name) setActivePhase(event.name);
+              if (event.description) {
+                setStatusMessage(event.description);
+                addLog(event.description, event.name);
+              }
+            } else if (event.type === "complete") {
+              finalReport = event.report;
+              setProgress(100);
+              setActivePhase("complete");
+              setStatusMessage("✓ Autonomous investigation certified and complete.");
+              addLog("Master investigation report assembled and passed Director quality gates.");
+            } else if (event.type === "error") {
+              throw new Error(event.error || "Agent execution encountered an error.");
             }
           }
         }
@@ -139,6 +141,8 @@ export default function AutonomousAgentStepper({ claim, onReportGenerated, class
           if (onReportGenerated) {
             onReportGenerated(finalReport);
           }
+        } else {
+          throw new Error("Agent pipeline ended without generating a certified report.");
         }
       } else {
         // Fallback for standard non-streaming response
