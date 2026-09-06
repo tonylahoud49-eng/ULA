@@ -63,7 +63,7 @@ export async function indexDocumentWithReader({
 
   const prompt = `${READER_SYSTEM_PROMPT}\n\nDocument Filename: ${file.originalname}\nClaim Business Line: ${claimContext.business_line || "Marine Cargo"}`;
   const res = await provider.analyze({
-    claim: { title: `Index: ${file.originalname}`, ...claimContext },
+    claim: { title: `Index: ${file.originalname}`, prompt, ...claimContext },
     evidence: [{
       document_id: file.originalname,
       document_name: file.originalname,

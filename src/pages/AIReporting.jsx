@@ -36,6 +36,7 @@ import AIModelSelector from "@/components/AIModelSelector";
 import AITokenWatch from "@/components/AITokenWatch";
 import AIBillingHistory from "@/components/AIBillingHistory";
 import BrainKnowledgeModal from "@/components/BrainKnowledgeModal";
+import AutonomousAgentStepper from "@/components/AutonomousAgentStepper";
 
 const BUSINESS_LINES = ["Yacht", "Property", "Marine Cargo (Reefer/GFS)", "Marine Cargo (Non-Reefer)", "Bulk Vessel", "Air Shipment (NET)", "Land Shipment", "Fidelity Claims", "Requires Review", "Unclassified"];
 const STEPS = ["Select Claim", "Upload Evidence", "AI Analysis", "Review & Edit", "Generate Report"];
@@ -417,6 +418,21 @@ export default function AIReporting() {
                   <AITokenWatch mode="pre_run" preflight={preflightStats} provider={currentProvider} model={currentModel} />
                 </div>
               )}
+              <div className="mt-6 w-full max-w-xl mx-auto text-left">
+                <AutonomousAgentStepper
+                  claim={claim}
+                  onReportGenerated={(report) => {
+                    setAnalysis(report);
+                    setStep(3);
+                  }}
+                />
+              </div>
+
+              <div className="relative my-6 text-center">
+                <div className="absolute inset-0 flex items-center"><span className="w-full border-t border-border/50" /></div>
+                <div className="relative flex justify-center text-xs uppercase"><span className="bg-card px-2 text-muted-foreground">Or Run Legacy Model Analysis</span></div>
+              </div>
+
               <div className="mt-6 flex flex-col items-center justify-center gap-3 sm:flex-row">
                 <AIModelSelector
                   value={selectedProvider}

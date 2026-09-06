@@ -32,6 +32,7 @@ import AIAnalysisProgressCard, { formatModelDisplayName } from "@/components/AIA
 import AIModelSelector from "@/components/AIModelSelector";
 import AITokenWatch from "@/components/AITokenWatch";
 import BrainKnowledgeModal from "@/components/BrainKnowledgeModal";
+import AutonomousAgentStepper from "@/components/AutonomousAgentStepper";
 import { MAX_REPORT_PHOTOGRAPHS, selectReportPhotographs } from "@/lib/reportPhotoSelection";
 
 const BUSINESS_LINES = ["Yacht", "Property", "Marine Cargo (Reefer/GFS)", "Marine Cargo (Non-Reefer)", "Bulk Vessel", "Air Shipment (NET)", "Land Shipment", "Fidelity Claims", "Requires Review", "Unclassified"];
@@ -423,6 +424,14 @@ export default function ClaimDetail() {
           className="mb-2"
         />
       )}
+
+      {/* Autonomous Loss Adjuster Agent */}
+      <AutonomousAgentStepper
+        claim={claim}
+        onReportGenerated={async () => {
+          await load();
+        }}
+      />
 
       <ReleaseChain claim={claim} documents={documents} reports={reports} readiness={readiness} />
 
