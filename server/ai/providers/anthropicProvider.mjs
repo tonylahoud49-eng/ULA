@@ -424,7 +424,7 @@ function resolveMaxOutputTokens(value, model = DEFAULT_MODEL) {
   if (!Number.isInteger(parsed) || parsed < 1_024) {
     throw new RangeError("ANTHROPIC_MAX_OUTPUT_TOKENS must be an integer of at least 1024.");
   }
-  const maximum = model === "claude-sonnet-4-6"
+  const maximum = /claude-(?:sonnet|opus)-(?:4-6|5)|claude-3-[57]-sonnet/i.test(model)
     ? MAX_SONNET_4_6_OUTPUT_TOKENS
     : DEFAULT_MAX_OUTPUT_TOKENS;
   if (parsed > maximum) {
@@ -1232,7 +1232,7 @@ function contentBlocks(claim, evidence, files, styleReferences) {
 }
 
 function buildAnthropicRequestBody({ model, maxOutputTokens, claim, evidence, files, styleReferences = [] }) {
-  const thinking = /claude-(?:sonnet|opus)-4-6/i.test(model) && maxOutputTokens >= 4_096
+  const thinking = /claude-(?:sonnet|opus)-(?:4-6|5)|claude-3-7-sonnet/i.test(model) && maxOutputTokens >= 4_096
     ? {
       type: "enabled",
       budget_tokens: Math.min(SONNET_4_6_THINKING_BUDGET_TOKENS, Math.floor(maxOutputTokens / 4)),

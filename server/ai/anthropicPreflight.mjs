@@ -182,7 +182,7 @@ function estimateInputTokens(requestBody, evidence) {
 }
 
 function modelContextTokens(model) {
-  return /claude-sonnet-4-6/i.test(String(model || "")) ? 1_000_000 : 200_000;
+  return /claude-sonnet-(?:4-6|5)|claude-3-[57]-sonnet/i.test(String(model || "")) ? 1_000_000 : 200_000;
 }
 
 export async function validateAnthropicClaimLocally({
