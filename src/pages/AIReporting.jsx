@@ -423,6 +423,15 @@ export default function AIReporting() {
                   claim={claim}
                   onReportGenerated={(report) => {
                     setAnalysis(report);
+                    const suggestions = report.suggested_claim_data || {};
+                    setEdited((current) => ({
+                      ...current,
+                      cause_of_loss: suggestions.cause_of_loss || report.conclusion_points?.[1] || current.cause_of_loss,
+                      claim_amount: suggestions.claim_amount !== undefined ? suggestions.claim_amount : current.claim_amount,
+                      deductible: suggestions.deductible !== undefined ? suggestions.deductible : current.deductible,
+                      business_line: suggestions.business_line || current.business_line,
+                      container_number: suggestions.container_number || current.container_number,
+                    }));
                     setStep(3);
                   }}
                 />

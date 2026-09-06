@@ -56,6 +56,29 @@ export function createAgentRouter() {
         }
       }
 
+      const isStream = req.query.stream === "true" || req.body.stream === "true" || Boolean(req.headers.accept?.includes("text/event-stream"));
+
+      if (isStream) {
+        res.setHeader("Content-Type", "text/event-stream");
+        res.setHeader("Cache-Control", "no-cache, no-transform");
+        res.setHeader("Connection", "keep-alive");
+        res.flushHeaders?.();
+
+        const orchestrator = new AutonomousAdjusterOrchestrator({ claim, files, mode });
+        orchestrator.on("phase_changed", (event) => {
+          res.write(`data: ${JSON.stringify({ type: "progress", ...event })}\n\n`);
+        });
+
+        try {
+          const report = await orchestrator.execute();
+          res.write(`data: ${JSON.stringify({ type: "complete", report })}\n\n`);
+          return res.end();
+        } catch (streamErr) {
+          res.write(`data: ${JSON.stringify({ type: "error", error: streamErr.message })}\n\n`);
+          return res.end();
+        }
+      }
+
       const orchestrator = new AutonomousAdjusterOrchestrator({ claim, files, mode });
       const report = await orchestrator.execute();
 
