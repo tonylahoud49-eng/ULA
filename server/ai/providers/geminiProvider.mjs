@@ -2,6 +2,7 @@ import OpenAI from "openai";
 import { BUSINESS_LINES, DOCUMENT_TYPES, claimAnalysisSchema } from "../claimAnalysisSchema.mjs";
 import { SYSTEM_INSTRUCTIONS, promptText, toDataUrl, enforceGrounding, parseStructuredJson } from "./openaiProvider.mjs";
 import { calculateAiUsage } from "../billingCalculator.mjs";
+import { repairTruncatedJson } from "../jsonRepair.mjs";
 
 /**
  * Gemini provider — uses the OpenAI SDK pointed at Google's OpenAI-compatible endpoint.
@@ -73,6 +74,7 @@ export function createGeminiProvider({ apiKey, model, client } = {}) {
             { role: "user", content: userContent },
           ],
           response_format: { type: "json_object" },
+          max_completion_tokens: 16384,
         });
       } catch (error) {
         if (Number(error?.status) === 404) {
@@ -82,6 +84,7 @@ export function createGeminiProvider({ apiKey, model, client } = {}) {
               { role: "system", content: SYSTEM_INSTRUCTIONS },
               { role: "user", content: userContent },
             ],
+            max_completion_tokens: 16384,
           });
         } else {
           throw error;
@@ -95,7 +98,12 @@ export function createGeminiProvider({ apiKey, model, client } = {}) {
 
       let parsed;
       try {
-        const rawJson = parseStructuredJson(choice.message.content);
+        let rawJson;
+        try {
+          rawJson = parseStructuredJson(choice.message.content);
+        } catch {
+          rawJson = JSON.parse(repairTruncatedJson(choice.message.content));
+        }
         
         const canonicalEnumValue = (val, validList, fallback) => {
           if (!val) return fallback;

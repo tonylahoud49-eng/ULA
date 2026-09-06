@@ -1279,6 +1279,68 @@ const buildReport = async ({ claim_id: claimId, edited_data: editedData }) => {
   return { data: { report, claim_id: claimId } };
 };
 
+const uploadOfficialFinalReport = async ({ claim_id: claimId, file, notes }) => {
+  await prepareDatabase();
+  const claim = await entities.Claim.get(claimId);
+  if (!claim) throw createError("Claim not found", 404);
+  const user = currentUser();
+
+  // 1. Upload file into document storage
+  const uploaded = await documentStorage.save(file);
+
+  // 2. Also register in ClaimDocument as Official Final Report
+  const doc = await entities.ClaimDocument.create({
+    claim_id: claimId,
+    ...uploaded,
+    file_name: file.name,
+    file_type: file.name.toLowerCase().endsWith(".docx") ? "Word" : "PDF",
+    category: "Official Final Report",
+    uploaded_date: new Date().toISOString(),
+  });
+
+  // 3. Count existing versions
+  const versions = await entities.ReportVersion.filter({ claim_id: claimId });
+  const nextVersionNumber = versions.length + 1;
+
+  // 4. Create the official ReportVersion
+  const report = await entities.ReportVersion.create({
+    claim_id: claimId,
+    version_number: nextVersionNumber,
+    status: "Final",
+    issue_state: "Final",
+    is_official_upload: true,
+    storage_key: uploaded.storageKey,
+    file_url: uploaded.reference,
+    file_name: file.name,
+    file_size: uploaded.size,
+    template_name: claim.ai_suggested_report_template_name || "Official Loss Adjuster Final Report",
+    business_line: claim.business_line || claim.ai_suggested_business_line || "Marine Cargo",
+    applicant: claim.applicant || null,
+    insured_name: claim.insured_name || null,
+    insurer: claim.insurer || null,
+    policy_number: claim.policy_number || null,
+    date_of_loss: claim.date_of_loss || null,
+    currency: claim.currency || "USD",
+    claimed_amount: claim.claimed_amount || null,
+    adjusted_amount: claim.adjusted_amount || null,
+    human_approval_required: false,
+    approved_by: user.full_name || user.email,
+    approved_date: new Date().toISOString(),
+    generated_by: user.full_name || user.email,
+    notes: notes || "Uploaded as certified official loss adjuster report version",
+    brain_learning_status: "pending",
+  });
+
+  // 5. Update claim status to Report Final and link official_report_version_id
+  await entities.Claim.update(claimId, {
+    status: "Report Final",
+    official_report_version_id: report.id,
+  });
+
+  await persistMemoryDatabase();
+  return { data: { report, document: doc } };
+};
+
 const persistLeaveEmailResult = (requestId, target, delivery) => {
   const latest = getMemoryDatabase();
   const recorded = recordLeaveEmailDelivery(latest, requestId, target, delivery);
@@ -1415,6 +1477,7 @@ export const appClient = {
       }
       if (name === "analyseClaim") return buildAnalysis(payload);
       if (name === "generateReport") return buildReport(payload);
+      if (name === "uploadOfficialFinalReport") return uploadOfficialFinalReport(payload);
       if (name === "submitLeaveRequest") return submitLeaveRequest(payload);
       if (name === "decideLeaveRequest") return decideLeaveRequest(payload);
       if (name === "retryLeaveNotification") return retryLeaveNotification(payload);

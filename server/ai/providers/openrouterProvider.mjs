@@ -4,6 +4,7 @@ import { BUSINESS_LINES, DOCUMENT_TYPES, claimAnalysisSchema } from "../claimAna
 import { evidenceText } from "../../evidence/extractEvidence.mjs";
 import { SYSTEM_INSTRUCTIONS, promptText, toDataUrl, enforceGrounding, parseStructuredJson } from "./openaiProvider.mjs";
 import { calculateAiUsage } from "../billingCalculator.mjs";
+import { repairTruncatedJson } from "../jsonRepair.mjs";
 
 /**
  * OpenRouter provider — uses the OpenAI SDK pointed at OpenRouter's API.
@@ -18,7 +19,7 @@ import { calculateAiUsage } from "../billingCalculator.mjs";
 
 const OPENROUTER_BASE_URL = "https://openrouter.ai/api/v1";
 const DEFAULT_MODEL = "meta-llama/llama-3.3-70b-instruct";
-const DEFAULT_MAX_COMPLETION_TOKENS = 2_500;
+const DEFAULT_MAX_COMPLETION_TOKENS = 16_384;
 
 const COMPACT_SCHEMA_HINT = JSON.stringify({
   classification: {
@@ -102,8 +103,14 @@ function parseStructuredAnalysis(response) {
   try {
     return claimAnalysisSchema.parse(parseStructuredJson(choice.message.content));
   } catch (error) {
-    const finishReason = choice.finish_reason ? `; finish reason: ${choice.finish_reason}` : "";
-    throw new Error(`The AI provider returned invalid structured output${finishReason}: ${error.message}`);
+    try {
+      const repaired = repairTruncatedJson(choice.message.content);
+      const parsedCandidate = JSON.parse(repaired);
+      return normalizePartialAnalysis(parsedCandidate);
+    } catch {
+      const finishReason = choice.finish_reason ? `; finish reason: ${choice.finish_reason}` : "";
+      throw new Error(`The AI provider returned invalid structured output${finishReason}: ${error.message}`);
+    }
   }
 }
 

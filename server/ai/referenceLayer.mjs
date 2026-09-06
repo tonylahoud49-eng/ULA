@@ -173,6 +173,15 @@ export async function loadApprovedStyleReferences(directory) {
       // Invalid or unapproved manifests are intentionally ignored.
     }
   }
+
+  try {
+    const { getBrainStyleReferences } = await import("./brain/brainEngine.mjs");
+    const brainReferences = await getBrainStyleReferences();
+    references.push(...brainReferences);
+  } catch {
+    // Brain references optional if not initialized
+  }
+
   return references;
 }
 

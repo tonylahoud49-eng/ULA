@@ -7,8 +7,8 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@
 import { toast } from "@/components/ui/use-toast";
 import { UploadCloud, FileText, Image as ImageIcon, X, Loader2 } from "lucide-react";
 
-const FILE_TYPES = ["PDF", "Word", "Excel", "Email", "Invoice", "Policy", "Claim Form", "Bill of Lading", "Air Waybill", "Packing List", "Quotation", "Survey Report", "Statement", "Photo", "Other"];
-const CATEGORIES = ["Policy Document", "Shipping Document", "Evidence", "Correspondence", "Financial", "Photo Evidence", "Other"];
+const FILE_TYPES = ["Official Final Report", "PDF", "Word", "Excel", "Email", "Invoice", "Policy", "Claim Form", "Bill of Lading", "Air Waybill", "Packing List", "Quotation", "Survey Report", "Statement", "Photo", "Other"];
+const CATEGORIES = ["Official Final Report", "Policy Document", "Shipping Document", "Evidence", "Correspondence", "Financial", "Photo Evidence", "Other"];
 
 const errorMessage = (error) => error?.response?.data?.error || error?.message || "Please try again.";
 

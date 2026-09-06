@@ -50,6 +50,8 @@ export function createPostgresRepository({ connectionString = process.env.DATABA
       await client.query("rollback").catch(() => {});
       throw error;
     } finally {
+      // Explicitly reset session variables to prevent connection pool leakage
+      await client.query("reset app.user_id; reset app.user_role").catch(() => {});
       client.release();
     }
   };
@@ -211,10 +213,19 @@ export function createPostgresRepository({ connectionString = process.env.DATABA
   });
 
   const getDocumentByStorageKey = (storageKey, actor) => withActor(actor, async (client) => {
-    const { rows } = await client.query("select * from ula.claim_documents where data->>'storage_key' = $1 limit 1", [storageKey]);
-    const result = rows[0] ? rowData(rows[0]) : null;
-    if (result) await audit(client, actor, "read:download", "ClaimDocument", result, null, { storage_key: storageKey });
-    return result;
+    const docQuery = await client.query("select * from ula.claim_documents where data->>'storage_key' = $1 limit 1", [storageKey]);
+    if (docQuery.rows[0]) {
+      const result = rowData(docQuery.rows[0]);
+      await audit(client, actor, "read:download", "ClaimDocument", result, null, { storage_key: storageKey });
+      return result;
+    }
+    const repQuery = await client.query("select * from ula.report_versions where data->>'storage_key' = $1 limit 1", [storageKey]);
+    if (repQuery.rows[0]) {
+      const result = rowData(repQuery.rows[0]);
+      await audit(client, actor, "read:download", "ReportVersion", result, null, { storage_key: storageKey });
+      return result;
+    }
+    return null;
   });
 
   const recordActivity = (actor, action, entity, record, before = null, after = null) => withActor(actor, async (client) => {

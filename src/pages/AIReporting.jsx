@@ -12,6 +12,7 @@ import {
   ShieldCheck,
   Sparkles,
   Wand2,
+  Brain,
 } from "lucide-react";
 import { appClient } from "@/api/appClient";
 import { Button } from "@/components/ui/button";
@@ -34,6 +35,7 @@ import AIAnalysisProgressCard, { formatModelDisplayName } from "@/components/AIA
 import AIModelSelector from "@/components/AIModelSelector";
 import AITokenWatch from "@/components/AITokenWatch";
 import AIBillingHistory from "@/components/AIBillingHistory";
+import BrainKnowledgeModal from "@/components/BrainKnowledgeModal";
 
 const BUSINESS_LINES = ["Yacht", "Property", "Marine Cargo (Reefer/GFS)", "Marine Cargo (Non-Reefer)", "Bulk Vessel", "Air Shipment (NET)", "Land Shipment", "Fidelity Claims", "Requires Review", "Unclassified"];
 const STEPS = ["Select Claim", "Upload Evidence", "AI Analysis", "Review & Edit", "Generate Report"];
@@ -328,6 +330,15 @@ export default function AIReporting() {
               />
             </DialogContent>
           </Dialog>
+
+          <BrainKnowledgeModal
+            triggerButton={
+              <Button variant="outline" size="sm" className="gap-1.5 text-xs h-8 border-primary/30 text-primary hover:bg-primary/10 shadow-xs">
+                <Brain className="h-3.5 w-3.5 text-primary" />
+                Loss Adjuster Brain
+              </Button>
+            }
+          />
 
           <span className="status-mark border-amber-300 bg-amber-50 text-amber-800">
             <ShieldCheck className="h-3.5 w-3.5" /> Human approval required

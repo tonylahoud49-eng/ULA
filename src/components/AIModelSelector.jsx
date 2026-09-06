@@ -14,14 +14,32 @@ import { Input } from "@/components/ui/input";
 import { Sparkles, Activity, CheckCircle2, AlertCircle, Loader2, Send } from "lucide-react";
 
 export const POPULAR_MODELS = [
+  // Free Tier & High-Performance OpenRouter Models
+  { value: "openrouter:meta-llama/llama-3.3-70b-instruct:free", label: "llama-3.3-70b-instruct:free", provider: "openrouter", model: "meta-llama/llama-3.3-70b-instruct:free", org: "Free Tier", free: true },
+  { value: "openrouter:deepseek/deepseek-r1:free", label: "deepseek-r1:free (Deep Reasoning)", provider: "openrouter", model: "deepseek/deepseek-r1:free", org: "Free Tier", free: true },
+  { value: "openrouter:deepseek/deepseek-chat:free", label: "deepseek-chat:free", provider: "openrouter", model: "deepseek/deepseek-chat:free", org: "Free Tier", free: true },
+  { value: "openrouter:google/gemini-2.0-flash-exp:free", label: "gemini-2.0-flash-exp:free", provider: "openrouter", model: "google/gemini-2.0-flash-exp:free", org: "Free Tier", free: true },
+  { value: "openrouter:qwen/qwen-2.5-coder-32b-instruct:free", label: "qwen-2.5-coder-32b:free", provider: "openrouter", model: "qwen/qwen-2.5-coder-32b-instruct:free", org: "Free Tier", free: true },
   { value: "openrouter:openrouter/auto", label: "openrouter/auto (Auto-route)", provider: "openrouter", model: "openrouter/auto", org: "OpenRouter" },
   { value: "openrouter:meta-llama/llama-3.3-70b-instruct", label: "llama-3.3-70b-instruct", provider: "openrouter", model: "meta-llama/llama-3.3-70b-instruct", org: "OpenRouter" },
   { value: "openrouter:deepseek/deepseek-chat", label: "deepseek-chat", provider: "openrouter", model: "deepseek/deepseek-chat", org: "OpenRouter" },
-  { value: "groq:openai/gpt-oss-120b", label: "gpt-oss-120b (Ultra-fast)", provider: "groq", model: "openai/gpt-oss-120b", org: "Groq" },
-  { value: "gemini:gemini-3.6-flash", label: "gemini-3.6-flash", provider: "gemini", model: "gemini-3.6-flash", org: "Google" },
+
+  // Groq Cloud LPUs (Ultra-fast)
+  { value: "groq:llama-3.3-70b-versatile", label: "llama-3.3-70b-versatile (Ultra-fast)", provider: "groq", model: "llama-3.3-70b-versatile", org: "Groq Free", free: true },
+  { value: "groq:deepseek-r1-distill-llama-70b", label: "deepseek-r1-distill-70b", provider: "groq", model: "deepseek-r1-distill-llama-70b", org: "Groq Free", free: true },
+  { value: "groq:llama-3.1-8b-instant", label: "llama-3.1-8b-instant", provider: "groq", model: "llama-3.1-8b-instant", org: "Groq Free", free: true },
+  { value: "groq:openai/gpt-oss-120b", label: "gpt-oss-120b", provider: "groq", model: "openai/gpt-oss-120b", org: "Groq" },
+
+  // Google Gemini (Free Tier & High Speed)
+  { value: "gemini:gemini-2.0-flash", label: "gemini-2.0-flash", provider: "gemini", model: "gemini-2.0-flash", org: "Google Free", free: true },
+  { value: "gemini:gemini-1.5-flash", label: "gemini-1.5-flash", provider: "gemini", model: "gemini-1.5-flash", org: "Google Free", free: true },
+  { value: "gemini:gemini-2.5-flash", label: "gemini-2.5-flash", provider: "gemini", model: "gemini-2.5-flash", org: "Google Free", free: true },
+  { value: "gemini:gemini-3.6-flash", label: "gemini-3.6-flash", provider: "gemini", model: "gemini-3.6-flash", org: "Google Free", free: true },
+
+  // Flagship Providers
   { value: "anthropic:claude-sonnet-4-6", label: "claude-sonnet-4-6", provider: "anthropic", model: "claude-sonnet-4-6", org: "Anthropic" },
   { value: "openai:gpt-4o", label: "gpt-4o", provider: "openai", model: "gpt-4o", org: "OpenAI" },
-  { value: "ollama:llama3.3", label: "llama3.3", provider: "ollama", model: "llama3.3", org: "Ollama" },
+  { value: "ollama:llama3.3", label: "llama3.3", provider: "ollama", model: "llama3.3", org: "Local Ollama", free: true },
 ];
 
 export default function AIModelSelector({

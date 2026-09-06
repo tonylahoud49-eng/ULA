@@ -24,6 +24,7 @@ import { createAuthHttp } from "./auth/authHttp.mjs";
 import { sendPasswordResetEmail } from "./auth/passwordResetMailer.mjs";
 import { createPostgresRepository } from "./db/postgresRepository.mjs";
 import { eventForLeave } from "../src/lib/leaveWorkflow.js";
+import { createBrainRouter } from "./ai/brain/brainRoutes.mjs";
 
 if (process.env.NODE_ENV !== "test") {
   dotenv.config();
@@ -36,7 +37,69 @@ const host = process.env.HOST || "0.0.0.0";
 const maxFiles = Number(process.env.AI_MAX_FILES || 20);
 const maxFileBytes = Number(process.env.AI_MAX_FILE_BYTES || 30 * 1024 * 1024);
 const maxTotalBytes = Number(process.env.AI_MAX_TOTAL_BYTES || 50 * 1024 * 1024);
-const upload = multer({ storage: multer.memoryStorage(), limits: { files: maxFiles, fileSize: maxFileBytes } });
+
+const ALLOWED_EXTENSIONS = new Set([
+  ".pdf", ".docx", ".doc", ".xlsx", ".xls", ".csv",
+  ".png", ".jpg", ".jpeg", ".webp", ".txt", ".tiff", ".bmp",
+]);
+const BLOCKED_EXTENSIONS = new Set([
+  ".exe", ".bat", ".cmd", ".sh", ".php", ".phtml", ".js", ".mjs",
+  ".cjs", ".vbs", ".ps1", ".py", ".rb", ".jar", ".zip", ".tar",
+  ".gz", ".7z", ".rar", ".iso", ".dll", ".so", ".bin",
+]);
+
+const safeFileFilter = (_req, file, cb) => {
+  const ext = path.extname(file.originalname || "").toLowerCase();
+  if (BLOCKED_EXTENSIONS.has(ext)) {
+    return cb(new Error(`File extension ${ext} is blocked for security reasons.`));
+  }
+  if (!ALLOWED_EXTENSIONS.has(ext)) {
+    return cb(new Error(`File extension ${ext} is not supported. Upload PDF, Word, Excel, image, or text documents.`));
+  }
+  cb(null, true);
+};
+
+// Rate limiter for heavy AI endpoints to prevent cost exhaustion
+function createRateLimiter({ windowMs = 60 * 1000, maxRequests = 30, message = "Too many requests, please try again later." } = {}) {
+  const requests = new Map();
+  setInterval(() => {
+    const cutoff = Date.now() - windowMs;
+    for (const [ip, timestamps] of requests.entries()) {
+      const valid = timestamps.filter((t) => t > cutoff);
+      if (valid.length === 0) requests.delete(ip);
+      else requests.set(ip, valid);
+    }
+  }, 5 * 60 * 1000).unref();
+
+  return (req, res, next) => {
+    const key = req.ip || req.headers["x-forwarded-for"] || "global";
+    const now = Date.now();
+    const timestamps = requests.get(key) || [];
+    const valid = timestamps.filter((t) => t > now - windowMs);
+    if (valid.length >= maxRequests) {
+      return res.status(429).json({
+        error: message,
+        code: "rate-limit-exceeded",
+        retry_after_seconds: Math.ceil((valid[0] + windowMs - now) / 1000),
+      });
+    }
+    valid.push(now);
+    requests.set(key, valid);
+    next();
+  };
+}
+
+export const aiRateLimiter = createRateLimiter({
+  windowMs: 60 * 1000,
+  maxRequests: 30,
+  message: "AI analysis rate limit exceeded. Please wait a moment before sending more requests.",
+});
+
+const upload = multer({
+  storage: multer.memoryStorage(),
+  limits: { files: maxFiles, fileSize: maxFileBytes },
+  fileFilter: safeFileFilter,
+});
 const app = express();
 const postgresRepository = createPostgresRepository();
 const authService = postgresRepository?.auth || createAuthService({
@@ -77,7 +140,11 @@ const diskStorage = multer.diskStorage({
     cb(null, `${unique}_${safeName}`);
   },
 });
-const diskUpload = multer({ storage: diskStorage, limits: { fileSize: maxFileBytes, files: maxFiles } });
+const diskUpload = multer({
+  storage: diskStorage,
+  limits: { fileSize: maxFileBytes, files: maxFiles },
+  fileFilter: safeFileFilter,
+});
 
 const sendRepositoryError = (response, error) => response.status(Number(error.status) || 500).json({
   error: error.message || "The request could not be completed.",
@@ -210,9 +277,24 @@ app.get("/api/documents/file/:filename", requireDocumentAccess, async (request, 
     const safeFilename = path.basename(filename);
     const filePath = path.resolve(UPLOADS_DIR, safeFilename);
 
+    // Defense-in-depth against directory traversal
+    if (!filePath.startsWith(path.resolve(UPLOADS_DIR))) {
+      return response.status(403).json({ error: "Invalid document path." });
+    }
+
     if (postgresRepository) {
       const document = await postgresRepository.getDocumentByStorageKey(safeFilename, request.authUser);
       if (!document) return response.status(404).json({ error: "Document not found" });
+    } else if (request.authUser) {
+      // In DiskDb development mode, verify claim access if user session is present
+      const doc = diskDb.list("ClaimDocument", { storage_key: safeFilename })[0]
+        || diskDb.list("ReportVersion", { storage_key: safeFilename })[0];
+      if (doc && doc.claim_id) {
+        const claim = diskDb.get("Claim", doc.claim_id);
+        if (claim && claim.visibility === "private" && request.authUser.role !== "admin" && claim.owner_id !== request.authUser.id) {
+          return response.status(403).json({ error: "Access denied to this claim's document." });
+        }
+      }
     }
 
     if (!fs.existsSync(filePath)) {
@@ -249,7 +331,11 @@ app.get("/api/documents/file/:filename", requireDocumentAccess, async (request, 
 app.get("/api/documents/:key", requireDocumentAccess, async (request, response) => {
   const { key } = request.params;
   const safeKey = path.basename(key);
-  const filePath = path.join(UPLOADS_DIR, safeKey);
+  const filePath = path.resolve(UPLOADS_DIR, safeKey);
+
+  if (!filePath.startsWith(path.resolve(UPLOADS_DIR))) {
+    return response.status(403).json({ error: "Invalid document path." });
+  }
 
   if (postgresRepository) {
     try {
@@ -273,12 +359,28 @@ app.get("/api/documents/:key", requireDocumentAccess, async (request, response) 
   });
 });
 
-app.delete("/api/documents/:key", requireDocumentAccess, (request, response) => {
+app.delete("/api/documents/:key", requireDocumentAccess, async (request, response) => {
   const { key } = request.params;
   const safeKey = path.basename(key);
-  const filePath = path.join(UPLOADS_DIR, safeKey);
+  const filePath = path.resolve(UPLOADS_DIR, safeKey);
+
+  if (!filePath.startsWith(path.resolve(UPLOADS_DIR))) {
+    return response.status(403).json({ error: "Invalid document path." });
+  }
 
   try {
+    if (postgresRepository) {
+      const document = await postgresRepository.getDocumentByStorageKey(safeKey, request.authUser);
+      if (!document) return response.status(404).json({ error: "Document not found or access denied." });
+      // Only admins or the owner of the claim can delete
+      const user = request.authUser;
+      if (user && user.role !== "admin") {
+        const claim = await postgresRepository.get("Claim", document.claim_id, user).catch(() => null);
+        if (claim && claim.owner_id && claim.owner_id !== user.id) {
+          return response.status(403).json({ error: "Forbidden: You do not have permission to delete this document." });
+        }
+      }
+    }
     if (fs.existsSync(filePath)) {
       fs.unlinkSync(filePath);
     }
@@ -458,6 +560,7 @@ authHttp.registerRoutes(app);
 // deployed SQL-backed instances continue to require the server session.
 app.use("/api", requireDocumentAccess);
 app.get("/api/ai/status", (_request, response) => response.json(getAIStatus()));
+app.use("/api/ai/brain", createBrainRouter());
 
 app.get("/api/ai/billing-history", async (request, response) => {
   try {
@@ -918,7 +1021,7 @@ app.post("/api/leave/notifications", async (request, response) => {
   }
 });
 
-app.post("/api/ai/analyze", upload.array("files", maxFiles), async (request, response) => {
+app.post("/api/ai/analyze", aiRateLimiter, upload.array("files", maxFiles), async (request, response) => {
   let activeProviderInfo = null;
   let anthropicFingerprint = null;
   let preflightEvidence = null;

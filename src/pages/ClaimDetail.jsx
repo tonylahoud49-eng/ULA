@@ -1,4 +1,4 @@
-import React, { useEffect, useMemo, useState } from "react";
+import React, { useEffect, useMemo, useRef, useState } from "react";
 import { useParams, Link } from "react-router-dom";
 import remarkGfm from "remark-gfm";
 import ulaLogo from "@/assets/ula-logo.png";
@@ -23,7 +23,7 @@ import {
   AlertDialogHeader,
   AlertDialogTitle,
 } from "@/components/ui/alert-dialog";
-import { ArrowLeft, Download, FileText, FileCheck2, Sparkles, AlertTriangle, Save, CheckCircle, ClipboardCheck, ShieldCheck, Trash2 } from "lucide-react";
+import { ArrowLeft, Download, FileText, FileCheck2, Sparkles, AlertTriangle, Save, CheckCircle, ClipboardCheck, ShieldCheck, Trash2, UploadCloud, Award, Brain, Loader2 } from "lucide-react";
 import DocumentUploader from "@/components/DocumentUploader";
 import ReactMarkdown from "react-markdown";
 import { toast } from "@/components/ui/use-toast";
@@ -31,6 +31,7 @@ import { REPORT_LIFECYCLE, reportReadiness } from "@/lib/reportTemplates";
 import AIAnalysisProgressCard, { formatModelDisplayName } from "@/components/AIAnalysisProgressCard";
 import AIModelSelector from "@/components/AIModelSelector";
 import AITokenWatch from "@/components/AITokenWatch";
+import BrainKnowledgeModal from "@/components/BrainKnowledgeModal";
 import { MAX_REPORT_PHOTOGRAPHS, selectReportPhotographs } from "@/lib/reportPhotoSelection";
 
 const BUSINESS_LINES = ["Yacht", "Property", "Marine Cargo (Reefer/GFS)", "Marine Cargo (Non-Reefer)", "Bulk Vessel", "Air Shipment (NET)", "Land Shipment", "Fidelity Claims", "Requires Review", "Unclassified"];
@@ -1113,6 +1114,86 @@ function ReportSection({ claimId, claim, documents, reports, onChanged }) {
     }
   };
 
+  const officialFileInputRef = useRef(null);
+  const [uploadingOfficial, setUploadingOfficial] = useState(false);
+  const [learningBrainReportId, setLearningBrainReportId] = useState(null);
+
+  const handleUploadOfficialReport = async (e) => {
+    const file = e.target?.files?.[0];
+    if (!file) return;
+    setUploadingOfficial(true);
+    try {
+      const res = await appClient.functions.invoke("uploadOfficialFinalReport", {
+        claim_id: claimId,
+        file,
+      });
+      await onChanged();
+      toast({
+        title: "Official Final Report Uploaded",
+        description: `Official certified report version has been added. Now ingesting into Loss Adjuster Brain...`,
+      });
+      if (res.data?.report) {
+        handleLearnBrain(res.data.report, file);
+      }
+    } catch (err) {
+      toast({
+        variant: "destructive",
+        title: "Upload failed",
+        description: err.response?.data?.error || err.message,
+      });
+    } finally {
+      setUploadingOfficial(false);
+      if (e.target) e.target.value = "";
+    }
+  };
+
+  const handleLearnBrain = async (report, optionalFile) => {
+    setLearningBrainReportId(report.id);
+    try {
+      const form = new FormData();
+      if (optionalFile) {
+        form.append("file", optionalFile);
+      } else {
+        const stored = await appClient.documentStorage.get(report.storage_key || report.file_url);
+        if (stored?.blob) {
+          form.append("file", stored.blob, report.file_name || "official_report.pdf");
+        } else if (report.content) {
+          form.append("report_text", report.content);
+        }
+      }
+      form.append("claim", JSON.stringify(claim));
+      form.append("file_name", report.file_name || "official_report.pdf");
+
+      const response = await fetch("/api/ai/brain/learn-report", {
+        method: "POST",
+        body: form,
+      });
+      const data = await response.json();
+      if (!response.ok || !data.ok) {
+        throw new Error(data.error || `Server returned ${response.status}`);
+      }
+
+      await appClient.entities.ReportVersion.update(report.id, {
+        brain_learning_status: "learned",
+        brain_learned_at: new Date().toISOString(),
+      });
+      await onChanged();
+
+      toast({
+        title: "🧠 Loss Adjuster Brain Ingested",
+        description: `Learned ${data.learned_items?.cause_rules || 0} cause standards and ${data.learned_items?.quantum_rubrics || 0} quantum rubrics for ${data.business_line}.`,
+      });
+    } catch (err) {
+      toast({
+        variant: "destructive",
+        title: "Brain Learning Failed",
+        description: err.message || "Failed to analyze official report.",
+      });
+    } finally {
+      setLearningBrainReportId(null);
+    }
+  };
+
   const approve = async (r) => {
     try {
       const user = await appClient.auth.me();
@@ -1184,11 +1265,36 @@ function ReportSection({ claimId, claim, documents, reports, onChanged }) {
       <div className="mb-5 flex flex-col justify-between gap-3 border-b pb-4 sm:flex-row sm:items-center">
         <div>
           <h3 className="font-heading text-xl font-semibold">Controlled report versions</h3>
-          <p className="mt-1 text-xs text-muted-foreground">Issued versions remain immutable; subsequent corrections create a new controlled version.</p>
+          <p className="mt-1 text-xs text-muted-foreground">Issued versions remain immutable; upload an official final report or generate an AI draft.</p>
         </div>
-        <Button onClick={generate} disabled={generating} className="ula-gradient text-white hover:opacity-90">
-          <Sparkles className="w-4 h-4 mr-2" /> {generating ? "Generating…" : "Generate Draft Report"}
-        </Button>
+        <div className="flex flex-wrap items-center gap-2">
+          <input
+            type="file"
+            ref={officialFileInputRef}
+            className="hidden"
+            accept=".docx,.pdf"
+            onChange={handleUploadOfficialReport}
+          />
+          <BrainKnowledgeModal
+            triggerButton={
+              <Button variant="outline" className="border-primary/30 text-primary hover:bg-primary/10 shadow-xs">
+                <Brain className="w-4 h-4 mr-2 text-primary" /> Loss Adjuster Brain
+              </Button>
+            }
+          />
+          <Button
+            onClick={() => officialFileInputRef.current?.click()}
+            disabled={uploadingOfficial}
+            variant="outline"
+            className="border-emerald-600/30 text-emerald-700 hover:bg-emerald-50 shadow-xs"
+          >
+            {uploadingOfficial ? <Loader2 className="w-4 h-4 mr-2 animate-spin" /> : <UploadCloud className="w-4 h-4 mr-2 text-emerald-600" />}
+            {uploadingOfficial ? "Uploading…" : "Upload Official Report"}
+          </Button>
+          <Button onClick={generate} disabled={generating} className="ula-gradient text-white hover:opacity-90">
+            <Sparkles className="w-4 h-4 mr-2" /> {generating ? "Generating…" : "Generate Draft Report"}
+          </Button>
+        </div>
       </div>
 
       {exportProgress.active && (
@@ -1219,7 +1325,7 @@ function ReportSection({ claimId, claim, documents, reports, onChanged }) {
       {reports.length === 0 ? (
         <div className="flex flex-col items-center justify-center py-12 text-muted-foreground">
           <FileText className="w-10 h-10 mb-2 opacity-40" />
-          <p className="text-sm">No report versions yet. Run AI analysis first, then generate a draft.</p>
+          <p className="text-sm">No report versions yet. Run AI analysis first, or upload an official final report.</p>
         </div>
       ) : (
         <div className="space-y-4">
@@ -1234,6 +1340,11 @@ function ReportSection({ claimId, claim, documents, reports, onChanged }) {
                   <div>
                     <div className="flex flex-wrap items-center gap-2">
                       <h4 className="font-heading text-lg font-semibold">Version {r.version_number}</h4>
+                      {r.is_official_upload && (
+                        <span className="status-mark border-emerald-500 bg-emerald-50 text-emerald-800 font-bold flex items-center gap-1 shadow-xs">
+                          <Award className="h-3.5 w-3.5 text-emerald-600" /> Official Final Report
+                        </span>
+                      )}
                       <span className={`status-mark ${isFinal ? "border-emerald-300 bg-emerald-50 text-emerald-800 font-semibold" : "border-primary/30 bg-primary/5 text-primary"}`}>
                         {r.issue_state || r.status || "Draft"}
                       </span>
@@ -1244,15 +1355,28 @@ function ReportSection({ claimId, claim, documents, reports, onChanged }) {
                       )}
                       {isFinal && (
                         <span className="status-mark border-emerald-300 bg-emerald-50 text-emerald-800 flex items-center gap-1">
-                          <CheckCircle className="h-3 w-3 text-emerald-600" /> Signed off by {r.approved_by || "Director"}
+                          <CheckCircle className="h-3 w-3 text-emerald-600" /> {r.is_official_upload ? `Certified by ${r.approved_by || "Director"}` : `Signed off by ${r.approved_by || "Director"}`}
                         </span>
                       )}
                     </div>
-                    <p className="text-xs text-muted-foreground">{r.template_name} · {r.business_line || "Marine"} · {r.readiness?.overall_progress ?? 0}% completeness</p>
+                    <p className="text-xs text-muted-foreground">{r.template_name} · {r.business_line || "Marine"} · {r.readiness?.overall_progress ?? (r.is_official_upload ? 100 : 0)}% completeness</p>
                   </div>
                 </div>
                 <div className="flex flex-wrap items-center gap-2">
-                  {!isFinal && (
+                  {r.is_official_upload && (
+                    <Button
+                      size="sm"
+                      variant="outline"
+                      className="border-primary/40 text-primary hover:bg-primary/10 font-medium shadow-xs"
+                      onClick={() => handleLearnBrain(r)}
+                      disabled={learningBrainReportId === r.id}
+                      title="Extract methodology and loss adjuster reasoning into the System Brain"
+                    >
+                      {learningBrainReportId === r.id ? <Loader2 className="h-3.5 w-3.5 mr-1 animate-spin" /> : <Brain className="h-3.5 w-3.5 mr-1 text-primary" />}
+                      {r.brain_learning_status === "learned" ? "Retrain Brain" : "Teach Brain"}
+                    </Button>
+                  )}
+                  {!isFinal && !r.is_official_upload && (
                     <Button
                       size="sm"
                       className="bg-emerald-600 text-white hover:bg-emerald-700 font-semibold shadow-xs"
