@@ -10,6 +10,7 @@ const moduleDir = path.dirname(fileURLToPath(import.meta.url));
 const BRAIN_ROOT = path.resolve(moduleDir, "../../../.data/brain");
 const PROFILES_DIR = path.join(BRAIN_ROOT, "profiles");
 const MANIFEST_PATH = path.join(BRAIN_ROOT, "manifest.json");
+const REFERENCES_DIR = path.resolve(moduleDir, "../references");
 
 /**
  * Ensure required brain storage directories exist.
@@ -424,3 +425,164 @@ export async function removeBrainRule(businessLineKey, category, ruleIndex) {
   }
   throw new Error(`Rule at index ${ruleIndex} in category ${category} not found.`);
 }
+
+/**
+ * Seed the Brain store with ULA's 6 Director-approved reference playbooks.
+ * Bootstraps instant loss adjuster wisdom across all supported business lines.
+ */
+export async function seedBrainWithApprovedReferences() {
+  await ensureBrainStorage();
+  const manifest = await getBrainManifest();
+  manifest.learned_reports = manifest.learned_reports || [];
+  manifest.business_lines = manifest.business_lines || {};
+
+  const refFiles = [
+    "gfs-reefer-approved.json",
+    "non-reefer-cargo-approved.json",
+    "property-fire-approved.json",
+    "bulk-vessels-approved.json",
+    "air-shipments-approved.json",
+    "land-shipments-approved.json",
+  ];
+
+  const seededLines = [];
+
+  for (const filename of refFiles) {
+    const filePath = path.join(REFERENCES_DIR, filename);
+    let parsed;
+    try {
+      const raw = await fs.readFile(filePath, "utf8");
+      parsed = JSON.parse(raw);
+    } catch {
+      continue;
+    }
+
+    const rawLine = parsed.applies_to?.business_lines?.[0] || parsed.title || "General";
+    let businessLine = rawLine;
+    if (rawLine.includes("Non-Reefer")) businessLine = "Marine Cargo (Non-Reefer)";
+    else if (rawLine.includes("Reefer")) businessLine = "Marine Cargo (Reefer)";
+    else if (rawLine.includes("Air")) businessLine = "Air Cargo";
+    else if (rawLine.includes("Land")) businessLine = "Land Transit";
+    else if (rawLine.includes("Bulk")) businessLine = "Bulk Vessels";
+    else if (rawLine.includes("Property")) businessLine = "Property";
+
+    const safeKey = businessLine.toLowerCase().replace(/[^a-z0-9]+/g, "_");
+    const profilePath = path.join(PROFILES_DIR, `${safeKey}.json`);
+
+    const styleNotes = Array.isArray(parsed.style_notes) ? parsed.style_notes : [];
+
+    const causeRules = [];
+    const quantumRubrics = [];
+    const policyPrinciples = [];
+    const phrasingPatterns = [];
+    const bestPractices = [];
+
+    for (const note of styleNotes) {
+      bestPractices.push(note);
+      const lower = note.toLowerCase();
+      if (/cause|peril|mechanism|fire|water|temperature|contamination|damage|ingress/i.test(lower)) {
+        causeRules.push({
+          rule_type: "mechanism_testing",
+          guidance: note,
+          example_phrasing: note.slice(0, 180),
+        });
+      }
+      if (/quantum|calculate|adjustment|deduction|salvage|unit rate|deductible|repair|invoice|depreciation/i.test(lower)) {
+        quantumRubrics.push({
+          category: /deductible/i.test(lower) ? "deductible" : /salvage/i.test(lower) ? "salvage" : /repair/i.test(lower) ? "repair" : "damage",
+          decision_rule: note,
+          arithmetic_logic: "Deterministic calculation per source invoice rate and evidenced quantities",
+        });
+      }
+      if (/policy|warranty|exclusion|cover|condition precedent|insurable interest|operative wording/i.test(lower)) {
+        policyPrinciples.push({
+          provision_type: /warranty/i.test(lower) ? "warranty" : /exclusion/i.test(lower) ? "exclusion" : "condition",
+          interpretation_standard: note,
+        });
+      }
+      if (/phrasing|tone|narrative|concise|numbered adjuster|chronological|conclusion/i.test(lower)) {
+        phrasingPatterns.push({
+          section: /conclusion/i.test(lower) ? "conclusion" : "summary",
+          pattern: note,
+        });
+      }
+    }
+
+    let existingProfile = {
+      business_line: businessLine,
+      profile_id: `brain_${safeKey}`,
+      version: 1,
+      last_updated: new Date().toISOString(),
+      ingested_reports_count: 0,
+      cause_of_loss_rules: [],
+      quantum_adjustment_rubrics: [],
+      policy_application_principles: [],
+      adjuster_phrasing_and_tone: [],
+      distinctive_best_practices: [],
+    };
+
+    try {
+      const existingRaw = await fs.readFile(profilePath, "utf8");
+      existingProfile = JSON.parse(existingRaw);
+    } catch {
+      // Profile does not exist yet
+    }
+
+    const mergeArray = (existing = [], incoming = [], keyField = "guidance") => {
+      const seen = new Set(existing.map((item) => typeof item === "string" ? item : item[keyField] || JSON.stringify(item)));
+      const merged = [...existing];
+      for (const item of (incoming || [])) {
+        const key = typeof item === "string" ? item : item[keyField] || JSON.stringify(item);
+        if (!seen.has(key)) {
+          seen.add(key);
+          merged.push(item);
+        }
+      }
+      return merged;
+    };
+
+    existingProfile.business_line = businessLine;
+    existingProfile.profile_id = `brain_${safeKey}`;
+    existingProfile.last_updated = new Date().toISOString();
+    existingProfile.ingested_reports_count = Math.max(existingProfile.ingested_reports_count || 0, 1);
+    existingProfile.cause_of_loss_rules = mergeArray(existingProfile.cause_of_loss_rules, causeRules, "guidance");
+    existingProfile.quantum_adjustment_rubrics = mergeArray(existingProfile.quantum_adjustment_rubrics, quantumRubrics, "decision_rule");
+    existingProfile.policy_application_principles = mergeArray(existingProfile.policy_application_principles, policyPrinciples, "interpretation_standard");
+    existingProfile.adjuster_phrasing_and_tone = mergeArray(existingProfile.adjuster_phrasing_and_tone, phrasingPatterns, "pattern");
+    existingProfile.distinctive_best_practices = mergeArray(existingProfile.distinctive_best_practices, bestPractices);
+
+    await fs.writeFile(profilePath, JSON.stringify(existingProfile, null, 2), "utf8");
+
+    const claimId = `benchmark-${safeKey}`;
+    const claimNumber = `ULA-REF-${safeKey.toUpperCase()}`;
+    const alreadyLearned = manifest.learned_reports.some(
+      (r) => r.report_file_name === filename || r.claim_id === claimId
+    );
+    if (!alreadyLearned) {
+      manifest.learned_reports.unshift({
+        claim_id: claimId,
+        claim_number: claimNumber,
+        business_line: businessLine,
+        report_file_name: filename,
+        learned_at: new Date().toISOString(),
+        fingerprint: `benchmark_${safeKey}`,
+        provider: "ula_director",
+        model: "Director Approved Benchmark",
+      });
+    }
+    manifest.business_lines[businessLine] = Math.max(manifest.business_lines[businessLine] || 0, 1);
+    seededLines.push(businessLine);
+  }
+
+  manifest.total_learned_reports = manifest.learned_reports.length;
+  manifest.updated_at = new Date().toISOString();
+  await fs.writeFile(MANIFEST_PATH, JSON.stringify(manifest, null, 2), "utf8");
+
+  return {
+    success: true,
+    seeded_count: seededLines.length,
+    business_lines: seededLines,
+    total_learned_reports: manifest.total_learned_reports,
+  };
+}
+

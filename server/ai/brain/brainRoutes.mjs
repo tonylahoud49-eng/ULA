@@ -6,6 +6,7 @@ import {
   learnFromOfficialReport,
   purgeBrainProfile,
   removeBrainRule,
+  seedBrainWithApprovedReferences,
 } from "./brainEngine.mjs";
 import { extractEvidenceFile } from "../../evidence/extractEvidence.mjs";
 
@@ -67,7 +68,13 @@ export function createBrainRouter() {
       try {
         claim = typeof req.body?.claim === "string" ? JSON.parse(req.body.claim) : (req.body?.claim || {});
       } catch {
-        return res.status(400).json({ error: "Valid claim data is required.", code: "invalid-claim" });
+        claim = {};
+      }
+      if (!claim.title) {
+        claim.title = "Official Final Loss Adjuster Report";
+      }
+      if (!claim.business_line && req.body?.business_line) {
+        claim.business_line = req.body.business_line;
       }
 
       let evidence = [];
@@ -149,6 +156,27 @@ export function createBrainRouter() {
       return res.json({ ok: true, message: "Rule removed successfully.", ...result });
     } catch (error) {
       return res.status(500).json({ ok: false, error: error.message || "Failed to remove rule." });
+    }
+  });
+
+  /**
+   * POST /api/ai/brain/seed-benchmarks
+   * Seeds the 6 ULA Director approved reference profiles into the Brain store.
+   */
+  router.post("/seed-benchmarks", async (req, res) => {
+    try {
+      const result = await seedBrainWithApprovedReferences();
+      return res.json({
+        ok: true,
+        message: `Successfully seeded ${result.seeded_count} approved ULA Director reference profiles.`,
+        ...result,
+      });
+    } catch (error) {
+      console.error("[ULA Brain Seeding Error]", error);
+      return res.status(500).json({
+        ok: false,
+        error: error.message || "Failed to seed benchmark references.",
+      });
     }
   });
 

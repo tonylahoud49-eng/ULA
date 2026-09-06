@@ -174,12 +174,16 @@ export async function loadApprovedStyleReferences(directory) {
     }
   }
 
-  try {
-    const { getBrainStyleReferences } = await import("./brain/brainEngine.mjs");
-    const brainReferences = await getBrainStyleReferences();
-    references.push(...brainReferences);
-  } catch {
-    // Brain references optional if not initialized
+  const defaultDir = path.resolve(moduleDirectory, "references");
+  const isDefaultReferenceDir = directory && path.resolve(directory) === defaultDir;
+  if (isDefaultReferenceDir) {
+    try {
+      const { getBrainStyleReferences } = await import("./brain/brainEngine.mjs");
+      const brainReferences = await getBrainStyleReferences();
+      references.push(...brainReferences);
+    } catch {
+      // Brain references optional if not initialized
+    }
   }
 
   return references;

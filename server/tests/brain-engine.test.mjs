@@ -5,6 +5,7 @@ import {
   getBrainManifest,
   sanitizeBrainKnowledge,
   getBrainStyleReferences,
+  seedBrainWithApprovedReferences,
 } from "../ai/brain/brainEngine.mjs";
 
 test("ensureBrainStorage and getBrainManifest initialize correctly", async () => {
@@ -48,5 +49,19 @@ test("getBrainStyleReferences returns array of style references", async () => {
     assert.equal(ref.source_role, "style_reference_only");
     assert.ok(ref.title);
   }
+});
+
+test("seedBrainWithApprovedReferences loads the 6 ULA reference profiles into brain", async () => {
+  const res = await seedBrainWithApprovedReferences();
+  assert.ok(res.success);
+  assert.equal(res.seeded_count, 6);
+
+  const manifest = await getBrainManifest();
+  assert.ok(manifest.total_learned_reports >= 6);
+  assert.ok(manifest.business_lines["Marine Cargo (Reefer)"] >= 1);
+  assert.ok(manifest.business_lines["Property"] >= 1);
+
+  const refs = await getBrainStyleReferences();
+  assert.ok(refs.length >= 6);
 });
 

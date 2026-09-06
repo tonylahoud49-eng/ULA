@@ -9,12 +9,32 @@ import {
 } from "@/components/ui/dialog";
 import { Button } from "@/components/ui/button";
 import { ScrollArea } from "@/components/ui/scroll-area";
-import { Brain, RefreshCw, Award, CheckCircle2, Zap, BookOpen, Trash2 } from "lucide-react";
+import {
+  Brain,
+  RefreshCw,
+  Award,
+  CheckCircle2,
+  Zap,
+  BookOpen,
+  Trash2,
+  Sparkles,
+  Upload,
+  HelpCircle,
+  ChevronDown,
+  ChevronUp,
+  FileCheck2,
+} from "lucide-react";
+import { useToast } from "@/components/ui/use-toast";
 
 export default function BrainKnowledgeModal({ triggerButton, open, onOpenChange }) {
   const [manifest, setManifest] = useState(null);
   const [profiles, setProfiles] = useState([]);
   const [loading, setLoading] = useState(false);
+  const [seeding, setSeeding] = useState(false);
+  const [uploading, setUploading] = useState(false);
+  const [selectedBusinessLine, setSelectedBusinessLine] = useState("Marine Cargo (Reefer)");
+  const [showHowItLearns, setShowHowItLearns] = useState(false);
+  const { toast } = useToast();
 
   const fetchBrainData = async () => {
     setLoading(true);
@@ -38,8 +58,80 @@ export default function BrainKnowledgeModal({ triggerButton, open, onOpenChange 
     }
   };
 
+  const handleSeedBenchmarks = async () => {
+    setSeeding(true);
+    try {
+      const res = await fetch("/api/ai/brain/seed-benchmarks", { method: "POST" });
+      const data = await res.json();
+      if (res.ok && data.ok) {
+        toast({
+          title: "🧠 Approved ULA Benchmarks Loaded",
+          description: `Successfully initialized ${data.seeded_count || 6} Director-approved playbooks across all business lines.`,
+        });
+        await fetchBrainData();
+      } else {
+        throw new Error(data.error || "Failed to seed benchmark playbooks.");
+      }
+    } catch (err) {
+      toast({
+        variant: "destructive",
+        title: "Benchmark Seeding Failed",
+        description: err.message || "Failed to load reference playbooks.",
+      });
+    } finally {
+      setSeeding(false);
+    }
+  };
+
+  const handleDirectUpload = async (e) => {
+    const file = e.target?.files?.[0];
+    if (!file) return;
+    setUploading(true);
+    try {
+      const form = new FormData();
+      form.append("file", file);
+      form.append(
+        "claim",
+        JSON.stringify({
+          title: file.name.replace(/\.[^/.]+$/, ""),
+          business_line: selectedBusinessLine,
+        })
+      );
+      form.append("business_line", selectedBusinessLine);
+      form.append("file_name", file.name);
+
+      const res = await fetch("/api/ai/brain/learn-report", {
+        method: "POST",
+        body: form,
+      });
+      const data = await res.json();
+      if (!res.ok || !data.ok) {
+        throw new Error(data.error || "Failed to ingest report.");
+      }
+
+      toast({
+        title: "🧠 Loss Adjuster Wisdom Learned",
+        description: `Extracted ${data.learned_items?.cause_rules || 0} cause standards and ${data.learned_items?.quantum_rubrics || 0} quantum rubrics for ${data.business_line}.`,
+      });
+      await fetchBrainData();
+    } catch (err) {
+      toast({
+        variant: "destructive",
+        title: "Report Ingestion Failed",
+        description: err.message || "Failed to analyze official report.",
+      });
+    } finally {
+      setUploading(false);
+      if (e.target) e.target.value = "";
+    }
+  };
+
   const handlePurgeProfile = async (businessLine) => {
-    if (!window.confirm(`Are you sure you want to purge all learned rules for "${businessLine}"? This action cannot be undone.`)) {
+    if (
+      !window.confirm(
+        `Are you sure you want to purge all learned rules for "${businessLine}"? This action cannot be undone.`
+      )
+    ) {
       return;
     }
     try {
@@ -60,28 +152,44 @@ export default function BrainKnowledgeModal({ triggerButton, open, onOpenChange 
   }, [open]);
 
   return (
-    <Dialog open={open} onOpenChange={(val) => {
-      if (onOpenChange) onOpenChange(val);
-      if (val) fetchBrainData();
-    }}>
+    <Dialog
+      open={open}
+      onOpenChange={(val) => {
+        if (onOpenChange) onOpenChange(val);
+        if (val) fetchBrainData();
+      }}
+    >
       {triggerButton && <DialogTrigger asChild>{triggerButton}</DialogTrigger>}
-      <DialogContent className="max-w-3xl max-h-[85vh] flex flex-col">
+      <DialogContent className="max-w-3xl max-h-[88vh] flex flex-col">
         <DialogHeader>
           <div className="flex items-center justify-between pr-6">
             <DialogTitle className="flex items-center gap-2 text-base font-semibold">
               <Brain className="h-5 w-5 text-primary animate-pulse" />
               Loss Adjuster Brain · Autonomous Learning Hub
             </DialogTitle>
-            <Button
-              variant="outline"
-              size="sm"
-              onClick={fetchBrainData}
-              disabled={loading}
-              className="h-8 gap-1 text-xs"
-            >
-              <RefreshCw className={`h-3.5 w-3.5 ${loading ? "animate-spin" : ""}`} />
-              Refresh
-            </Button>
+            <div className="flex items-center gap-2">
+              <Button
+                variant="default"
+                size="sm"
+                onClick={handleSeedBenchmarks}
+                disabled={seeding || loading}
+                className="h-8 gap-1.5 text-xs bg-primary text-primary-foreground hover:bg-primary/90 shadow-xs"
+                title="Seed 6 approved ULA Director reference playbooks"
+              >
+                <Sparkles className={`h-3.5 w-3.5 ${seeding ? "animate-spin" : ""}`} />
+                {seeding ? "Seeding..." : "Seed ULA Benchmarks"}
+              </Button>
+              <Button
+                variant="outline"
+                size="sm"
+                onClick={fetchBrainData}
+                disabled={loading}
+                className="h-8 gap-1 text-xs"
+              >
+                <RefreshCw className={`h-3.5 w-3.5 ${loading ? "animate-spin" : ""}`} />
+                Refresh
+              </Button>
+            </div>
           </div>
           <DialogDescription className="text-xs">
             Persistent loss adjuster intelligence distilled from certified official final reports. Adheres strictly to REPORT_SPEC.md non-leakage rules.
@@ -109,7 +217,89 @@ export default function BrainKnowledgeModal({ triggerButton, open, onOpenChange 
           </div>
         </div>
 
-        <ScrollArea className="flex-1 pr-4 max-h-[50vh]">
+        {/* Informational Accordion: When and How Does the Brain Learn */}
+        <div className="rounded-lg border border-primary/20 bg-primary/5 p-2.5">
+          <button
+            type="button"
+            onClick={() => setShowHowItLearns(!showHowItLearns)}
+            className="w-full flex items-center justify-between text-xs font-semibold text-primary hover:opacity-80 transition-opacity"
+          >
+            <span className="flex items-center gap-1.5">
+              <HelpCircle className="h-4 w-4 text-primary" />
+              When and how does the Brain fill and learn?
+            </span>
+            {showHowItLearns ? <ChevronUp className="h-4 w-4" /> : <ChevronDown className="h-4 w-4" />}
+          </button>
+          {showHowItLearns && (
+            <div className="pt-2 text-xs text-muted-foreground space-y-2 border-t border-primary/10 mt-2">
+              <div className="grid grid-cols-1 md:grid-cols-3 gap-2">
+                <div className="rounded border bg-background p-2 space-y-1">
+                  <p className="font-semibold text-foreground flex items-center gap-1">
+                    <FileCheck2 className="h-3.5 w-3.5 text-emerald-600" />
+                    1. On Report Upload
+                  </p>
+                  <p className="text-[0.72rem] leading-relaxed">
+                    Uploading a certified final report to any claim docket triggers AI extraction of cause reasoning and quantum rubrics, scrubbing all private claim facts per <code>docs/REPORT_SPEC.md</code>.
+                  </p>
+                </div>
+                <div className="rounded border bg-background p-2 space-y-1">
+                  <p className="font-semibold text-foreground flex items-center gap-1">
+                    <Sparkles className="h-3.5 w-3.5 text-primary" />
+                    2. ULA Benchmarks
+                  </p>
+                  <p className="text-[0.72rem] leading-relaxed">
+                    Click <strong>"Seed ULA Benchmarks"</strong> to instantly load the 6 Director-approved reference playbooks (Reefer, Cargo, Property, Bulk, Air, Land) with 0 API tokens.
+                  </p>
+                </div>
+                <div className="rounded border bg-background p-2 space-y-1">
+                  <p className="font-semibold text-foreground flex items-center gap-1">
+                    <Upload className="h-3.5 w-3.5 text-blue-600" />
+                    3. Direct In-Modal Upload
+                  </p>
+                  <p className="text-[0.72rem] leading-relaxed">
+                    Upload any certified final report (PDF/DOCX) right here to teach the Brain for a specific business line without needing an active claim.
+                  </p>
+                </div>
+              </div>
+            </div>
+          )}
+        </div>
+
+        {/* Direct In-Modal Upload Bar */}
+        <div className="rounded-lg border bg-muted/30 p-2.5 flex flex-wrap items-center justify-between gap-2 text-xs">
+          <div className="flex items-center gap-2">
+            <Upload className="h-4 w-4 text-primary" />
+            <span className="font-semibold">Teach Brain Directly:</span>
+            <select
+              value={selectedBusinessLine}
+              onChange={(e) => setSelectedBusinessLine(e.target.value)}
+              className="text-xs border rounded px-2 py-1 bg-background text-foreground shadow-xs"
+            >
+              <option value="Marine Cargo (Reefer)">Marine Cargo (Reefer)</option>
+              <option value="Marine Cargo (Non-Reefer)">Marine Cargo (Non-Reefer)</option>
+              <option value="Property">Property & Fire</option>
+              <option value="Bulk Vessels">Bulk Vessels</option>
+              <option value="Air Cargo">Air Cargo</option>
+              <option value="Land Transit">Land Transit</option>
+            </select>
+          </div>
+          <div className="flex items-center gap-2">
+            <input
+              type="file"
+              accept=".pdf,.docx,.txt"
+              disabled={uploading}
+              onChange={handleDirectUpload}
+              className="text-xs text-muted-foreground file:mr-2 file:py-1 file:px-2.5 file:rounded file:border-0 file:text-xs file:bg-primary/10 file:text-primary hover:file:bg-primary/20 cursor-pointer"
+            />
+            {uploading && (
+              <span className="text-xs text-primary animate-pulse flex items-center gap-1 font-medium">
+                <Brain className="h-3.5 w-3.5 animate-spin" /> Distilling...
+              </span>
+            )}
+          </div>
+        </div>
+
+        <ScrollArea className="flex-1 pr-4 max-h-[44vh]">
           <div className="space-y-4">
             <div>
               <h4 className="text-xs font-semibold text-muted-foreground uppercase flex items-center gap-1.5 mb-2">
@@ -117,9 +307,22 @@ export default function BrainKnowledgeModal({ triggerButton, open, onOpenChange 
                 Learned Loss Adjuster Playbooks
               </h4>
               {profiles.length === 0 ? (
-                <div className="rounded-lg border border-dashed p-6 text-center text-xs text-muted-foreground">
-                  <Brain className="h-8 w-8 mx-auto mb-2 opacity-30" />
-                  No loss adjuster playbooks generated yet. Upload an official final report to teach the Brain.
+                <div className="rounded-lg border border-dashed p-6 text-center text-xs text-muted-foreground space-y-3">
+                  <Brain className="h-8 w-8 mx-auto opacity-30 text-primary" />
+                  <div>
+                    <p className="font-semibold text-foreground">No loss adjuster playbooks generated yet</p>
+                    <p className="mt-0.5">Initialize with ULA's 6 Director-approved benchmark playbooks or upload an official final report above.</p>
+                  </div>
+                  <Button
+                    variant="default"
+                    size="sm"
+                    onClick={handleSeedBenchmarks}
+                    disabled={seeding || loading}
+                    className="gap-1.5 text-xs bg-primary text-primary-foreground"
+                  >
+                    <Sparkles className={`h-3.5 w-3.5 ${seeding ? "animate-spin" : ""}`} />
+                    Seed 6 Director Benchmarks
+                  </Button>
                 </div>
               ) : (
                 <div className="space-y-2.5">
