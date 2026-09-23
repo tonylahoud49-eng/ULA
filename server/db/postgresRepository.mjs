@@ -5,6 +5,9 @@ import { AuthError, createPasswordHash, publicUser, verifyPassword } from "../au
 
 const { Pool } = pg;
 
+export const POSTGRES_RUNTIME_ROLE_INSPECTION_QUERY =
+  "select current_user as role, rolsuper, rolbypassrls from pg_roles where rolname = current_user";
+
 const tables = Object.freeze({
   Employee: { table: "ula.employees", id: "id", userId: "user_id" },
   Claim: { table: "ula.claims", id: "id", ownerId: "owner_id", visibility: "visibility" },
@@ -277,10 +280,10 @@ export function createPostgresRepository({ connectionString = process.env.DATABA
       "report_versions",
     ];
     const protectedTables = ["app_settings", "audit_log", "claim_documents", "claims", "employees", "leave_requests", "report_versions"];
-    const roleResult = await pool.query("select current_user as role, rolsuper, rolbypassrl from pg_roles where rolname = current_user");
+    const roleResult = await pool.query(POSTGRES_RUNTIME_ROLE_INSPECTION_QUERY);
     const role = roleResult.rows[0];
     if (!role) throw new Error("The PostgreSQL runtime role could not be inspected.");
-    if (role.rolsuper || role.rolbypassrl) throw new Error("The PostgreSQL runtime role must not be superuser or BYPASSRLS.");
+    if (role.rolsuper || role.rolbypassrls) throw new Error("The PostgreSQL runtime role must not be superuser or BYPASSRLS.");
     const expectedRole = String(process.env.DATABASE_RUNTIME_ROLE || "").trim();
     if (expectedRole && role.role !== expectedRole) {
       throw new Error(`DATABASE_URL uses role ${role.role}; expected DATABASE_RUNTIME_ROLE ${expectedRole}.`);
