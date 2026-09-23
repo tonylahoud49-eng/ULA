@@ -4,11 +4,12 @@ import pg from "pg";
 import dotenv from "dotenv";
 
 dotenv.config();
-if (!process.env.DATABASE_URL) throw new Error("DATABASE_URL is required to run PostgreSQL migrations.");
+const migrationUrl = process.env.DATABASE_MIGRATION_URL || process.env.DATABASE_URL;
+if (!migrationUrl) throw new Error("DATABASE_MIGRATION_URL or DATABASE_URL is required to run PostgreSQL migrations.");
 
 const { Client } = pg;
 const client = new Client({
-  connectionString: process.env.DATABASE_URL,
+  connectionString: migrationUrl,
   ssl: process.env.DATABASE_SSL === "true" ? { rejectUnauthorized: true } : undefined,
 });
 const runtimeRole = process.env.DATABASE_RUNTIME_ROLE || "ula_app";

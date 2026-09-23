@@ -2,12 +2,14 @@ const DATABASE_NAME = "ula_claims_hub_documents_v1";
 const STORE_NAME = "documents";
 const IDB_REFERENCE_PREFIX = "idb-document:";
 const SERVER_REFERENCE_PREFIX = "server-document:";
+const serverBackendRequired = import.meta.env?.VITE_SQL_BACKEND === "true";
 
 export class DocumentStorageError extends Error {
-  constructor(message, code, cause) {
+  constructor(message, code, cause, status) {
     super(message, { cause });
     this.name = "DocumentStorageError";
     this.code = code;
+    this.status = status;
   }
 }
 
@@ -30,6 +32,16 @@ const createKey = () => {
 
 const referenceForIdb = (storageKey) => `${IDB_REFERENCE_PREFIX}${storageKey}`;
 const referenceForServer = (storageKey) => `${SERVER_REFERENCE_PREFIX}${storageKey}`;
+
+const responseError = async (response, action) => {
+  const body = await response.json().catch(() => ({}));
+  return new DocumentStorageError(
+    body.error || `Unable to ${action} the document (HTTP ${response.status}).`,
+    body.code || "server-storage-error",
+    undefined,
+    response.status,
+  );
+};
 
 const keyFromReference = (reference) => {
   if (!reference) return null;
@@ -125,9 +137,7 @@ const saveBlobToIdb = async (blob, metadata = {}) => {
 };
 
 export const documentStorage = {
-  /**
-   * Save a file to server disk storage (with fallback to IndexedDB).
-   */
+  /** Save a file to server storage, retaining IndexedDB only for local mode. */
   async save(file) {
     if (!(file instanceof Blob)) {
       throw new DocumentStorageError("A valid file is required.", "invalid-file");
@@ -140,6 +150,7 @@ export const documentStorage = {
 
       const res = await fetch("/api/documents/upload", {
         method: "POST",
+        credentials: "same-origin",
         body: formData,
       });
 
@@ -154,8 +165,9 @@ export const documentStorage = {
           url: data.file_url,
         };
       }
-    } catch {
-      // Server upload failed, fallback to IndexedDB
+      if (serverBackendRequired) throw await responseError(res, "save");
+    } catch (error) {
+      if (serverBackendRequired) throw normalizeError(error, "save");
     }
 
     return saveBlobToIdb(file, { name: file.name, mimeType: file.type });
@@ -177,7 +189,7 @@ export const documentStorage = {
 
     // 1. Try fetching from server disk storage
     try {
-      const res = await fetch(`/api/documents/file/${encodeURIComponent(key)}`);
+      const res = await fetch(`/api/documents/file/${encodeURIComponent(key)}`, { credentials: "same-origin" });
       if (res.ok) {
         const blob = await res.blob();
         return {
@@ -189,8 +201,9 @@ export const documentStorage = {
           updatedAt: new Date().toISOString(),
         };
       }
-    } catch {
-      // Continue to IndexedDB
+      if (serverBackendRequired) throw await responseError(res, "read");
+    } catch (error) {
+      if (serverBackendRequired) throw normalizeError(error, "read");
     }
 
     // 2. Try IndexedDB
@@ -243,9 +256,13 @@ export const documentStorage = {
     if (!key) return;
 
     try {
-      await fetch(`/api/documents/${encodeURIComponent(key)}`, { method: "DELETE" });
-    } catch {
-      // Continue
+      const response = await fetch(`/api/documents/${encodeURIComponent(key)}`, {
+        method: "DELETE",
+        credentials: "same-origin",
+      });
+      if (!response.ok && serverBackendRequired) throw await responseError(response, "delete");
+    } catch (error) {
+      if (serverBackendRequired) throw normalizeError(error, "delete");
     }
 
     try {

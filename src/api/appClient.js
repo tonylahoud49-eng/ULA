@@ -887,6 +887,13 @@ const auth = {
   },
 
   async register({ email, password }) {
+    if (useSqlApi) {
+      return remoteEntityRequest("/api/auth/register", {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ email, password }),
+      });
+    }
     await prepareDatabase();
     const normalizedEmail = normalizeEmail(email);
     const state = getMemoryAuth();
@@ -942,6 +949,13 @@ const auth = {
   },
 
   async loginWithProvider(provider, returnTo = "/", email, name) {
+    if (useSqlApi) {
+      return remoteEntityRequest("/api/auth/google", {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ provider, return_to: returnTo, email, name }),
+      });
+    }
     await prepareDatabase();
     const state = getMemoryAuth();
     const targetEmail = normalizeEmail(email || "local.user@ula.test");
@@ -1224,7 +1238,7 @@ const buildReport = async ({ claim_id: claimId, edited_data: editedData }) => {
   const claim = editedData ? { ...storedClaim, ...clone(editedData) } : storedClaim;
   const documents = await entities.ClaimDocument.filter({ claim_id: claimId });
   const versions = await entities.ReportVersion.filter({ claim_id: claimId });
-  const user = currentUser();
+  const user = await auth.me();
   const evidence = evidenceForDraft(claim.ai_analysis, documents);
   const unifiedDraft = createUnifiedReportDraft({
     claim,
@@ -1283,7 +1297,7 @@ const buildReport = async ({ claim_id: claimId, edited_data: editedData }) => {
     status: "Report Draft",
     normalized_claim_record: normalizedRecord,
   });
-  await persistMemoryDatabase();
+  if (!useSqlApi) await persistMemoryDatabase();
   return { data: { report, claim_id: claimId } };
 };
 
@@ -1376,6 +1390,16 @@ export const appClient = {
   integrations: {
     Core: {
       async UploadFile({ file }) {
+        if (useSqlApi) {
+          const stored = await documentStorage.save(file);
+          return {
+            file_url: stored.reference,
+            storage_key: stored.storageKey,
+            storage_provider: stored.storageProvider,
+            file_size: stored.size,
+            file_mime_type: stored.mimeType,
+          };
+        }
         await prepareDatabase();
         const stored = await documentStorage.save(file);
         const user = currentUser();
@@ -1390,6 +1414,10 @@ export const appClient = {
         };
       },
       async DeleteFile({ storage_key: storageKey, file_url: fileUrl }) {
+        if (useSqlApi) {
+          await documentStorage.delete(storageKey || fileUrl);
+          return;
+        }
         await prepareDatabase();
         const user = currentUser();
         await documentStorage.delete(storageKey || fileUrl);
@@ -1433,7 +1461,12 @@ export const appClient = {
     async getInfo(handle) {
       if (!handle) throw createError("This authorization link is invalid or expired", 400);
       let authenticated = true;
-      try { currentUser(); } catch { authenticated = false; }
+      try {
+        if (useSqlApi) await auth.me();
+        else currentUser();
+      } catch {
+        authenticated = false;
+      }
       return {
         authenticated,
         login_path: "/login",

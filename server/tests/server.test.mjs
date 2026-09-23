@@ -225,6 +225,7 @@ test("regression: closed debug output does not turn a valid mocked Claude analys
       body: buildForm(preflightBody.preflight_token),
     });
     const body = await response.json();
+    assert.ok(anthropicRequest, `Expected one Anthropic request, received HTTP ${response.status}: ${JSON.stringify(body)}`);
     const providerBody = JSON.parse(anthropicRequest.body);
 
     assert.equal(response.status, 200);

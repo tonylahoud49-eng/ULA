@@ -53,6 +53,19 @@ const detailTable = (rows) => `<table style="border-collapse:collapse;width:100%
 const shell = (title, introduction, table, link) => `<!doctype html><html><body style="font-family:Arial,sans-serif;color:#18212b;line-height:1.45"><h2>${escapeHtml(title)}</h2><p>${escapeHtml(introduction)}</p>${table}<p><a href="${escapeHtml(link)}" style="display:inline-block;padding:10px 16px;background:#0b4b78;color:#fff;text-decoration:none;border-radius:4px">Open request in ULA (Feature yet to come)</a></p><p style="color:#667085;font-size:12px">Automated notification from the ULA Annual Leave / TOIL system.</p></body></html>`;
 
 const defaultState = () => ({ events: {} });
+const defaultNotificationSettings = Object.freeze({
+  enabled: true,
+  routing_mode: "extended",
+  hr_email: "",
+  cc_hr_on_approval: false,
+  cc_manager_on_submission: true,
+});
+
+const notificationSettings = (value = {}) => ({
+  ...defaultNotificationSettings,
+  ...value,
+  routing_mode: value.routing_mode === "simple" ? "simple" : "extended",
+});
 
 const getProviderType = (env = process.env) => {
   const explicit = String(env.LEAVE_EMAIL_PROVIDER || "").trim().toLowerCase();
@@ -114,7 +127,7 @@ export function createLeaveEmailService({
     };
   };
 
-  const buildMessage = ({ event_type: eventType, leave, employee }) => {
+  const buildMessage = ({ event_type: eventType, leave, employee }, settings) => {
     const baseUrl = String(env.APP_BASE_URL).replace(/\/+$/, "");
     const link = `${baseUrl}/annual-leave?request=${encodeURIComponent(leave.id)}`;
     const current = eventType === "submitted" ? leave.submission_balance_snapshot : balances(employee);
@@ -157,7 +170,9 @@ export function createLeaveEmailService({
         : `A new leave request (${leave.leave_type}) has been saved with Pending status.`;
       return {
         to: String(env.LEAVE_ADMIN_EMAIL).trim(),
-        cc: String(env.LEAVE_ADMIN_CC_EMAIL || "").trim() || null,
+        cc: settings.routing_mode === "extended" && settings.cc_manager_on_submission
+          ? String(env.LEAVE_ADMIN_CC_EMAIL || "").trim() || null
+          : null,
         toName: "Leave Administrator",
         subject: subTitle,
         html: shell(isClaim ? "TOIL overtime claim awaiting review" : "Leave request awaiting review", intro, detailTable(rows), link),
@@ -186,6 +201,9 @@ export function createLeaveEmailService({
 
     return {
       to: employee.email,
+      cc: approved && settings.routing_mode === "extended" && settings.cc_hr_on_approval
+        ? String(settings.hr_email || "").trim() || null
+        : null,
       toName: employee.name || leave.employee_name,
       subject: outcomeSubject,
       html: shell(
@@ -198,7 +216,7 @@ export function createLeaveEmailService({
     };
   };
 
-  const sendEvent = (rawEvent) => withLock(async () => {
+  const sendEvent = (rawEvent, options = {}) => withLock(async () => {
     const parsed = eventSchema.safeParse(rawEvent);
     if (!parsed.success) {
       const error = new Error(`Invalid leave email event: ${parsed.error.issues.map((issue) => issue.message).join("; ")}`);
@@ -207,6 +225,7 @@ export function createLeaveEmailService({
       throw error;
     }
     const event = parsed.data;
+    const settings = notificationSettings(options.settings);
     const expectedKey = `leave:${event.leave.id}:${event.event_type}`;
     if (event.idempotency_key !== expectedKey) {
       const error = new Error("The leave email idempotency key does not match the request event.");
@@ -225,6 +244,15 @@ export function createLeaveEmailService({
       error.status = 409;
       error.code = "leave-event-state-mismatch";
       throw error;
+    }
+    if (!settings.enabled) {
+      return {
+        status: "disabled",
+        skipped: true,
+        attempts: 0,
+        idempotency_key: event.idempotency_key,
+        updated_at: new Date().toISOString(),
+      };
     }
     const configuration = getStatus();
     const provider = configuration.provider;
@@ -250,7 +278,7 @@ export function createLeaveEmailService({
       const client = provider === "emailjs"
         ? createEmailJSMailClient({ env, fetchImpl, wait })
         : createMicrosoftGraphMailClient({ env, fetchImpl, wait });
-      const result = await client.sendMail({ ...buildMessage(event), idempotencyKey: event.idempotency_key });
+      const result = await client.sendMail({ ...buildMessage(event, settings), idempotencyKey: event.idempotency_key });
       const delivery = { ...result, attempts, idempotency_key: event.idempotency_key, sent_at: new Date().toISOString(), updated_at: new Date().toISOString() };
       state.events[event.idempotency_key] = delivery;
       await writeState(state);

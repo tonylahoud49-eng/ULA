@@ -84,12 +84,15 @@ Optional approved report-style manifests can be loaded through `ULA_REPORT_REFER
 
 ## Multi-User Internal Deployment & Persistence
 
-The application is configured for multi-user collaboration over a local internal network or private server:
+Production is a server-backed multi-user application:
 
-- **Shared Disk Persistence (`server/db/diskDb.mjs`)**:
-  - Claims, uploaded physical documents (PDF/DOCX/XLSX/images), generated loss adjusters' report versions, and employee leave records are persisted directly to the shared backend disk (`/.data/claims_db.json`, `/.data/auth_db.json`, and `/.data/uploads/`).
-  - All users accessing the application on the local network see, edit, and share the exact same claims repository and uploaded files.
-  - Browser localStorage and IndexedDB serve as local caches and offline fallback.
+- PostgreSQL stores accounts, sessions, claims, document metadata, report versions, employees, leave requests, shared settings, and append-only audit history.
+- Row-level security protects private claims and employee records. The runtime role must not own the protected tables or have `SUPERUSER` or `BYPASSRLS`.
+- Uploaded physical documents remain under `.data/uploads` on the application server and must be included in backups.
+- A production build requires `VITE_SQL_BACKEND=true`; server-backed mode never falls back to browser IndexedDB after a server storage error.
+- JSON and browser persistence remain available only for local development. `NODE_ENV=production` refuses to start without PostgreSQL.
+
+See `docs/WINDOWS_PRODUCTION_DEPLOYMENT.md` for the Windows cutover and legacy-data import procedure.
 
 - **Team Members & Authentication**:
   - Pre-seeded with 7 official ULA team members:
@@ -107,7 +110,7 @@ The application is configured for multi-user collaboration over a local internal
   - Configured with OpenRouter (`openrouter/auto`, `meta-llama/llama-3.3-70b-instruct`, `deepseek/deepseek-chat`), Groq (`openai/gpt-oss-120b`), Anthropic (`claude-sonnet-4-6`), and Gemini (`gemini-2.5-flash`).
   - Includes a 10-second fast reachability timeout and automatic grounding source verification to prevent false field withholding.
 
-### Starting the Server for the Team
+### Starting the Server for Local Development
 
 ```bash
 # 1. Install dependencies (if fresh clone)
@@ -116,11 +119,11 @@ npm install
 # 2. Seed default users and employees
 npm run seed
 
-# 3. Start the combined API & Frontend server
+# 3. Start the local API and Vite client
 npm run dev
-# Or for production server:
-npm run build && npm start
 ```
+
+For production, apply the PostgreSQL migrations, import the reviewed legacy snapshot, build, run `npm run production:check`, and then start the Windows service.
 
 ## Email notifications for Annual Leave / TOIL
 

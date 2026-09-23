@@ -41,6 +41,7 @@ export function NotificationSettingsDialog({ triggerButton }) {
   const [open, setOpen] = useState(false);
   const [diagnostics, setDiagnostics] = useState(null);
   const [settings, setSettings] = useState(getStoredNotificationSettings);
+  const [saving, setSaving] = useState(false);
 
   const fetchDiagnostics = async () => {
     try {
@@ -55,16 +56,43 @@ export function NotificationSettingsDialog({ triggerButton }) {
     if (open) {
       setSettings(getStoredNotificationSettings());
       fetchDiagnostics();
+      fetch("/api/settings/leave-notifications", { credentials: "same-origin" })
+        .then(async (response) => {
+          if (!response.ok) throw new Error("Notification settings could not be loaded.");
+          return response.json();
+        })
+        .then((saved) => setSettings(saved))
+        .catch(() => {});
     }
   }, [open]);
 
-  const handleSave = () => {
-    localStorage.setItem(SETTINGS_KEY, JSON.stringify(settings));
-    toast({
-      title: "Notification Settings Saved",
-      description: `Routing mode set to ${settings.routing_mode === "extended" ? "Manager & HR CC" : "Simple 1-to-1"}.`,
-    });
-    setOpen(false);
+  const handleSave = async () => {
+    setSaving(true);
+    try {
+      const response = await fetch("/api/settings/leave-notifications", {
+        method: "PUT",
+        credentials: "same-origin",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify(settings),
+      });
+      const body = await response.json().catch(() => ({}));
+      if (!response.ok) throw new Error(body.error || "Notification settings could not be saved.");
+      localStorage.setItem(SETTINGS_KEY, JSON.stringify(body));
+      setSettings(body);
+      toast({
+        title: "Notification Settings Saved",
+        description: `Routing mode set to ${body.routing_mode === "extended" ? "Manager & HR CC" : "Simple 1-to-1"}.`,
+      });
+      setOpen(false);
+    } catch (error) {
+      toast({
+        title: "Notification settings were not saved",
+        description: error.message,
+        variant: "destructive",
+      });
+    } finally {
+      setSaving(false);
+    }
   };
 
   return (
@@ -206,9 +234,9 @@ export function NotificationSettingsDialog({ triggerButton }) {
           <Button variant="ghost" size="sm" onClick={() => setOpen(false)} className="h-8 text-xs">
             Cancel
           </Button>
-          <Button size="sm" onClick={handleSave} className="h-8 text-xs gap-1.5 bg-primary text-primary-foreground">
+          <Button size="sm" onClick={handleSave} disabled={saving} className="h-8 text-xs gap-1.5 bg-primary text-primary-foreground">
             <Save className="w-3.5 h-3.5" />
-            <span>Save Settings</span>
+            <span>{saving ? "Saving..." : "Save Settings"}</span>
           </Button>
         </DialogFooter>
       </DialogContent>

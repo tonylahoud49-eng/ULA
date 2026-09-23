@@ -191,11 +191,41 @@ test("leaveEmailService sends decision email to employee via EmailJS", async () 
     employee: sampleEmployee(),
   };
 
-  const delivery = await service.sendEvent(event);
+  const delivery = await service.sendEvent(event, {
+    settings: {
+      enabled: true,
+      routing_mode: "extended",
+      hr_email: "hr@company.com",
+      cc_hr_on_approval: true,
+      cc_manager_on_submission: true,
+    },
+  });
   assert.equal(delivery.status, "sent");
   assert.equal(sentPayload.template_params.to_email, "sarah@company.com");
+  assert.equal(sentPayload.template_params.cc_email, "hr@company.com");
   assert.equal(sentPayload.template_params.decision, "Approved");
   assert.match(sentPayload.template_params.message_html, /Request Approved/i);
 
   await fs.rm(temporaryDirectory, { recursive: true, force: true });
+});
+
+test("leaveEmailService skips dispatch when shared notification settings disable email", async () => {
+  let requests = 0;
+  const service = createLeaveEmailService({
+    env: VALID_EMAILJS_ENV,
+    fetchImpl: async () => {
+      requests += 1;
+      return new Response("OK", { status: 200 });
+    },
+  });
+  const delivery = await service.sendEvent({
+    event_type: "submitted",
+    idempotency_key: "leave:req-emailjs-001:submitted",
+    leave: sampleLeave(),
+    employee: sampleEmployee(),
+  }, { settings: { enabled: false } });
+
+  assert.equal(delivery.status, "disabled");
+  assert.equal(delivery.skipped, true);
+  assert.equal(requests, 0);
 });

@@ -342,7 +342,12 @@ function LeaveRequestDialog({ employees, currentUser, onCreated }) {
       onCreated();
       setForm({ employee_id: defaultEmpId, leave_type: "Annual Leave", start_date: "", end_date: "", note: "" });
       setEmployeeEmail("");
-      if (result.data?.email_error) {
+      if (result.data?.delivery?.status === "disabled") {
+        toast({
+          title: form.leave_type === "TOIL Claim" ? "TOIL Claim Saved" : "Leave Request Saved",
+          description: "The request was saved as Pending. Automated leave emails are currently disabled.",
+        });
+      } else if (result.data?.email_error) {
         toast({
           title: form.leave_type === "TOIL Claim" ? "TOIL Claim Saved (Email Degraded)" : "Leave Saved (Email Degraded)",
           description: `Request saved with Pending status, but notification email could not be sent: ${result.data.email_error}`,

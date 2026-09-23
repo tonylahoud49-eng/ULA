@@ -30,7 +30,9 @@ import { assertReportCanBeIssued } from "../src/lib/reportEvidenceGate.js";
 const serverFile = fileURLToPath(import.meta.url);
 const root = path.resolve(path.dirname(serverFile), "..");
 const serverEnvPath = path.join(root, ".env");
-const shouldLoadDotenv = process.env.NODE_ENV !== "test";
+const isTestRuntime = process.env.NODE_ENV === "test"
+  || process.argv.some((argument) => /(?:^|[\\/])[^\\/]+\.test\.mjs$/i.test(argument));
+const shouldLoadDotenv = !isTestRuntime;
 
 function loadServerEnv({ override = false } = {}) {
   if (!shouldLoadDotenv) return;
@@ -97,7 +99,7 @@ const getLeaveEmailService = () => {
 };
 const anthropicAnalysisRequests = new Map();
 const anthropicAnalysisCacheMs = Number(process.env.ANTHROPIC_DUPLICATE_CACHE_MS || 10 * 60 * 1000);
-const analysisResultStore = process.env.NODE_ENV === "test" ? null
+const analysisResultStore = isTestRuntime ? null
   : createAnalysisResultStore(path.join(root, ".data", "ai-analysis-results"));
 
 app.disable("x-powered-by");
@@ -119,15 +121,26 @@ const diskStorage = multer.diskStorage({
   },
 });
 const diskUpload = multer({ storage: diskStorage, limits: { fileSize: maxFileBytes, files: maxFiles } });
+const pendingUploads = new Map();
 
 const sendRepositoryError = (response, error) => response.status(Number(error.status) || 500).json({
   error: error.message || "The request could not be completed.",
   code: error.code || "database-error",
 });
+const storageKeyForDocument = (document) => {
+  const raw = String(document?.storage_key || document?.file_url || "");
+  const withoutPrefix = raw
+    .replace(/^server-document:/, "")
+    .replace(/^\/api\/documents\/file\//, "");
+  return withoutPrefix ? path.basename(withoutPrefix) : "";
+};
 // The JSON/local development adapter has no server session.  Production always
 // requires PostgreSQL and therefore always enforces the authenticated path.
 const requireDocumentAccess = (request, response, next) => postgresRepository
   ? authHttp.requireAuth(request, response, next)
+  : next();
+const requireBackendAdmin = (request, response, next) => postgresRepository
+  ? authHttp.requireAuth(request, response, () => authHttp.requireAdmin(request, response, next))
   : next();
 
 // --- Entity REST Endpoints ---
@@ -138,8 +151,12 @@ app.get("/api/entities/:entity", requireDocumentAccess, async (request, response
   }
   try {
     if (postgresRepository) {
-      const query = Object.fromEntries(Object.entries(request.query || {}).filter(([, value]) => value !== undefined && value !== ""));
-      return response.json(Object.keys(query).length ? await postgresRepository.filter(entity, query, request.authUser) : await postgresRepository.list(entity, request.authUser));
+      const { sort, limit, ...rawFilters } = request.query || {};
+      const filters = Object.fromEntries(Object.entries(rawFilters).filter(([, value]) => value !== undefined && value !== ""));
+      const options = { sort, limit };
+      return response.json(Object.keys(filters).length
+        ? await postgresRepository.filter(entity, filters, request.authUser, options)
+        : await postgresRepository.list(entity, request.authUser, options));
     }
     const { sort, limit, ...filters } = request.query || {};
     let items = diskDb.list(entity, filters);
@@ -185,7 +202,11 @@ app.post("/api/entities/:entity", requireDocumentAccess, async (request, respons
   }
   try {
     if (entity === "ReportVersion") assertReportCanBeIssued(request.body || {});
-    if (postgresRepository) return response.status(201).json(await postgresRepository.create(entity, request.body || {}, request.authUser));
+    if (postgresRepository) {
+      const created = await postgresRepository.create(entity, request.body || {}, request.authUser);
+      if (entity === "ClaimDocument") pendingUploads.delete(storageKeyForDocument(created));
+      return response.status(201).json(created);
+    }
     const created = diskDb.create(entity, request.body || {});
     return response.status(201).json(created);
   } catch (err) {
@@ -223,6 +244,17 @@ app.delete("/api/entities/:entity/:id", requireDocumentAccess, async (request, r
   try {
     if (postgresRepository) {
       const deleted = await postgresRepository.remove(entity, id, request.authUser);
+      if (deleted && entity === "ClaimDocument") {
+        const storageKey = storageKeyForDocument(deleted);
+        if (storageKey) {
+          const filePath = path.join(UPLOADS_DIR, storageKey);
+          try {
+            if (fs.existsSync(filePath)) fs.unlinkSync(filePath);
+          } catch (error) {
+            console.error(`[DocumentStorage] Metadata was deleted but ${storageKey} could not be removed: ${error.message}`);
+          }
+        }
+      }
       return deleted ? response.json(deleted) : response.status(404).json({ error: "Not found" });
     }
     const deleted = diskDb.delete(entity, id);
@@ -255,6 +287,7 @@ app.post("/api/documents/upload", requireDocumentAccess, diskUpload.single("file
   if (postgresRepository) {
     try {
       await postgresRepository.recordActivity(request.authUser, "upload:stored", "DocumentStorage", { id: storageKey, file_name: originalname }, null, { size, mime_type: mimetype });
+      pendingUploads.set(storageKey, request.authUser.id);
     } catch (error) {
       fs.unlink(path.join(UPLOADS_DIR, filename), () => {});
       return sendRepositoryError(response, error);
@@ -338,9 +371,13 @@ app.delete("/api/documents/:key", requireDocumentAccess, (request, response) => 
   const filePath = path.join(UPLOADS_DIR, safeKey);
 
   try {
+    if (postgresRepository && pendingUploads.get(safeKey) !== request.authUser.id) {
+      return response.status(403).json({ error: "This upload cannot be deleted through the temporary-file endpoint.", code: "document-delete-forbidden" });
+    }
     if (fs.existsSync(filePath)) {
       fs.unlinkSync(filePath);
     }
+    pendingUploads.delete(safeKey);
     return response.json({ ok: true, deleted: safeKey });
   } catch (err) {
     return response.status(500).json({ error: err.message });
@@ -350,7 +387,8 @@ app.delete("/api/documents/:key", requireDocumentAccess, (request, response) => 
 const deliverLeaveNotification = async ({ leave, employee, target, actor }) => {
   const event = eventForLeave(leave, target);
   try {
-    const delivery = await getLeaveEmailService().sendEvent({ ...event, leave, employee });
+    const settings = await postgresRepository.getSetting("leave_notifications", actor);
+    const delivery = await getLeaveEmailService().sendEvent({ ...event, leave, employee }, { settings });
     const updated = await postgresRepository.recordLeaveDelivery(leave.id, target, delivery, actor);
     return { leave: updated, delivery, email_error: null };
   } catch (error) {
@@ -404,6 +442,49 @@ app.post("/api/leave/requests/:requestId/retry-email", authHttp.requireAuth, asy
     if (!employee) return response.status(404).json({ error: "Employee not found.", code: "employee-not-found" });
     const notified = await deliverLeaveNotification({ leave, employee, target, actor: request.authUser });
     return response.json({ request: notified.leave, employee, delivery: notified.delivery, email_error: notified.email_error });
+  } catch (error) {
+    return sendRepositoryError(response, error);
+  }
+});
+
+const defaultLeaveNotificationSettings = {
+  enabled: true,
+  routing_mode: "extended",
+  hr_email: "",
+  cc_hr_on_approval: false,
+  cc_manager_on_submission: true,
+};
+
+const normalizeLeaveNotificationSettings = (value = {}) => {
+  const routingMode = value.routing_mode === "extended" ? "extended" : "simple";
+  const hrEmail = String(value.hr_email || "").trim().toLowerCase();
+  if (hrEmail && !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(hrEmail)) {
+    throw Object.assign(new Error("Enter a valid HR notification email address."), { status: 400, code: "invalid-hr-email" });
+  }
+  return {
+    enabled: value.enabled !== false,
+    routing_mode: routingMode,
+    hr_email: hrEmail,
+    cc_hr_on_approval: routingMode === "extended" && value.cc_hr_on_approval === true,
+    cc_manager_on_submission: routingMode === "extended" && value.cc_manager_on_submission === true,
+  };
+};
+
+app.get("/api/settings/leave-notifications", requireBackendAdmin, async (request, response) => {
+  try {
+    if (!postgresRepository) return response.json(defaultLeaveNotificationSettings);
+    const saved = await postgresRepository.getSetting("leave_notifications", request.authUser);
+    return response.json(normalizeLeaveNotificationSettings(saved || defaultLeaveNotificationSettings));
+  } catch (error) {
+    return sendRepositoryError(response, error);
+  }
+});
+
+app.put("/api/settings/leave-notifications", requireBackendAdmin, async (request, response) => {
+  try {
+    const settings = normalizeLeaveNotificationSettings(request.body || {});
+    if (!postgresRepository) return response.json(settings);
+    return response.json(await postgresRepository.setSetting("leave_notifications", settings, request.authUser));
   } catch (error) {
     return sendRepositoryError(response, error);
   }
@@ -505,7 +586,7 @@ app.delete("/api/ai/logs", authHttp.requireAuth, authHttp.requireAdmin, (_reques
 app.get("/api/health", async (_request, response) => {
   if (!postgresRepository) return response.json({ ok: true, storage: "local" });
   try {
-    await postgresRepository.healthy();
+    await postgresRepository.assertProductionReady();
     return response.json({ ok: true, storage: "postgresql" });
   } catch {
     return response.status(503).json({ ok: false, storage: "postgresql" });
@@ -640,7 +721,7 @@ app.get("/api/ai/billing-history", async (request, response) => {
   }
 });
 
-app.delete("/api/ai/billing-history", (_request, response) => {
+app.delete("/api/ai/billing-history", requireBackendAdmin, (_request, response) => {
   for (let i = AI_LOGS.length - 1; i >= 0; i--) {
     if (AI_LOGS[i]?.data?.usage || AI_LOGS[i]?.data?.type === "ai_analysis_completed") {
       AI_LOGS.splice(i, 1);
@@ -649,9 +730,9 @@ app.delete("/api/ai/billing-history", (_request, response) => {
   persistAiLogs();
   return response.json({ ok: true });
 });
-app.get("/api/leave/email/status", (_request, response) => response.json(getLeaveEmailService().getStatus()));
-app.get("/api/email/diagnostics", (_request, response) => {
-  dotenv.config({ override: true });
+app.get("/api/leave/email/status", requireBackendAdmin, (_request, response) => response.json(getLeaveEmailService().getStatus()));
+app.get("/api/email/diagnostics", requireBackendAdmin, (_request, response) => {
+  dotenv.config();
   return response.json(getEmailDiagnosticsStatus(process.env));
 });
 
@@ -661,7 +742,7 @@ app.post("/api/ai/test-chat", async (request, response) => {
   const signal = AbortSignal.timeout(15_000);
 
   try {
-    dotenv.config({ override: true });
+    dotenv.config();
     let reply = "";
     let routedModel = model;
     let usage = null;
@@ -761,9 +842,9 @@ app.post("/api/ai/test-chat", async (request, response) => {
   }
 });
 
-app.post("/api/email/test", async (request, response) => {
+app.post("/api/email/test", requireBackendAdmin, async (request, response) => {
   try {
-    dotenv.config({ override: true });
+    dotenv.config();
     const configuredBaseUrl = String(process.env.APP_BASE_URL || "").trim();
     const requestOrigin = request.get("origin");
     if (configuredBaseUrl && requestOrigin) {
@@ -801,7 +882,7 @@ function anthropicPreflightFailure(response, error) {
 
 app.post("/api/ai/connectivity", async (_request, response) => {
   try {
-    loadServerEnv({ override: true });
+    loadServerEnv();
     const connectivity = await testAnthropicConnectivity();
     return response.json({ ok: true, server_running: true, connectivity });
   } catch (error) {
@@ -811,7 +892,7 @@ app.post("/api/ai/connectivity", async (_request, response) => {
 
 app.post("/api/ai/preflight", upload.array("files", maxFiles), async (request, response) => {
   try {
-    loadServerEnv({ override: true });
+    loadServerEnv();
     const configuration = validateAnthropicConfiguration();
     const requestedProvider = String(request.body?.provider || "anthropic").toLowerCase();
     const requestedModel = String(request.body?.model || configuration.model);
@@ -906,7 +987,7 @@ app.post("/api/ai/analyze", upload.array("files", maxFiles), async (request, res
   let anthropicFingerprint = null;
   let preflightEvidence = null;
   try {
-    loadServerEnv({ override: true });
+    loadServerEnv();
     const requestedProvider = request.body?.provider || undefined;
     const requestedModel = request.body?.model || undefined;
     const isAnthropicRequest = String(requestedProvider || process.env.AI_PROVIDER || "").toLowerCase() === "anthropic";
@@ -1140,6 +1221,7 @@ if (fs.existsSync(dist)) {
 }
 
 if (process.argv[1] && path.resolve(process.argv[1]) === path.resolve(serverFile)) {
+  if (process.env.NODE_ENV === "production") await postgresRepository.assertProductionReady();
   app.listen(port, host, () => {
     console.log(`ULA application server listening on http://${host}:${port}`);
   });

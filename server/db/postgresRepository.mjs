@@ -23,6 +23,20 @@ const tableFor = (entity) => {
   return table;
 };
 
+const queryOptions = (options = {}, { audit = false } = {}) => {
+  const rawSort = String(options.sort || "");
+  const descending = rawSort.startsWith("-");
+  const field = descending ? rawSort.slice(1) : rawSort;
+  const sortColumns = audit
+    ? { timestamp: "occurred_at", occurred_at: "occurred_at" }
+    : { created_date: "created_at", created_at: "created_at", updated_date: "updated_at", updated_at: "updated_at" };
+  const column = sortColumns[field] || (audit ? "occurred_at" : "created_at");
+  const direction = rawSort ? (descending ? "desc" : "asc") : "desc";
+  const requestedLimit = Number(options.limit);
+  const limit = Number.isFinite(requestedLimit) ? Math.min(1000, Math.max(0, Math.floor(requestedLimit))) : 1000;
+  return { column, direction, limit };
+};
+
 const rowData = (row) => ({
   ...(row.data || {}),
   id: row.id,
@@ -75,13 +89,15 @@ export function createPostgresRepository({ connectionString = process.env.DATABA
     };
   };
 
-  const list = (entity, actor) => withActor(actor, async (client) => {
+  const list = (entity, actor, options = {}) => withActor(actor, async (client) => {
     const definition = tableFor(entity);
     if (entity === "AuditLog") {
-      const { rows } = await client.query("select id, actor_id, actor_role, action, entity, record_id, record_label, before_value, after_value, occurred_at from ula.audit_log order by occurred_at desc limit 1000");
+      const order = queryOptions(options, { audit: true });
+      const { rows } = await client.query(`select id, actor_id, actor_role, action, entity, record_id, record_label, before_value, after_value, occurred_at from ula.audit_log order by ${order.column} ${order.direction} limit $1`, [order.limit]);
       return rows.map((row) => ({ ...row, timestamp: row.occurred_at, before: row.before_value, after: row.after_value }));
     }
-    const { rows } = await client.query(`select * from ${definition.table} order by created_at desc limit 1000`);
+    const order = queryOptions(options);
+    const { rows } = await client.query(`select * from ${definition.table} order by ${order.column} ${order.direction} limit $1`, [order.limit]);
     const result = rows.map(rowData);
     await audit(client, actor, "read:list", entity, null, null, { count: result.length });
     return result;
@@ -96,13 +112,20 @@ export function createPostgresRepository({ connectionString = process.env.DATABA
     return result;
   });
 
-  const filter = (entity, criteria, actor) => withActor(actor, async (client) => {
+  const filter = (entity, criteria, actor, options = {}) => withActor(actor, async (client) => {
     const definition = tableFor(entity);
-    if (entity === "AuditLog") return list(entity, actor);
+    if (entity === "AuditLog") {
+      const order = queryOptions(options, { audit: true });
+      const { rows } = await client.query(`select id, actor_id, actor_role, action, entity, record_id, record_label, before_value, after_value, occurred_at from ula.audit_log order by ${order.column} ${order.direction} limit $1`, [order.limit]);
+      return rows.map((row) => ({ ...row, timestamp: row.occurred_at, before: row.before_value, after: row.after_value }));
+    }
     const supported = ["claim_id", "employee_id", "status"];
     const entries = Object.entries(criteria || {}).filter(([key]) => supported.includes(key));
     const clauses = entries.map(([key], index) => key === "status" ? `data->>'status' = $${index + 1}` : `${key} = $${index + 1}`);
-    const { rows } = await client.query(`select * from ${definition.table}${clauses.length ? ` where ${clauses.join(" and ")}` : ""} order by created_at desc limit 1000`, entries.map(([, value]) => value));
+    const order = queryOptions(options);
+    const params = entries.map(([, value]) => value);
+    params.push(order.limit);
+    const { rows } = await client.query(`select * from ${definition.table}${clauses.length ? ` where ${clauses.join(" and ")}` : ""} order by ${order.column} ${order.direction} limit $${params.length}`, params);
     const result = rows.map(rowData);
     await audit(client, actor, "read:filter", entity, null, null, { criteria: clone(criteria), count: result.length });
     return result;
@@ -180,9 +203,14 @@ export function createPostgresRepository({ connectionString = process.env.DATABA
     const result = createPendingLeave(state, values || {}, { id: String(values?.request_id || crypto.randomUUID()) });
     if (!result.created) return { ...result, leave: clone(result.leave), employee: clone(result.employee) };
     const leave = result.leave;
+    const employeeUserId = String(result.employee.user_id || result.employee.account_id || "");
+    if (!employeeUserId) throw badRequest("The employee does not have an application account.", "employee-account-required", 409);
+    if (actor.role !== "admin" && employeeUserId !== actor.id) {
+      throw badRequest("You can submit leave requests only for yourself.", "leave-self-service-only", 403);
+    }
     const { rows } = await client.query(
       "insert into ula.leave_requests (id, employee_id, user_id, data) values ($1,$2,$3,$4) returning *",
-      [leave.id, leave.employee_id, actor.id, leave],
+      [leave.id, leave.employee_id, employeeUserId, { ...leave, user_id: employeeUserId }],
     );
     return { ...result, leave: rowData(rows[0]), employee: clone(result.employee) };
   });
@@ -220,6 +248,62 @@ export function createPostgresRepository({ connectionString = process.env.DATABA
   const recordActivity = (actor, action, entity, record, before = null, after = null) => withActor(actor, async (client) => {
     await audit(client, actor, action, entity, record, before, after);
   });
+
+  const getSetting = (key, actor) => withActor(actor, async (client) => {
+    const { rows } = await client.query("select data from ula.app_settings where key = $1", [String(key)]);
+    return rows[0]?.data ? clone(rows[0].data) : null;
+  });
+
+  const setSetting = (key, data, actor) => withActor(actor, async (client) => {
+    if (actor.role !== "admin") throw badRequest("Administrator access is required.", "admin-required", 403);
+    const { rows } = await client.query(
+      "insert into ula.app_settings (key, data, updated_by) values ($1,$2,$3) on conflict (key) do update set data = excluded.data, updated_by = excluded.updated_by, updated_at = now() returning data",
+      [String(key), clone(data), actor.id],
+    );
+    return clone(rows[0].data);
+  });
+
+  const assertProductionReady = async () => {
+    const requiredTables = [
+      "app_settings",
+      "audit_log",
+      "auth_sessions",
+      "auth_users",
+      "claim_documents",
+      "claims",
+      "employees",
+      "leave_requests",
+      "password_reset_requests",
+      "report_versions",
+    ];
+    const protectedTables = ["app_settings", "audit_log", "claim_documents", "claims", "employees", "leave_requests", "report_versions"];
+    const roleResult = await pool.query("select current_user as role, rolsuper, rolbypassrl from pg_roles where rolname = current_user");
+    const role = roleResult.rows[0];
+    if (!role) throw new Error("The PostgreSQL runtime role could not be inspected.");
+    if (role.rolsuper || role.rolbypassrl) throw new Error("The PostgreSQL runtime role must not be superuser or BYPASSRLS.");
+    const expectedRole = String(process.env.DATABASE_RUNTIME_ROLE || "").trim();
+    if (expectedRole && role.role !== expectedRole) {
+      throw new Error(`DATABASE_URL uses role ${role.role}; expected DATABASE_RUNTIME_ROLE ${expectedRole}.`);
+    }
+
+    const tableResult = await pool.query(
+      "select c.relname, c.relrowsecurity, c.relforcerowsecurity, pg_get_userbyid(c.relowner) as owner, has_table_privilege(current_user, c.oid, 'SELECT') as can_select, has_table_privilege(current_user, c.oid, 'INSERT') as can_insert, has_table_privilege(current_user, c.oid, 'UPDATE') as can_update, has_table_privilege(current_user, c.oid, 'DELETE') as can_delete from pg_class c join pg_namespace n on n.oid = c.relnamespace where n.nspname = 'ula' and c.relkind = 'r'",
+    );
+    const byName = new Map(tableResult.rows.map((table) => [table.relname, table]));
+    const missing = requiredTables.filter((table) => !byName.has(table));
+    if (missing.length) throw new Error(`PostgreSQL migrations are incomplete. Missing tables: ${missing.join(", ")}.`);
+    const missingPrivileges = requiredTables.filter((tableName) => {
+      const table = byName.get(tableName);
+      return !table.can_select || !table.can_insert || !table.can_update || !table.can_delete;
+    });
+    if (missingPrivileges.length) throw new Error(`Runtime database grants are incomplete for: ${missingPrivileges.join(", ")}.`);
+    for (const tableName of protectedTables) {
+      const table = byName.get(tableName);
+      if (!table.relrowsecurity || !table.relforcerowsecurity) throw new Error(`Row-level security is not forced on ula.${tableName}.`);
+      if (table.owner === role.role) throw new Error(`Runtime role ${role.role} must not own ula.${tableName}.`);
+    }
+    return { ok: true, role: role.role };
+  };
 
   const auth = {
     login: async ({ email, password }) => {
@@ -312,5 +396,24 @@ export function createPostgresRepository({ connectionString = process.env.DATABA
     return { account: publicUser(userResult.rows[0]), employee: rowData(employeeResult.rows[0]) };
   });
 
-  return { list, get, filter, create, update, remove, submitLeave, decideLeave, recordLeaveDelivery, getDocumentByStorageKey, recordActivity, createEmployeeAccount, auth, close: () => pool.end(), healthy: async () => { await pool.query("select 1"); return true; } };
+  return {
+    list,
+    get,
+    filter,
+    create,
+    update,
+    remove,
+    submitLeave,
+    decideLeave,
+    recordLeaveDelivery,
+    getDocumentByStorageKey,
+    recordActivity,
+    getSetting,
+    setSetting,
+    createEmployeeAccount,
+    auth,
+    close: () => pool.end(),
+    healthy: async () => { await pool.query("select 1"); return true; },
+    assertProductionReady,
+  };
 }

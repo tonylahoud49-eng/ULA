@@ -21,6 +21,8 @@
     "seed": "node server/db/seed.mjs",
     "db:migrate": "node scripts/migrate-postgres.mjs",
     "db:check": "node scripts/check-postgres.mjs",
+    "db:import-local": "node scripts/import-local-data-to-postgres.mjs",
+    "production:check": "node scripts/check-production.mjs",
     "preview": "vite preview"
   },
   "dependencies": {
