@@ -148,7 +148,7 @@ test("leaveEmailService sends submission email via EmailJS and records idempoten
     employee: sampleEmployee(),
   };
 
-  const firstDelivery = await service.sendEvent(event);
+  const firstDelivery = await service.sendEvent(event, { settings: null });
   assert.equal(firstDelivery.status, "sent");
   assert.equal(sentPayload.template_params.to_email, "admin@company.com");
   assert.equal(sentPayload.template_params.cc_email, "second-approver@company.com");

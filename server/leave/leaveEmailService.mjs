@@ -61,11 +61,14 @@ const defaultNotificationSettings = Object.freeze({
   cc_manager_on_submission: true,
 });
 
-const notificationSettings = (value = {}) => ({
-  ...defaultNotificationSettings,
-  ...value,
-  routing_mode: value.routing_mode === "simple" ? "simple" : "extended",
-});
+const notificationSettings = (value) => {
+  const saved = value && typeof value === "object" ? value : {};
+  return {
+    ...defaultNotificationSettings,
+    ...saved,
+    routing_mode: saved.routing_mode === "simple" ? "simple" : "extended",
+  };
+};
 
 const getProviderType = (env = process.env) => {
   const explicit = String(env.LEAVE_EMAIL_PROVIDER || "").trim().toLowerCase();

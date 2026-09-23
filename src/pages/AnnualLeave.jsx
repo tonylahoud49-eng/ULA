@@ -9,7 +9,7 @@ import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter, DialogT
 import { Textarea } from "@/components/ui/textarea";
 import { toast } from "@/components/ui/use-toast";
 import { calculateWorkingDays } from "@/lib/leaveWorkflow";
-import { Plus, Check, X, UserPlus, Plane, ChevronLeft, ChevronRight, RefreshCw, Pencil, Trash2 } from "lucide-react";
+import { Plus, Check, X, Plane, ChevronLeft, ChevronRight, RefreshCw, Pencil, Trash2 } from "lucide-react";
 import { EmailTestDialog } from "@/components/EmailTestDialog";
 import { LeaveEmailAuditDialog } from "@/components/LeaveEmailAuditDialog";
 import { NotificationSettingsDialog } from "@/components/NotificationSettingsDialog";
@@ -63,7 +63,6 @@ export default function AnnualLeave() {
             <>
               <NotificationSettingsDialog />
               <EmailTestDialog />
-              <AddEmployeeDialog onAdded={load} />
             </>
           )}
           <Dialog open={open} onOpenChange={setOpen}>
@@ -483,46 +482,6 @@ function LeaveRequestDialog({ employees, currentUser, onCreated }) {
         </Button>
       </DialogFooter>
     </DialogContent>
-  );
-}
-
-function AddEmployeeDialog({ onAdded }) {
-  const [open, setOpen] = useState(false);
-  const [form, setForm] = useState({ name: "", email: "", department: "", role: "" });
-  const [saving, setSaving] = useState(false);
-  const validEmail = /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(form.email.trim());
-
-  const submit = async () => {
-    if (!form.name || !validEmail) return;
-    setSaving(true);
-    try {
-      await appClient.entities.Employee.create({ ...form, annual_leave_total: 15, annual_leave_used: 0, sick_leave_used: 0, toil_balance: 0, year: new Date().getFullYear() });
-      onAdded();
-      setOpen(false);
-      setForm({ name: "", email: "", department: "", role: "" });
-    } finally {
-      setSaving(false);
-    }
-  };
-
-  return (
-    <Dialog open={open} onOpenChange={setOpen}>
-      <DialogTrigger asChild><Button variant="outline"><UserPlus className="w-4 h-4 mr-2" /> Add Employee</Button></DialogTrigger>
-      <DialogContent className="max-w-md">
-        <DialogHeader><DialogTitle>Add Employee</DialogTitle></DialogHeader>
-        <div className="space-y-3 py-2">
-          <div><Label>Name *</Label><Input value={form.name} onChange={(e) => setForm({ ...form, name: e.target.value })} className="mt-1" /></div>
-          <div><Label>Email *</Label><Input type="email" value={form.email} onChange={(e) => setForm({ ...form, email: e.target.value })} className="mt-1" /></div>
-          <div className="grid grid-cols-2 gap-3">
-            <div><Label>Department</Label><Input value={form.department} onChange={(e) => setForm({ ...form, department: e.target.value })} className="mt-1" /></div>
-            <div><Label>Role</Label><Input value={form.role} onChange={(e) => setForm({ ...form, role: e.target.value })} className="mt-1" /></div>
-          </div>
-        </div>
-        <DialogFooter>
-          <Button onClick={submit} disabled={saving || !form.name || !validEmail} className="ula-gradient text-white hover:opacity-90">{saving ? "Adding…" : "Add Employee"}</Button>
-        </DialogFooter>
-      </DialogContent>
-    </Dialog>
   );
 }
 
