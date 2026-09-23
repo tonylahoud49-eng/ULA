@@ -321,6 +321,12 @@ For large current-claim files, the provider is instructed to keep its structured
 
 ## Final issue quality gate
 
+### Owner-approved provisional drafts (7 September 2026)
+
+A saved completed analysis may be used to generate a provisional draft without another provider call when registered non-PDF attachments were explicitly recorded as unsupported and excluded from that analysis. At least one usable reviewed evidence item and a stored snapshot entry for every current attachment are required. Missing snapshot entries, failed extraction, and PDF page-coverage failures still block drafting.
+
+Every excluded attachment must remain identified by document name and ID in the normalized evidence register and as a material unreviewed-attachment gap. The draft preview must list the excluded documents and the readable replacement and review needed; it must not imply that their contents were reviewed or supply facts from them. Final approval, final issue, and final DOCX/PDF export remain blocked while any such gap is unresolved. Resolving a gap requires usable evidence and review reflected in a newly generated draft, not simply relabelling the existing draft as final. The approved issued-DOCX section structure, including title-only Enclosure and Outstanding Documents sections, is unchanged.
+
 Draft generation may retain visible review items, but a report cannot be changed to a controlled final issue or exported as final while a mechanical issue blocker remains. Mechanical blockers include a negative reportable indemnity, an adjusted amount without one supported ISO currency, dangling or incomplete client narrative, or warranty wording presented as an exclusion. Final document-control names and approval date must also be complete. Material evidential and professional review items remain subject to the authorized adjuster and approver; the gate does not invent facts or make the coverage decision.
 
 Generated client content must not inherit yellow text highlighting from editing or template placeholders. Table shading, borders, brand colours, and other approved design elements are unaffected.

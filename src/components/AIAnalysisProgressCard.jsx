@@ -23,7 +23,7 @@ export function formatModelDisplayName(provider, model) {
     const clean = String(model || "").split("/").pop() || model || "Gemma 4";
     return `OpenRouter · ${clean}`;
   }
-  return provider && model ? `${provider} / ${model}` : "Claude 3.5 Sonnet";
+  return provider && model ? `${provider} / ${model}` : "Configured AI model";
 }
 
 const STAGES = [
@@ -72,11 +72,15 @@ export default function AIAnalysisProgressCard({ progress, provider, model, pref
     };
   }, []);
 
-  const selectedProviderStatus = provider
-    ? aiStatus?.configured_providers?.find((item) => item.provider === provider)
+  const providerValue = String(provider || "");
+  const separator = providerValue.indexOf(":");
+  const parsedProvider = separator >= 0 ? providerValue.slice(0, separator) : providerValue;
+  const parsedModel = separator >= 0 ? providerValue.slice(separator + 1) : null;
+  const selectedProviderStatus = parsedProvider
+    ? aiStatus?.configured_providers?.find((item) => item.provider === parsedProvider)
     : null;
-  const activeProvider = provider || aiStatus?.provider;
-  const activeModel = model
+  const activeProvider = parsedProvider || aiStatus?.provider;
+  const activeModel = model || parsedModel
     || selectedProviderStatus?.model
     || (activeProvider === aiStatus?.provider ? aiStatus?.model : null);
   const modelLabel = formatModelDisplayName(activeProvider, activeModel);

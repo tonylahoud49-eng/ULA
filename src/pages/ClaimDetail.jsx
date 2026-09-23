@@ -882,6 +882,8 @@ function ReportSection({ claimId, claim, documents, reports, onChanged }) {
     await new Promise((resolve) => setTimeout(resolve, 400));
 
     try {
+      const { assertReportCanBeIssued } = await import("@/lib/reportEvidenceGate");
+      assertReportCanBeIssued(report);
       const [{ jsPDF }, { default: html2canvas }] = await Promise.all([
         import("jspdf"),
         import("html2canvas"),

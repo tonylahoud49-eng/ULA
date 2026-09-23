@@ -445,6 +445,26 @@ test("all paid-request failure classes stop after one mocked Anthropic transport
   }
 });
 
+test("a truncated JSON payload at Claude's output cap reports an output-limit failure without a retry", async () => {
+  let calls = 0;
+  const provider = createAnthropicProvider({
+    apiKey: "mock-output-cap-key",
+    fetchImpl: async () => {
+      calls += 1;
+      return new Response(JSON.stringify(anthropicMessageFixture(undefined, {
+        content: [{ type: "text", text: '{"records":[{"key":"summary","text":"cut off' }],
+        stop_reason: "max_tokens",
+      })), { status: 200 });
+    },
+  });
+
+  await assert.rejects(
+    provider.analyze({ claim: { id: "truncated-at-cap" }, evidence: [], files: [] }),
+    { message: /Claude reached max_tokens before completing the structured JSON payload:.*\[incomplete_structured_output\]/ },
+  );
+  assert.equal(calls, 1);
+});
+
 test("a structurally complete payload at Claude's output cap remains usable without a second request", async () => {
   const transport = canonicalAnalysisToAnthropicTransportFixture(currentClaimMockAnalysis());
   let calls = 0;

@@ -15,13 +15,16 @@ import { calculateAiUsage } from "../billingCalculator.mjs";
  */
 
 const GEMINI_BASE_URL = "https://generativelanguage.googleapis.com/v1beta/openai/";
-const DEFAULT_MODEL = "gemini-3.6-flash";
+const DEFAULT_MODEL = "gemini-3.7-flash";
+const DEFAULT_TIMEOUT_MS = 90_000;
 
-export function createGeminiProvider({ apiKey, model, client } = {}) {
+export function createGeminiProvider({ apiKey, model, timeoutMs, client } = {}) {
   const resolvedModel = model || DEFAULT_MODEL;
   const openai = client || new OpenAI({
     apiKey,
     baseURL: GEMINI_BASE_URL,
+    maxRetries: 0,
+    timeout: Number(timeoutMs) || DEFAULT_TIMEOUT_MS,
   });
   return {
     name: "gemini",

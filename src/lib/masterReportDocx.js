@@ -1,4 +1,5 @@
 import JSZip from "jszip";
+import { assertReportCanBeIssued } from "./reportEvidenceGate.js";
 
 export const MASTER_TEMPLATE_NAME = "260536 - CR - Victoire - UTA - 1v1.docx";
 export const UNKNOWN_REPORT_VALUE = "No source-supported value is available for this report element.";
@@ -1010,6 +1011,7 @@ function insertNarrativeSectionBeforeHeading(xml, beforeHeading, sectionHeading,
 }
 
 export async function populateMasterReportDocx(templateData, context, { appendixImages = [] } = {}) {
+  assertReportCanBeIssued(context?.report || {});
   const zip = await JSZip.loadAsync(templateData);
   const data = buildMasterReportData(context);
   const report = context?.report || {};

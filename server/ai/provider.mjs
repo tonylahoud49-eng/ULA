@@ -1,9 +1,6 @@
-import { createOpenAIProvider } from "./providers/openaiProvider.mjs";
 import { createOpenRouterProvider } from "./providers/openrouterProvider.mjs";
 import { createGeminiProvider } from "./providers/geminiProvider.mjs";
 import { createAnthropicProvider } from "./providers/anthropicProvider.mjs";
-import { createGroqProvider } from "./providers/groqProvider.mjs";
-import { createOllamaProvider } from "./providers/ollamaProvider.mjs";
 
 const PROVIDER_CONFIGS = {
   anthropic: {
@@ -13,42 +10,23 @@ const PROVIDER_CONFIGS = {
     defaultModel: "claude-sonnet-4-6",
     factory: createAnthropicProvider,
   },
-  groq: {
-    keyVar: "GROQ_API_KEY",
-    modelVar: "GROQ_MODEL",
-    defaultModel: "openai/gpt-oss-120b",
-    factory: createGroqProvider,
-  },
   gemini: {
     keyVar: "GEMINI_API_KEY",
-    fallbackKeyVars: ["GEMINI_API_KEY_2"],
+    fallbackKeyVars: ["GOOGLE_API_KEY", "GEMINI_API_KEY_2"],
     modelVar: "GEMINI_MODEL",
-    defaultModel: "gemini-3.6-flash",
+    defaultModel: "gemini-3.7-flash",
     factory: createGeminiProvider,
   },
   openrouter: {
     keyVar: "OPENROUTER_API_KEY",
     modelVar: "OPENROUTER_MODEL",
-    defaultModel: "meta-llama/llama-3.3-70b-instruct",
+    defaultModel: "openrouter/free",
     factory: createOpenRouterProvider,
-  },
-  ollama: {
-    keyVar: "OLLAMA_HOST",
-    optionalKey: true,
-    modelVar: "OLLAMA_MODEL",
-    defaultModel: "llama3.3",
-    factory: createOllamaProvider,
-  },
-  openai: {
-    keyVar: "OPENAI_API_KEY",
-    modelVar: "OPENAI_MODEL",
-    defaultModel: "gpt-5.6-terra",
-    factory: createOpenAIProvider,
   },
 };
 
 /** Default fallback order for cloud providers. */
-const CLOUD_FALLBACK_ORDER = ["openrouter", "groq", "gemini", "anthropic", "openai"];
+const CLOUD_FALLBACK_ORDER = ["gemini", "openrouter", "anthropic"];
 
 function statusForProvider(name, env) {
   const config = PROVIDER_CONFIGS[name];
@@ -70,7 +48,7 @@ function statusForProvider(name, env) {
 }
 
 export function getAIStatus(env = process.env) {
-  let primaryName = String(env.AI_PROVIDER || "openai").toLowerCase();
+  let primaryName = String(env.AI_PROVIDER || "gemini").toLowerCase();
   let primaryStatus = statusForProvider(primaryName, env);
 
   // Find all configured providers
@@ -87,7 +65,7 @@ export function getAIStatus(env = process.env) {
   }
 
   const fallbacks = allConfigured
-    .filter((s) => s.provider !== primaryName && CLOUD_FALLBACK_ORDER.includes(s.provider))
+    .filter((s) => s.provider !== primaryName && s.provider !== "anthropic" && CLOUD_FALLBACK_ORDER.includes(s.provider))
     .map(({ provider, model }) => ({ provider, model }));
 
   return {
@@ -110,9 +88,10 @@ function instantiate(name, env, modelOverride) {
   if (name === "openrouter") {
     options.fallbackModels = env.OPENROUTER_FALLBACK_MODELS;
     options.maxCompletionTokens = env.OPENROUTER_MAX_COMPLETION_TOKENS;
+    options.timeoutMs = env.OPENROUTER_TIMEOUT_MS;
   }
-  if (name === "ollama") {
-    options.host = env.OLLAMA_HOST || "http://127.0.0.1:11434";
+  if (name === "gemini") {
+    options.timeoutMs = env.GEMINI_TIMEOUT_MS;
   }
   return config.factory(options);
 }
@@ -145,6 +124,7 @@ export function createConfiguredProvider(options = {}, env = process.env) {
     ? []
     : (status.configured_providers || [])
         .filter((p) => p.provider !== targetProvider)
+        .filter((p) => p.provider !== "anthropic")
         .map((p) => instantiate(p.provider, env))
         .filter(Boolean);
 

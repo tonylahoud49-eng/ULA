@@ -177,7 +177,19 @@ function atomicWriteJson(filePath, data) {
   ensureDirectories();
   const tmpPath = `${filePath}.${Date.now()}.${Math.random().toString(36).slice(2, 8)}.tmp`;
   fs.writeFileSync(tmpPath, JSON.stringify(data, null, 2), "utf-8");
-  fs.renameSync(tmpPath, filePath);
+  let lastError;
+  for (let attempt = 0; attempt < 8; attempt += 1) {
+    try {
+      fs.renameSync(tmpPath, filePath);
+      return;
+    } catch (error) {
+      lastError = error;
+      if (!["EACCES", "EBUSY", "EPERM"].includes(error.code)) throw error;
+      Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, 25 * (attempt + 1));
+    }
+  }
+  try { fs.unlinkSync(tmpPath); } catch {}
+  throw lastError;
 }
 
 function safeReadJson(filePath, fallback = {}) {

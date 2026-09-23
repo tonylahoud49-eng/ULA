@@ -20,7 +20,7 @@ import { calculateAiUsage } from "../billingCalculator.mjs";
 
 const ANTHROPIC_MESSAGES_URL = "https://api.anthropic.com/v1/messages";
 const DEFAULT_MODEL = "claude-sonnet-4-6";
-const DEFAULT_MAX_OUTPUT_TOKENS = 12_000;
+const DEFAULT_MAX_OUTPUT_TOKENS = 64_000;
 const MAX_SONNET_4_6_OUTPUT_TOKENS = 64_000;
 const SONNET_4_6_THINKING_BUDGET_TOKENS = 2_500;
 const ANTHROPIC_LOSS_ADJUSTER_REASONING_PROTOCOL = `Claude loss-adjuster decision workflow:
@@ -1140,8 +1140,10 @@ function parseAnthropicStructuredResponse(body, status, requestId) {
     decoded = JSON.parse(outputText);
   } catch (error) {
     throw providerError(status, {
-      message: `Claude structured output JSON parse failed: ${error.message}`,
-      type: "invalid_structured_json",
+      message: reachedOutputCap
+        ? `Claude reached max_tokens before completing the structured JSON payload: ${error.message}`
+        : `Claude structured output JSON parse failed: ${error.message}`,
+      type: reachedOutputCap ? "incomplete_structured_output" : "invalid_structured_json",
     }, requestId);
   }
   const transportValidation = anthropicTransportSchema.safeParse(normalizeAnthropicTransportShape(decoded));

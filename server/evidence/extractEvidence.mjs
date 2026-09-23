@@ -3,6 +3,7 @@ import { fileURLToPath } from "node:url";
 import { createCanvas } from "@napi-rs/canvas";
 import JSZip from "jszip";
 import readXlsxFile from "read-excel-file/node";
+import * as XLSX from "xlsx";
 import { simpleParser } from "mailparser";
 
 const TEXT_EXTENSIONS = new Set([".txt", ".csv", ".json", ".xml", ".html", ".htm", ".md", ".rtf"]);
@@ -270,7 +271,21 @@ const csvCell = (value) => {
 };
 
 async function extractWorkbook(buffer) {
-  const sheets = await readXlsxFile(buffer, { parseNumber: (value) => value });
+  let sheets;
+  try {
+    sheets = await readXlsxFile(buffer, { parseNumber: (value) => value });
+  } catch {
+    // The primary reader excludes legacy XLS and can fail on valid XLSX sheets.
+    const signature = buffer.subarray(0, 8).toString("hex");
+    if (!signature.startsWith("504b0304") && signature !== "d0cf11e0a1b11ae1") {
+      throw new Error("The attachment is not an Excel workbook.");
+    }
+    const workbook = XLSX.read(buffer, { type: "buffer" });
+    sheets = workbook.SheetNames.map((sheet) => ({
+      sheet,
+      data: XLSX.utils.sheet_to_json(workbook.Sheets[sheet], { header: 1, raw: false, defval: null, blankrows: false }),
+    }));
+  }
   return sheets.map((worksheet) => ({
     page: null,
     section: `Worksheet: ${worksheet.sheet}`,
@@ -329,8 +344,18 @@ export async function extractEvidenceFile(file, metadata = {}) {
         extraction_status: extracted.pages[0].text || extracted.embeddedImages.length ? "extracted" : "vision-required",
       };
     }
-    if (mimeType.includes("spreadsheetml") || extension === ".xlsx") {
-      return { ...base, kind: "spreadsheet", pages: await extractWorkbook(file.buffer), extraction_status: "extracted" };
+    if (mimeType.includes("spreadsheetml") || mimeType === "application/vnd.ms-excel" || [".xls", ".xlsx"].includes(extension)) {
+      try {
+        return { ...base, kind: "spreadsheet", pages: await extractWorkbook(file.buffer), extraction_status: "extracted" };
+      } catch {
+        return {
+          ...base,
+          kind: "spreadsheet",
+          pages: [],
+          extraction_status: "unsupported",
+          warning: `${base.document_name} could not be read as an Excel workbook and was excluded from the AI payload.`,
+        };
+      }
     }
     if (mimeType === "message/rfc822" || extension === ".eml") {
       return { ...base, kind: "email", pages: await extractEmail(file.buffer), extraction_status: "extracted" };

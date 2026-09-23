@@ -6,6 +6,7 @@ import fs from "node:fs";
 import { fileURLToPath } from "node:url";
 import { createConfiguredProvider, getAIStatus } from "./ai/provider.mjs";
 import { safeAiDebugLog } from "./ai/debugLog.mjs";
+import { createAnalysisResultStore } from "./ai/analysisResultStore.mjs";
 import {
   AnthropicPreflightError,
   consumeAnthropicPreflightToken,
@@ -19,18 +20,24 @@ import { extractEvidenceFile, evidenceText } from "./evidence/extractEvidence.mj
 import { loadApprovedStyleReferences } from "./ai/referenceLayer.mjs";
 import { createLeaveEmailService } from "./leave/leaveEmailService.mjs";
 import { sendTestEmail, getEmailDiagnosticsStatus } from "./email/emailTestService.mjs";
-import { createAuthService } from "./auth/authService.mjs";
+import { AuthError, createAuthService } from "./auth/authService.mjs";
 import { createAuthHttp } from "./auth/authHttp.mjs";
 import { sendPasswordResetEmail } from "./auth/passwordResetMailer.mjs";
 import { createPostgresRepository } from "./db/postgresRepository.mjs";
 import { eventForLeave } from "../src/lib/leaveWorkflow.js";
-
-if (process.env.NODE_ENV !== "test") {
-  dotenv.config();
-}
+import { assertReportCanBeIssued } from "../src/lib/reportEvidenceGate.js";
 
 const serverFile = fileURLToPath(import.meta.url);
 const root = path.resolve(path.dirname(serverFile), "..");
+const serverEnvPath = path.join(root, ".env");
+const shouldLoadDotenv = process.env.NODE_ENV !== "test";
+
+function loadServerEnv({ override = false } = {}) {
+  if (!shouldLoadDotenv) return;
+  dotenv.config({ path: serverEnvPath, override });
+}
+
+loadServerEnv();
 const port = Number(process.env.PORT || 8787);
 const host = process.env.HOST || "0.0.0.0";
 const maxFiles = Number(process.env.AI_MAX_FILES || 20);
@@ -42,9 +49,41 @@ const postgresRepository = createPostgresRepository();
 const authService = postgresRepository?.auth || createAuthService({
   stateFile: process.env.AUTH_STATE_FILE || path.resolve(".data", "auth-state.json"),
 });
+const normalizeEmail = (value) => String(value || "").trim().toLowerCase();
+const createLocalEmployeeAccount = async (values = {}, actor = {}) => {
+  if (actor.role !== "admin") throw new AuthError("Administrator access is required.", { status: 403, code: "admin-required" });
+  const email = normalizeEmail(values.email);
+  if ((diskDb.list("Employee") || []).some((employee) => normalizeEmail(employee.email) === email)) {
+    throw new AuthError("An employee with this email already exists.", { status: 409, code: "employee-exists" });
+  }
+  const account = await authService.createUser({
+    full_name: values.full_name,
+    email,
+    job_title: values.job_title,
+    role: values.role,
+    password: values.password,
+  });
+  const fullName = String(values.full_name || "").trim() || email.split("@")[0];
+  const jobTitle = String(values.job_title || "").trim();
+  const employee = diskDb.create("Employee", {
+    account_id: account.id,
+    user_id: account.id,
+    name: fullName,
+    full_name: fullName,
+    email,
+    designation: jobTitle,
+    department: jobTitle,
+    role: jobTitle,
+    annual_leave_total: 15,
+    annual_leave_used: 0,
+    toil_balance: 0,
+    year: new Date().getFullYear(),
+  });
+  return { account, employee };
+};
 const authHttp = createAuthHttp({
   service: authService,
-  createEmployeeAccount: postgresRepository?.createEmployeeAccount,
+  createEmployeeAccount: postgresRepository?.createEmployeeAccount || createLocalEmployeeAccount,
   sendResetEmail: (payload) => sendPasswordResetEmail(payload, { env: process.env }),
 });
 if (process.env.NODE_ENV === "production" && !postgresRepository) {
@@ -58,6 +97,8 @@ const getLeaveEmailService = () => {
 };
 const anthropicAnalysisRequests = new Map();
 const anthropicAnalysisCacheMs = Number(process.env.ANTHROPIC_DUPLICATE_CACHE_MS || 10 * 60 * 1000);
+const analysisResultStore = process.env.NODE_ENV === "test" ? null
+  : createAnalysisResultStore(path.join(root, ".data", "ai-analysis-results"));
 
 app.disable("x-powered-by");
 app.use(express.json({ limit: "50mb" }));
@@ -90,7 +131,7 @@ const requireDocumentAccess = (request, response, next) => postgresRepository
   : next();
 
 // --- Entity REST Endpoints ---
-app.get("/api/entities/:entity", authHttp.requireAuth, async (request, response) => {
+app.get("/api/entities/:entity", requireDocumentAccess, async (request, response) => {
   const { entity } = request.params;
   if (!ENTITY_NAMES.includes(entity)) {
     return response.status(400).json({ error: `Unknown entity: ${entity}` });
@@ -100,14 +141,26 @@ app.get("/api/entities/:entity", authHttp.requireAuth, async (request, response)
       const query = Object.fromEntries(Object.entries(request.query || {}).filter(([, value]) => value !== undefined && value !== ""));
       return response.json(Object.keys(query).length ? await postgresRepository.filter(entity, query, request.authUser) : await postgresRepository.list(entity, request.authUser));
     }
-    const items = diskDb.list(entity, request.query);
+    const { sort, limit, ...filters } = request.query || {};
+    let items = diskDb.list(entity, filters);
+    if (sort) {
+      const descending = String(sort).startsWith("-");
+      const field = descending ? String(sort).slice(1) : String(sort);
+      items.sort((left, right) => {
+        const a = left[field] ?? "";
+        const b = right[field] ?? "";
+        return (a > b ? 1 : a < b ? -1 : 0) * (descending ? -1 : 1);
+      });
+    }
+    const parsedLimit = Number(limit);
+    if (Number.isFinite(parsedLimit) && parsedLimit >= 0) items = items.slice(0, parsedLimit);
     return response.json(items);
   } catch (err) {
     return sendRepositoryError(response, err);
   }
 });
 
-app.get("/api/entities/:entity/:id", authHttp.requireAuth, async (request, response) => {
+app.get("/api/entities/:entity/:id", requireDocumentAccess, async (request, response) => {
   const { entity, id } = request.params;
   if (!ENTITY_NAMES.includes(entity)) {
     return response.status(400).json({ error: `Unknown entity: ${entity}` });
@@ -125,12 +178,13 @@ app.get("/api/entities/:entity/:id", authHttp.requireAuth, async (request, respo
   }
 });
 
-app.post("/api/entities/:entity", authHttp.requireAuth, async (request, response) => {
+app.post("/api/entities/:entity", requireDocumentAccess, async (request, response) => {
   const { entity } = request.params;
   if (!ENTITY_NAMES.includes(entity)) {
     return response.status(400).json({ error: `Unknown entity: ${entity}` });
   }
   try {
+    if (entity === "ReportVersion") assertReportCanBeIssued(request.body || {});
     if (postgresRepository) return response.status(201).json(await postgresRepository.create(entity, request.body || {}, request.authUser));
     const created = diskDb.create(entity, request.body || {});
     return response.status(201).json(created);
@@ -139,16 +193,21 @@ app.post("/api/entities/:entity", authHttp.requireAuth, async (request, response
   }
 });
 
-app.put("/api/entities/:entity/:id", authHttp.requireAuth, async (request, response) => {
+app.put("/api/entities/:entity/:id", requireDocumentAccess, async (request, response) => {
   const { entity, id } = request.params;
   if (!ENTITY_NAMES.includes(entity)) {
     return response.status(400).json({ error: `Unknown entity: ${entity}` });
   }
   try {
     if (postgresRepository) {
+      if (entity === "ReportVersion") {
+        const existing = await postgresRepository.get(entity, id, request.authUser);
+        assertReportCanBeIssued({ ...existing, ...request.body });
+      }
       const updated = await postgresRepository.update(entity, id, request.body || {}, request.authUser);
       return updated ? response.json(updated) : response.status(404).json({ error: "Not found" });
     }
+    if (entity === "ReportVersion") assertReportCanBeIssued({ ...diskDb.get(entity, id), ...request.body });
     const updated = diskDb.update(entity, id, request.body || {});
     return response.json(updated);
   } catch (err) {
@@ -156,7 +215,7 @@ app.put("/api/entities/:entity/:id", authHttp.requireAuth, async (request, respo
   }
 });
 
-app.delete("/api/entities/:entity/:id", authHttp.requireAuth, async (request, response) => {
+app.delete("/api/entities/:entity/:id", requireDocumentAccess, async (request, response) => {
   const { entity, id } = request.params;
   if (!ENTITY_NAMES.includes(entity)) {
     return response.status(400).json({ error: `Unknown entity: ${entity}` });
@@ -598,7 +657,8 @@ app.get("/api/email/diagnostics", (_request, response) => {
 
 app.post("/api/ai/test-chat", async (request, response) => {
   const startTime = Date.now();
-  const { provider = "openrouter", model = "openrouter/auto", prompt = "Hello, respond with a quick test acknowledgement and your active model name." } = request.body || {};
+  const { provider = "openrouter", model = "openrouter/free", prompt = "Reply OK." } = request.body || {};
+  const signal = AbortSignal.timeout(15_000);
 
   try {
     dotenv.config({ override: true });
@@ -609,7 +669,7 @@ app.post("/api/ai/test-chat", async (request, response) => {
     if (provider === "openrouter" || provider.startsWith("openrouter:")) {
       const key = process.env.OPENROUTER_API_KEY;
       if (!key) throw new Error("OPENROUTER_API_KEY is not configured in .env");
-      const actualModel = (model || "").replace(/^openrouter:/, "") || "openrouter/auto";
+      const actualModel = (model || "").replace(/^openrouter:/, "") || "openrouter/free";
 
       const res = await fetch("https://openrouter.ai/api/v1/chat/completions", {
         method: "POST",
@@ -622,6 +682,7 @@ app.post("/api/ai/test-chat", async (request, response) => {
           messages: [{ role: "user", content: prompt }],
           max_tokens: 150,
         }),
+        signal,
       });
 
       const data = await res.json();
@@ -634,7 +695,7 @@ app.post("/api/ai/test-chat", async (request, response) => {
     } else if (provider === "gemini") {
       const key = process.env.GEMINI_API_KEY;
       if (!key) throw new Error("GEMINI_API_KEY is not configured in .env");
-      const actualModel = model || process.env.GEMINI_MODEL || "gemini-3.6-flash";
+      const actualModel = model || process.env.GEMINI_MODEL || "gemini-3.7-flash";
 
       const res = await fetch(`https://generativelanguage.googleapis.com/v1beta/models/${actualModel}:generateContent?key=${key}`, {
         method: "POST",
@@ -642,6 +703,7 @@ app.post("/api/ai/test-chat", async (request, response) => {
         body: JSON.stringify({
           contents: [{ parts: [{ text: prompt }] }],
         }),
+        signal,
       });
 
       const data = await res.json();
@@ -666,6 +728,7 @@ app.post("/api/ai/test-chat", async (request, response) => {
           max_tokens: 150,
           messages: [{ role: "user", content: prompt }],
         }),
+        signal,
       });
 
       const data = await res.json();
@@ -738,6 +801,7 @@ function anthropicPreflightFailure(response, error) {
 
 app.post("/api/ai/connectivity", async (_request, response) => {
   try {
+    loadServerEnv({ override: true });
     const connectivity = await testAnthropicConnectivity();
     return response.json({ ok: true, server_running: true, connectivity });
   } catch (error) {
@@ -747,6 +811,7 @@ app.post("/api/ai/connectivity", async (_request, response) => {
 
 app.post("/api/ai/preflight", upload.array("files", maxFiles), async (request, response) => {
   try {
+    loadServerEnv({ override: true });
     const configuration = validateAnthropicConfiguration();
     const requestedProvider = String(request.body?.provider || "anthropic").toLowerCase();
     const requestedModel = String(request.body?.model || configuration.model);
@@ -841,6 +906,7 @@ app.post("/api/ai/analyze", upload.array("files", maxFiles), async (request, res
   let anthropicFingerprint = null;
   let preflightEvidence = null;
   try {
+    loadServerEnv({ override: true });
     const requestedProvider = request.body?.provider || undefined;
     const requestedModel = request.body?.model || undefined;
     const isAnthropicRequest = String(requestedProvider || process.env.AI_PROVIDER || "").toLowerCase() === "anthropic";
@@ -886,7 +952,8 @@ app.post("/api/ai/analyze", upload.array("files", maxFiles), async (request, res
       for (const [fingerprint, record] of anthropicAnalysisRequests.entries()) {
         if (record.expiresAt < now) anthropicAnalysisRequests.delete(fingerprint);
       }
-      const existing = anthropicAnalysisRequests.get(anthropicFingerprint);
+      const existing = anthropicAnalysisRequests.get(anthropicFingerprint)
+        || analysisResultStore?.read(anthropicFingerprint);
       if (existing?.state === "complete") {
         return response.json({ ...existing.payload, duplicate_request_reused: true });
       }
@@ -994,11 +1061,13 @@ app.post("/api/ai/analyze", upload.array("files", maxFiles), async (request, res
       })),
     };
     if (anthropicFingerprint) {
-      anthropicAnalysisRequests.set(anthropicFingerprint, {
+      const completed = {
         state: "complete",
         payload: responsePayload,
         expiresAt: Date.now() + anthropicAnalysisCacheMs,
-      });
+      };
+      anthropicAnalysisRequests.set(anthropicFingerprint, completed);
+      analysisResultStore?.write(anthropicFingerprint, completed);
     }
     return response.json(responsePayload);
   } catch (error) {
@@ -1008,7 +1077,8 @@ app.post("/api/ai/analyze", upload.array("files", maxFiles), async (request, res
     if (error instanceof AnthropicPreflightError) return anthropicPreflightFailure(response, error);
     const errorProvider = error?.provider || activeProviderInfo?.provider || "Configured AI Provider";
     const errorModel = error?.model || activeProviderInfo?.model || "model";
-    const isNetworkError = /terminated|timed?\s*out|socket|network|fetch failed|connection (?:closed|reset|error)/i.test(error?.message || "");
+    const isNetworkError = error?.isNetworkError === true
+      || (!error?.isProviderError && /\bterminated\b|timed?\s*out|socket|network|fetch failed|connection (?:closed|reset|error)/i.test(error?.message || ""));
     const isProviderError = error?.isProviderError || Number(error?.status) >= 400 || isNetworkError;
     const statusCode = isProviderError ? 502 : 500;
     let providerMessage = error?.status === 401
@@ -1017,6 +1087,10 @@ app.post("/api/ai/analyze", upload.array("files", maxFiles), async (request, res
         ? "model endpoint was not found. Check the model name."
       : error?.status === 429
         ? "rate limit or quota was reached."
+      : error?.status === 503
+        ? "provider is temporarily unavailable or overloaded."
+      : [408, 504].includes(Number(error?.status))
+        ? "provider request timed out."
         : isNetworkError
           ? "network connection could not be established to the provider API."
         : "could not complete this evidence analysis.";

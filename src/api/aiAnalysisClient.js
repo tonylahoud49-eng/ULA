@@ -10,6 +10,15 @@ const createRequestError = (message, status, code) => {
   return error;
 };
 
+async function fetchAIStatus() {
+  for (let attempt = 0; attempt < 2; attempt += 1) {
+    const response = await fetch("/api/ai/status");
+    if (response.status < 500 || attempt === 1) return response;
+    await new Promise((resolve) => setTimeout(resolve, 250));
+  }
+  return null;
+}
+
 const numericFields = new Set([
   "policy_limit",
   "insured_value",
@@ -124,7 +133,7 @@ export function mapAnalysis(result) {
 
 export async function getActiveAIStatus() {
   try {
-    const res = await fetch("/api/ai/status");
+    const res = await fetchAIStatus();
     if (res.ok) return await res.json();
     const { body } = await readResponseBody(res);
     return {
@@ -159,7 +168,7 @@ const readResponseBody = async (response) => {
 async function analyzeClaimWithProviderOnce({ claim, documents, provider, model, disable_fallback, onPreflight }) {
   let statusResponse;
   try {
-    statusResponse = await fetch("/api/ai/status");
+    statusResponse = await fetchAIStatus();
   } catch {
     throw createRequestError(
       "AI analysis unavailable — the local analysis server is not running. Start the app with npm run dev.",

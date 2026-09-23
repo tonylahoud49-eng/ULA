@@ -2,7 +2,7 @@ import { documentStorage } from "@/api/documentStorage";
 import { metadataStorage } from "@/api/metadataStorage";
 import { analyzeClaimWithProvider } from "@/api/aiAnalysisClient";
 import { createUnifiedReportDraft } from "@/lib/reportingEngine";
-import { createEvidenceSnapshots } from "@/lib/evidenceSnapshot";
+import { evidenceForDraft, assertReportCanBeIssued } from "@/lib/reportEvidenceGate";
 import { sendLeaveNotification } from "@/api/leaveClient";
 import {
   createPendingLeave,
@@ -728,6 +728,7 @@ const createEntityApi = (entityName) => ({
   },
 
   async create(values) {
+    if (entityName === "ReportVersion") assertReportCanBeIssued(values);
     if (useSqlApi) return remoteEntityRequest(`/api/entities/${entityName}`, { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify(values) });
     await prepareDatabase();
     if (entityName === "ClaimDocument") assertDocumentMetadataOnly(values);
@@ -764,6 +765,10 @@ const createEntityApi = (entityName) => ({
   },
 
   async update(id, values) {
+    if (entityName === "ReportVersion") {
+      const existing = await this.get(id);
+      assertReportCanBeIssued({ ...existing, ...values });
+    }
     if (useSqlApi) return remoteEntityRequest(`/api/entities/${entityName}/${encodeURIComponent(id)}`, { method: "PUT", headers: { "content-type": "application/json" }, body: JSON.stringify(values) });
     await prepareDatabase();
     if (entityName === "ClaimDocument") assertDocumentMetadataOnly(values);
@@ -1000,6 +1005,13 @@ const auth = {
   },
 
   async resetPasswordRequest(email) {
+    if (useSqlApi) {
+      return remoteEntityRequest("/api/auth/password-reset/request", {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ email }),
+      });
+    }
     const state = getMemoryAuth();
     const account = state.accounts.find((item) => item.email === normalizeEmail(email));
     if (!account) return {};
@@ -1010,6 +1022,13 @@ const auth = {
   },
 
   async resetPassword({ resetToken, newPassword }) {
+    if (useSqlApi) {
+      return remoteEntityRequest("/api/auth/password-reset/confirm", {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ token: resetToken, new_password: newPassword }),
+      });
+    }
     const state = getMemoryAuth();
     const accountId = state.resetRequests[resetToken];
     const account = state.accounts.find((item) => item.id === accountId);
@@ -1137,7 +1156,7 @@ const buildAnalysis = async ({ claim_id: claimId, provider, model, disable_fallb
   if (!documents.length) throw createError("No documents uploaded for this claim");
 
   const analysis = await analyzeClaimWithProvider({ claim, documents, provider, model, disable_fallback, onPreflight });
-  await Promise.all(documents.map((document) => {
+  const saveDocumentMetadata = () => Promise.all(documents.map((document) => {
     const detections = analysis.document_types
       .map((type) => ({
         category: type.document_type,
@@ -1186,6 +1205,16 @@ const buildAnalysis = async ({ claim_id: claimId, provider, model, disable_fallb
   }
 
   await entities.Claim.update(claimId, claimUpdates);
+  // Preserve the paid result before saving secondary document classifications.
+  try {
+    await saveDocumentMetadata();
+  } catch (error) {
+    throw createError(
+      "AI analysis completed and was saved, but document classifications could not be saved. Refresh the claim; do not rerun paid analysis.",
+      error.status || 503,
+      "analysis-document-save-failed",
+    );
+  }
   return { data: { analysis, claim_id: claimId, document_count: documents.length } };
 };
 
@@ -1196,28 +1225,7 @@ const buildReport = async ({ claim_id: claimId, edited_data: editedData }) => {
   const documents = await entities.ClaimDocument.filter({ claim_id: claimId });
   const versions = await entities.ReportVersion.filter({ claim_id: claimId });
   const user = currentUser();
-  const storedEvidence = claim.ai_analysis?.evidence_snapshot;
-  const usableStoredEvidence = (item) => {
-    if (!item || !Array.isArray(item.pages)) return false;
-    if (["failed", "unavailable", "unsupported"].includes(item.extraction_status)) return false;
-    return item.pages.some((page) => String(page.text || "").trim())
-      || ["vision-only", "vision-required"].includes(item.extraction_status);
-  };
-  const hasCompleteStoredEvidence = Array.isArray(storedEvidence)
-    && documents.every((document) => storedEvidence.some((item) => item.document_id === document.id && usableStoredEvidence(item)));
-  if (!hasCompleteStoredEvidence) {
-    const unavailableDocuments = documents
-      .filter((document) => !storedEvidence?.some((item) => item.document_id === document.id && usableStoredEvidence(item)))
-      .map((document) => document.file_name || "an uploaded evidence file");
-    throw createError(
-      `A complete Claude analysis is required before generating a report. Re-run AI analysis after resolving: ${unavailableDocuments.join(", ") || "the unavailable evidence"}.`,
-      422,
-      "incomplete-analysis-evidence",
-    );
-  }
-  const evidence = hasCompleteStoredEvidence
-    ? storedEvidence
-    : await createEvidenceSnapshots(documents, (storageKey) => documentStorage.get(storageKey));
+  const evidence = evidenceForDraft(claim.ai_analysis, documents);
   const unifiedDraft = createUnifiedReportDraft({
     claim,
     documents,

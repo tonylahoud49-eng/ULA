@@ -17,14 +17,13 @@ import { calculateAiUsage } from "../billingCalculator.mjs";
  */
 
 const OPENROUTER_BASE_URL = "https://openrouter.ai/api/v1";
-const DEFAULT_MODEL = "meta-llama/llama-3.3-70b-instruct";
+const DEFAULT_MODEL = "openrouter/free";
 const DEFAULT_MAX_COMPLETION_TOKENS = 16_384;
+const DEFAULT_TIMEOUT_MS = 90_000;
 
 function normalizeFallbackModels(value, primaryModel) {
   if (value === undefined) {
-    return ["deepseek/deepseek-chat", "openai/gpt-4o-mini", "qwen/qwen-2.5-72b-instruct"].filter(
-      (m) => m !== primaryModel,
-    );
+    return [];
   }
   const values = Array.isArray(value) ? value : String(value).split(",");
   return [...new Set(values.map((item) => String(item).trim()).filter((item) => item && item !== primaryModel))];
@@ -142,15 +141,10 @@ export function createOpenRouterProvider({
   model,
   fallbackModels,
   maxCompletionTokens,
+  timeoutMs,
   client,
 } = {}) {
   const resolvedModel = model || DEFAULT_MODEL;
-  const modelCandidates = [...new Set([
-    resolvedModel,
-    "meta-llama/llama-3.3-70b-instruct",
-    "deepseek/deepseek-chat",
-    "openai/gpt-4o-mini",
-  ].filter(Boolean))];
   const resolvedFallbackModels = normalizeFallbackModels(fallbackModels, resolvedModel);
   const resolvedMaxCompletionTokens = normalizeMaxCompletionTokens(maxCompletionTokens);
   const openai = client || new OpenAI({
@@ -160,6 +154,8 @@ export function createOpenRouterProvider({
       "HTTP-Referer": "https://github.com/ula-claims-hub",
       "X-Title": "ULA Claims Hub",
     },
+    maxRetries: 0,
+    timeout: Number(timeoutMs) || DEFAULT_TIMEOUT_MS,
   });
   return {
     name: "openrouter",
@@ -236,7 +232,7 @@ export function createOpenRouterProvider({
       let parsed;
       let lastParseError;
       for (const [attemptIndex, attempt] of attempts.entries()) {
-        const candidateModels = attempt.model === resolvedModel ? modelCandidates : [attempt.model];
+        const candidateModels = [attempt.model];
         let lastRequestError;
         for (const [index, candidateModel] of candidateModels.entries()) {
           try {

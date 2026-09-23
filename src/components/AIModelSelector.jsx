@@ -14,14 +14,7 @@ import { Input } from "@/components/ui/input";
 import { Sparkles, Activity, CheckCircle2, AlertCircle, Loader2, Send } from "lucide-react";
 
 export const POPULAR_MODELS = [
-  { value: "openrouter:openrouter/auto", label: "openrouter/auto (Auto-route)", provider: "openrouter", model: "openrouter/auto", org: "OpenRouter" },
-  { value: "openrouter:meta-llama/llama-3.3-70b-instruct", label: "llama-3.3-70b-instruct", provider: "openrouter", model: "meta-llama/llama-3.3-70b-instruct", org: "OpenRouter" },
-  { value: "openrouter:deepseek/deepseek-chat", label: "deepseek-chat", provider: "openrouter", model: "deepseek/deepseek-chat", org: "OpenRouter" },
-  { value: "groq:openai/gpt-oss-120b", label: "gpt-oss-120b (Ultra-fast)", provider: "groq", model: "openai/gpt-oss-120b", org: "Groq" },
-  { value: "gemini:gemini-3.6-flash", label: "gemini-3.6-flash", provider: "gemini", model: "gemini-3.6-flash", org: "Google" },
   { value: "anthropic:claude-sonnet-4-6", label: "claude-sonnet-4-6", provider: "anthropic", model: "claude-sonnet-4-6", org: "Anthropic" },
-  { value: "openai:gpt-4o", label: "gpt-4o", provider: "openai", model: "gpt-4o", org: "OpenAI" },
-  { value: "ollama:llama3.3", label: "llama3.3", provider: "ollama", model: "llama3.3", org: "Ollama" },
 ];
 
 export default function AIModelSelector({
@@ -34,7 +27,7 @@ export default function AIModelSelector({
 }) {
   const [modelList, setModelList] = useState(POPULAR_MODELS);
   const [isTestOpen, setIsTestOpen] = useState(false);
-  const [testPrompt, setTestPrompt] = useState("Hello! Acknowledge this test and state your model name.");
+  const [testPrompt, setTestPrompt] = useState("Reply OK.");
   const [testing, setTesting] = useState(false);
   const [testResult, setTestResult] = useState(null);
 
@@ -50,7 +43,7 @@ export default function AIModelSelector({
             const updated = [...prev];
             data.configured_providers.forEach((cp) => {
               const key = `${cp.provider}:${cp.model}`;
-              if (!updated.some((item) => item.value === key || item.model === cp.model)) {
+              if (!updated.some((item) => item.value === key)) {
                 updated.unshift({
                   value: key,
                   label: cp.model,
@@ -60,14 +53,18 @@ export default function AIModelSelector({
                 });
               }
             });
-            return updated;
+            return updated.filter((item) => item.provider === "anthropic"
+              || data.configured_providers.some((cp) => `${cp.provider}:${cp.model}` === item.value));
           });
         }
 
         if (!value) {
           const saved = localStorage.getItem("ula_ai_selected_provider");
-          const found = POPULAR_MODELS.find((p) => p.value === saved || p.model === saved || p.provider === saved);
-          const initial = found ? found.value : POPULAR_MODELS[0].value;
+          const configured = data.configured_providers || [];
+          const found = configured.find((item) => `${item.provider}:${item.model}` === saved)
+            || configured.find((item) => item.provider === data.provider)
+            || POPULAR_MODELS.find((item) => item.value === saved);
+          const initial = found ? `${found.provider}:${found.model}` : POPULAR_MODELS[0].value;
           onChange(initial);
         }
 
@@ -97,10 +94,10 @@ export default function AIModelSelector({
   };
 
   const selectedItem = modelList.find((p) => p.value === value || p.provider === value || p.model === value) || {
-    value: value || "gemini:gemini-3.6-flash",
-    label: value || "gemini-3.6-flash",
+    value: value || "gemini:gemini-3.7-flash",
+    label: value || "gemini-3.7-flash",
     provider: (value || "").split(":")[0] || "gemini",
-    model: (value || "").includes(":") ? (value || "").split(":").slice(1).join(":") : (value || "gemini-3.6-flash"),
+    model: (value || "").includes(":") ? (value || "").split(":").slice(1).join(":") : (value || "gemini-3.7-flash"),
     org: "Configured",
   };
 
@@ -110,7 +107,7 @@ export default function AIModelSelector({
     setTestResult(null);
 
     const controller = new AbortController();
-    const timeoutId = setTimeout(() => controller.abort(), 10000);
+    const timeoutId = setTimeout(() => controller.abort(), 17000);
 
     try {
       const res = await fetch("/api/ai/test-chat", {
@@ -131,7 +128,7 @@ export default function AIModelSelector({
       setTestResult({
         ok: false,
         error: err.name === "AbortError"
-          ? `Connection timed out after 10s. The model '${selectedItem.model}' is unreachable or rate-limited.`
+          ? `Connection timed out. The model '${selectedItem.model}' is unreachable or rate-limited.`
           : (err.message || "Failed to reach AI server."),
         latency_ms: 10000,
       });

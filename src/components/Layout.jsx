@@ -1,5 +1,5 @@
 import React, { useMemo, useState } from "react";
-import { NavLink, Outlet, useLocation, useNavigate } from "react-router-dom";
+import { NavLink, Outlet, useLocation } from "react-router-dom";
 import {
   CalendarDays,
   ChevronRight,
@@ -14,7 +14,6 @@ import {
   Terminal,
   X,
 } from "lucide-react";
-import { appClient } from "@/api/appClient";
 import { Button } from "@/components/ui/button";
 import { useAuth } from "@/lib/AuthContext";
 import AILogsModal from "@/components/AILogsModal";
@@ -38,9 +37,8 @@ const pageTitles = {
 
 export default function Layout() {
   const [open, setOpen] = useState(false);
-  const navigate = useNavigate();
   const location = useLocation();
-  const { user } = useAuth();
+  const { user, logout } = useAuth();
 
   const pageTitle = useMemo(() => {
     if (location.pathname.startsWith("/claims/")) return "Claim Workspace";
@@ -48,8 +46,7 @@ export default function Layout() {
   }, [location.pathname]);
 
   const handleLogout = async () => {
-    await appClient.auth.logout();
-    navigate("/login");
+    await logout();
   };
 
   return (

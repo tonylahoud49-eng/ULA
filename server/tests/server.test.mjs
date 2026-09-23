@@ -45,6 +45,7 @@ test("local-data API exposes health and a truthful unavailable analysis state", 
     OPENAI_API_KEY: process.env.OPENAI_API_KEY,
     OPENROUTER_API_KEY: process.env.OPENROUTER_API_KEY,
     GEMINI_API_KEY: process.env.GEMINI_API_KEY,
+    GOOGLE_API_KEY: process.env.GOOGLE_API_KEY,
     GEMINI_API_KEY_2: process.env.GEMINI_API_KEY_2,
     GROQ_API_KEY: process.env.GROQ_API_KEY,
     ANTHROPIC_API_KEY: process.env.ANTHROPIC_API_KEY,
@@ -63,10 +64,11 @@ test("local-data API exposes health and a truthful unavailable analysis state", 
     AUTH_STATE_FILE: process.env.AUTH_STATE_FILE,
   };
   Object.assign(process.env, {
-    AI_PROVIDER: "openai",
+    AI_PROVIDER: "gemini",
     OPENAI_API_KEY: "",
     OPENROUTER_API_KEY: "",
     GEMINI_API_KEY: "",
+    GOOGLE_API_KEY: "",
     GEMINI_API_KEY_2: "",
     GROQ_API_KEY: "",
     ANTHROPIC_API_KEY: "",
@@ -95,7 +97,7 @@ test("local-data API exposes health and a truthful unavailable analysis state", 
 
     const status = await fetch(`${baseUrl}/api/ai/status`).then((response) => response.json());
     assert.equal(status.configured, false);
-    assert.equal(status.provider, "openai");
+    assert.equal(status.provider, "gemini");
 
     const cookie = await loginCookie(baseUrl);
 
@@ -122,6 +124,7 @@ test("regression: closed debug output does not turn a valid mocked Claude analys
     AI_PROVIDER: process.env.AI_PROVIDER,
     ANTHROPIC_API_KEY: process.env.ANTHROPIC_API_KEY,
     ANTHROPIC_MODEL: process.env.ANTHROPIC_MODEL,
+    ANTHROPIC_MAX_OUTPUT_TOKENS: process.env.ANTHROPIC_MAX_OUTPUT_TOKENS,
     ANTHROTIC_API_KEY: process.env.ANTHROTIC_API_KEY,
     OPENAI_API_KEY: process.env.OPENAI_API_KEY,
     OPENROUTER_API_KEY: process.env.OPENROUTER_API_KEY,
@@ -133,6 +136,7 @@ test("regression: closed debug output does not turn a valid mocked Claude analys
     AI_PROVIDER: "anthropic",
     ANTHROPIC_API_KEY: "mock-server-only-key",
     ANTHROPIC_MODEL: "claude-sonnet-4-6",
+    ANTHROPIC_MAX_OUTPUT_TOKENS: "",
     ANTHROTIC_API_KEY: "",
     OPENAI_API_KEY: "",
     OPENROUTER_API_KEY: "",
@@ -227,7 +231,7 @@ test("regression: closed debug output does not turn a valid mocked Claude analys
     assert.equal(mockedAnthropicCalls, 1);
     assert.equal(anthropicRequest.headers["x-api-key"], "mock-server-only-key");
     assert.equal(providerBody.model, "claude-sonnet-4-6");
-    assert.equal(providerBody.max_tokens, 12_000);
+    assert.equal(providerBody.max_tokens, 64_000);
     assert.deepEqual(providerBody.thinking, { type: "enabled", budget_tokens: 2_500 });
     assert.equal(providerBody.stream, true);
     assert.equal(providerBody.tools, undefined);

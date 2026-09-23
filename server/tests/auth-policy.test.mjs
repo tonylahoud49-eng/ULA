@@ -51,6 +51,27 @@ async function fixture() {
   return { service, baseUrl, close };
 }
 
+async function fixtureWithEmployeeProvisioning(createEmployeeAccount) {
+  const directory = await fs.mkdtemp(path.join(os.tmpdir(), "ula-auth-policy-"));
+  const service = createAuthService({
+    stateFile: path.join(directory, "auth-state.json"),
+    seedUsers: [approvedUser(), adminUser()],
+  });
+  const app = express();
+  app.use(express.json());
+  const authHttp = createAuthHttp({ service, createEmployeeAccount });
+  authHttp.registerRoutes(app);
+  const listener = await new Promise((resolve) => {
+    const server = app.listen(0, "127.0.0.1", () => resolve(server));
+  });
+  const baseUrl = `http://127.0.0.1:${listener.address().port}`;
+  const close = async () => {
+    await new Promise((resolve, reject) => listener.close((error) => error ? reject(error) : resolve()));
+    await fs.rm(directory, { recursive: true, force: true });
+  };
+  return { service, baseUrl, close };
+}
+
 const login = async (baseUrl, email, password) => {
   const response = await fetch(`${baseUrl}/api/auth/login`, {
     method: "POST",
@@ -134,4 +155,39 @@ test("existing role permissions remain unchanged", async (context) => {
   const adminRoute = await fetch(`${current.baseUrl}/api/admin-only`, { headers: { cookie: administrator.cookie } });
   assert.equal(adminRoute.status, 200);
   assert.equal((await adminRoute.json()).ok, true);
+});
+
+test("administrator can provision an employee account when a provisioning store is configured", async (context) => {
+  let receivedActor;
+  const current = await fixtureWithEmployeeProvisioning(async (values, actor) => {
+    receivedActor = actor;
+    const account = await current.service.createUser(values);
+    return {
+      account,
+      employee: {
+        id: "employee-new",
+        account_id: account.id,
+        user_id: account.id,
+        name: values.full_name,
+        email: values.email,
+      },
+    };
+  });
+  context.after(current.close);
+  const administrator = await login(current.baseUrl, "admin@unitedlossadjusters.com", "AdminPass123!");
+  const response = await fetch(`${current.baseUrl}/api/admin/employees`, {
+    method: "POST",
+    headers: { "content-type": "application/json", cookie: administrator.cookie },
+    body: JSON.stringify({
+      full_name: "New Employee",
+      email: "new.employee@unitedlossadjusters.com",
+      job_title: "Claims Handler",
+      password: "TempPass123!",
+    }),
+  });
+  const body = await response.json();
+  assert.equal(response.status, 201);
+  assert.equal(body.account.email, "new.employee@unitedlossadjusters.com");
+  assert.equal(body.employee.account_id, body.account.id);
+  assert.equal(receivedActor.role, "admin");
 });

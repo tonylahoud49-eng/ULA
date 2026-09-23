@@ -4,6 +4,7 @@ import {
   reportReadiness,
 } from "./reportTemplates.js";
 import { buildMasterReportData, sanitizeReportValue } from "./masterReportDocx.js";
+import { unreviewedAttachments, attachmentReviewMessage } from "./reportEvidenceGate.js";
 
 export const REQUIRES_CONFIRMATION = "Specific supporting evidence required";
 
@@ -2153,6 +2154,14 @@ export function buildNormalizedClaimRecord({ claim = {}, documents = [], analysi
   const policyAnalysis = buildPolicyAnalysis(facts, chronology, validationChecks, evidenceFindings);
   const adjustment = buildAdjustment(financials, validationChecks, adjustmentLineItems);
   const evidenceGaps = buildEvidenceGaps(outstandingDocuments, financials, causeAssessment, policyAnalysis, conflicts);
+  const excludedAttachments = unreviewedAttachments(evidence);
+  evidenceGaps.push(...excludedAttachments.map((item) => ({
+    gap: item.document_name,
+    document_id: item.document_id,
+    category: "unreviewed_attachment",
+    priority: "material",
+    impact: attachmentReviewMessage(item),
+  })));
   const liabilityAnalysis = buildLiabilityAnalysis(facts, businessLine, evidenceFindings, financials);
   const quantumAnalysis = buildQuantumAnalysis(financials, adjustment, validationChecks);
   const reportQuality = buildReportQualityReview({
@@ -2167,6 +2176,8 @@ export function buildNormalizedClaimRecord({ claim = {}, documents = [], analysi
     evidenceGaps,
   });
   const appendices = documentRegister.filter((document) => document.categories.includes("Photographs") || document.image_only_pages > 0);
+  reportQuality.issue_blockers.push(...excludedAttachments.map(attachmentReviewMessage));
+  reportQuality.review_actions.push(...excludedAttachments.map(attachmentReviewMessage));
   const selectedPhotographs = buildSelectedPhotographs(appendices, evidenceFindings);
   return {
     business_line: businessLine,
@@ -2281,6 +2292,7 @@ export function createUnifiedReportDraft({ claim, documents, versions, generated
       return `- **${evidenceId} - ${document.document_name}**: ${categories}; ${extraction}.`;
     }).join("\n")
     : "- No uploaded evidence file is registered for this claim.";
+  const attachmentGaps = normalizedRecord.evidence_gaps.filter((gap) => gap.category === "unreviewed_attachment");
   const outstandingDocuments = normalizedRecord.outstanding_documents.length
     ? normalizedRecord.outstanding_documents.map((item) => `- **${item}** — obtain the substantive current-claim evidence required for the related decision.`).join("\n")
     : "- No template-required document category is presently outstanding; substantive sufficiency remains subject to human review.";
@@ -2403,7 +2415,8 @@ export function createUnifiedReportDraft({ claim, documents, versions, generated
       case "conclusion":
         return `In our opinion\n\n${masterList("conclusion_items")}`;
       case "supporting_documents": return masterList("enclosure_items");
-      case "outstanding_documents": return masterList("outstanding_items");
+      case "outstanding_documents": return masterList("outstanding_items")
+        + attachmentGaps.map((gap) => `\n- **${gap.gap} (not reviewed)**: ${gap.impact}`).join("");
       case "appendices": return masterData.appendices.length ? masterData.appendices.map((entry) => `### ${entry.heading}\n\n${entry.description}`).join("\n\n") : "No appendix evidence was established in the uploaded file set.";
       case "notice": case "notices":
         return `| Notice detail | Evidence-supported value |\n| --- | --- |\n${tableRows(normalizedRecord, index, [["Date of intimation", "date_of_intimation"], ["Notice of claim date", "notice_date"], ["Carrier", "carrier"], ["Bill of lading", "bill_of_lading"], ["Air waybill", "air_waybill"]])}`;

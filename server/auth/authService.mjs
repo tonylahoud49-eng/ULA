@@ -99,7 +99,19 @@ export function createAuthService({
     await fs.mkdir(path.dirname(stateFile), { recursive: true });
     const temporary = `${stateFile}.${process.pid}.${crypto.randomUUID()}.tmp`;
     await fs.writeFile(temporary, JSON.stringify(state, null, 2), "utf8");
-    await fs.rename(temporary, stateFile);
+    let lastError;
+    for (let attempt = 0; attempt < 8; attempt += 1) {
+      try {
+        await fs.rename(temporary, stateFile);
+        return;
+      } catch (error) {
+        lastError = error;
+        if (!["EACCES", "EBUSY", "EPERM"].includes(error.code)) throw error;
+        await new Promise((resolve) => setTimeout(resolve, 25 * (attempt + 1)));
+      }
+    }
+    await fs.rm(temporary, { force: true });
+    throw lastError;
   }
 
   const prune = (state) => {

@@ -42,10 +42,13 @@ export const AuthProvider = ({ children }) => {
   }, []);
 
   const logout = async (shouldRedirect = true) => {
-    await appClient.auth.logout();
-    setUser(null);
-    setIsAuthenticated(false);
-    if (shouldRedirect) window.location.href = "/login";
+    try {
+      await appClient.auth.logout();
+    } finally {
+      setUser(null);
+      setIsAuthenticated(false);
+      if (shouldRedirect) window.location.replace("/login");
+    }
   };
 
   const navigateToLogin = () => {
