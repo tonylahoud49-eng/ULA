@@ -2,6 +2,8 @@
 
 React and Vite application for claims management, document review, report drafting, and annual leave administration.
 
+For complete setup, PostgreSQL, Windows deployment, IIS/NSSM, backup, workflow, troubleshooting, and maintenance instructions, see [`docs/ULA_FULL_DOCUMENTATION.md`](docs/ULA_FULL_DOCUMENTATION.md).
+
 ## Requirements
 
 - Node.js 20.19 or newer

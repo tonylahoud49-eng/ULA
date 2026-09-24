@@ -22,8 +22,11 @@ Write-Host "This prompt is local. The passwords are not printed, committed, or s
 $adminSecret = Read-Host "Enter the local postgres administrator password" -AsSecureString
 $adminCredential = [PSCredential]::new("postgres", $adminSecret)
 $adminPassword = $adminCredential.GetNetworkCredential().Password
+$migrationPassword = -join (1..40 | ForEach-Object { "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789"[(Get-Random -Minimum 0 -Maximum 62)] })
 $runtimePassword = -join (1..40 | ForEach-Object { "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789"[(Get-Random -Minimum 0 -Maximum 62)] })
+$encodedMigrationPassword = [Uri]::EscapeDataString($migrationPassword)
 $encodedRuntimePassword = [Uri]::EscapeDataString($runtimePassword)
+$migrationUrl = "postgres://$migrationRole`:$encodedMigrationPassword@127.0.0.1:5432/$databaseName"
 $runtimeUrl = "postgres://$runtimeRole`:$encodedRuntimePassword@127.0.0.1:5432/$databaseName"
 
 $env:PGPASSWORD = $adminPassword
@@ -42,7 +45,7 @@ BEGIN
   END IF;
 END
 `$`$;
-ALTER ROLE $migrationRole PASSWORD '$runtimePassword';
+ALTER ROLE $migrationRole PASSWORD '$migrationPassword';
 ALTER ROLE $runtimeRole PASSWORD '$runtimePassword';
 "@
   & $psqlPath -w -h 127.0.0.1 -U postgres -d postgres -v ON_ERROR_STOP=1 -c $roleSql | Out-Null
@@ -62,7 +65,7 @@ ALTER ROLE $runtimeRole PASSWORD '$runtimePassword';
   & $pgDumpPath -w -h 127.0.0.1 -U postgres -d $databaseName -Fc -f $backupFile
   if ($LASTEXITCODE -ne 0) { throw "Could not create the database backup." }
 
-  $env:DATABASE_MIGRATION_URL = "postgres://$migrationRole`:$encodedRuntimePassword@127.0.0.1:5432/$databaseName"
+  $env:DATABASE_MIGRATION_URL = $migrationUrl
   $env:DATABASE_URL = $runtimeUrl
   $env:DATABASE_RUNTIME_ROLE = $runtimeRole
   $env:DATABASE_SSL = "false"
@@ -85,7 +88,7 @@ ALTER ROLE $runtimeRole PASSWORD '$runtimePassword';
   $lines = if (Test-Path -LiteralPath $environmentPath) { [IO.File]::ReadAllLines($environmentPath) } else { @() }
   $updates = [ordered]@{
     DATABASE_URL = $runtimeUrl
-    DATABASE_MIGRATION_URL = "postgres://$migrationRole`:$encodedRuntimePassword@127.0.0.1:5432/$databaseName"
+    DATABASE_MIGRATION_URL = $migrationUrl
     DATABASE_RUNTIME_ROLE = $runtimeRole
     DATABASE_SSL = "false"
     VITE_SQL_BACKEND = "true"
@@ -104,5 +107,5 @@ ALTER ROLE $runtimeRole PASSWORD '$runtimePassword';
 } finally {
   Remove-Item Env:PGPASSWORD -ErrorAction SilentlyContinue
   Remove-Item Env:DATABASE_URL,Env:DATABASE_MIGRATION_URL,Env:DATABASE_RUNTIME_ROLE,Env:DATABASE_SSL -ErrorAction SilentlyContinue
-  Remove-Variable adminSecret,adminCredential,adminPassword,runtimePassword,encodedRuntimePassword,runtimeUrl,roleSql,updates,lines -ErrorAction SilentlyContinue
+  Remove-Variable adminSecret,adminCredential,adminPassword,migrationPassword,runtimePassword,encodedMigrationPassword,encodedRuntimePassword,migrationUrl,runtimeUrl,roleSql,updates,lines -ErrorAction SilentlyContinue
 }
