@@ -23,6 +23,7 @@
     "db:check": "node scripts/check-postgres.mjs",
     "db:import-local": "node scripts/import-local-data-to-postgres.mjs",
     "production:check": "node scripts/check-production.mjs",
+    "docs:html": "node scripts/generate-documentation-html.mjs",
     "preview": "vite preview"
   },
   "dependencies": {

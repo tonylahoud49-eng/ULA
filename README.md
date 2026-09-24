@@ -2,7 +2,7 @@
 
 React and Vite application for claims management, document review, report drafting, and annual leave administration.
 
-For complete setup, PostgreSQL, Windows deployment, IIS/NSSM, backup, workflow, troubleshooting, and maintenance instructions, see [`docs/ULA_FULL_DOCUMENTATION.md`](docs/ULA_FULL_DOCUMENTATION.md).
+For complete setup, PostgreSQL, Windows deployment, IIS/NSSM, backup, workflow, troubleshooting, and maintenance instructions, use the [visual HTML manual](docs/ULA_FULL_DOCUMENTATION.html) or its [Markdown source](docs/ULA_FULL_DOCUMENTATION.md).
 
 ## Requirements
 
