@@ -6,7 +6,9 @@ import { Input } from "@/components/ui/input";
 import { PasswordInput } from "@/components/PasswordInput";
 import { Label } from "@/components/ui/label";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
-import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle, DialogTrigger } from "@/components/ui/dialog";
+import { Dialog, DialogBody, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle, DialogTrigger } from "@/components/ui/dialog";
+import LoadError from "@/components/LoadError";
+import ConfirmAction from "@/components/ConfirmAction";
 import { KeyRound, Mail, ShieldAlert, UserCheck, UserMinus, UserPlus, Users } from "lucide-react";
 import { toast } from "@/components/ui/use-toast";
 
@@ -16,14 +18,18 @@ export default function AdminUsers() {
   const [users, setUsers] = useState([]);
   const [currentUser, setCurrentUser] = useState(null);
   const [loading, setLoading] = useState(true);
+  const [loadError, setLoadError] = useState("");
+  const [search, setSearch] = useState("");
+  const [action, setAction] = useState(null);
 
   const loadData = async () => {
+    setLoadError("");
     try {
       const [me, accounts] = await Promise.all([appClient.auth.me(), appClient.auth.listAccounts()]);
       setCurrentUser(me);
       setUsers(accounts || []);
     } catch (error) {
-      toast({ variant: "destructive", title: "Accounts could not be loaded", description: error.message });
+      setLoadError(`Accounts could not be loaded. ${error.message}`);
     } finally {
       setLoading(false);
     }
@@ -38,6 +44,7 @@ export default function AdminUsers() {
       await loadData();
     } catch (error) {
       toast({ variant: "destructive", title: "Update failed", description: error.message });
+      return false;
     }
   };
 
@@ -48,6 +55,7 @@ export default function AdminUsers() {
       await loadData();
     } catch (error) {
       toast({ variant: "destructive", title: "Update failed", description: error.message });
+      return false;
     }
   };
 
@@ -57,6 +65,8 @@ export default function AdminUsers() {
 
   const approvedCount = users.filter((user) => user.status === "approved").length;
   const adminCount = users.filter((user) => user.role === "admin").length;
+  const filteredUsers = users.filter((user) => [user.full_name, user.email, user.job_title].some((value) => String(value || "").toLowerCase().includes(search.toLowerCase())));
+  if (loadError) return <LoadError message={loadError} onRetry={loadData} />;
 
   return (
     <div className="space-y-6">
@@ -73,6 +83,7 @@ export default function AdminUsers() {
         <Metric label="Access granted" value={approvedCount} />
         <Metric label="Administrators" value={adminCount} />
       </div>
+      <ConfirmAction action={action} onClose={() => setAction(null)} />
 
       <Card className="docket-surface overflow-hidden p-0 shadow-none">
         <div className="flex items-center justify-between border-b bg-muted/20 px-5 py-4">
@@ -80,9 +91,10 @@ export default function AdminUsers() {
           <span className="hidden text-xs text-muted-foreground sm:block">Outlook email is used as the app login</span>
         </div>
 
-        {users.length === 0 ? (
+        <div className="border-b p-4"><Input aria-label="Search employees" placeholder="Search name, email or job title" value={search} onChange={(event) => setSearch(event.target.value)} /></div>
+        {filteredUsers.length === 0 ? (
           <div className="px-6 py-14 text-center">
-            <p className="font-heading text-xl font-semibold">No employee accounts yet</p>
+            <p className="font-heading text-xl font-semibold">{search ? "No matching employees" : "No employee accounts yet"}</p>
             <p className="mt-1 text-sm text-muted-foreground">Use Add Employee to create the first profile and login.</p>
           </div>
         ) : (
@@ -90,7 +102,7 @@ export default function AdminUsers() {
             <table className="register-table min-w-[980px]">
               <thead><tr><th>Employee</th><th>Job title</th><th>App access</th><th>Status</th><th>Password</th><th className="text-right">Actions</th></tr></thead>
               <tbody>
-                {users.map((account) => {
+                {filteredUsers.map((account) => {
                   const isCurrentUser = account.id === currentUser?.id;
                   return (
                     <tr key={account.id} className={isCurrentUser ? "bg-primary/[0.025]" : ""}>
@@ -107,10 +119,10 @@ export default function AdminUsers() {
                           <ResetPasswordDialog account={account} />
                           {!isCurrentUser && (
                             <>
-                              <Button size="sm" variant="outline" onClick={() => updateUserStatus(account.id, account.status === "approved" ? "revoked" : "approved")} className={account.status === "approved" ? "h-8 border-destructive/30 text-destructive hover:bg-destructive/5 hover:text-destructive" : "h-8"}>
+                              <Button size="sm" variant="outline" onClick={() => setAction({ title: `${account.status === "approved" ? "Revoke" : "Grant"} access?`, description: account.email, onConfirm: () => updateUserStatus(account.id, account.status === "approved" ? "revoked" : "approved") })} className={account.status === "approved" ? "h-8 border-destructive/30 text-destructive hover:bg-destructive/5 hover:text-destructive" : "h-8"}>
                                 {account.status === "approved" ? <UserMinus className="mr-1 h-3.5 w-3.5" /> : <UserCheck className="mr-1 h-3.5 w-3.5" />}{account.status === "approved" ? "Revoke" : "Approve"}
                               </Button>
-                              <Button size="sm" variant="ghost" onClick={() => updateUserRole(account.id, account.role === "admin" ? "user" : "admin")} className="h-8 text-xs">
+                              <Button size="sm" variant="ghost" onClick={() => setAction({ title: account.role === "admin" ? "Remove administrator access?" : "Grant administrator access?", description: account.email, onConfirm: () => updateUserRole(account.id, account.role === "admin" ? "user" : "admin") })} className="h-8 text-xs">
                                 {account.role === "admin" ? "Make employee" : "Make admin"}
                               </Button>
                             </>
@@ -172,9 +184,10 @@ function AddEmployeeDialog({ onCreated }) {
   return (
     <Dialog open={open} onOpenChange={handleOpen}>
       <DialogTrigger asChild><Button className="gap-2 bg-primary text-primary-foreground hover:bg-primary/90"><UserPlus className="h-4 w-4" aria-hidden="true" /> Add Employee</Button></DialogTrigger>
-      <DialogContent className="sm:max-w-[520px]">
-        <DialogHeader><DialogTitle>Add employee</DialogTitle><DialogDescription>Create the employee profile and application login together.</DialogDescription></DialogHeader>
-        <form onSubmit={handleSubmit} className="space-y-4 py-1">
+      <DialogContent className="sm:max-w-[520px] flex flex-col gap-0 overflow-hidden p-0">
+        <DialogHeader className="border-b p-5 pr-10"><DialogTitle>Add employee</DialogTitle><DialogDescription>Create the employee profile and application login together.</DialogDescription></DialogHeader>
+        <form onSubmit={handleSubmit} className="flex min-h-0 flex-col">
+          <DialogBody className="space-y-4">
           <Field label="Full name" id="employee-name"><Input id="employee-name" required autoComplete="name" value={form.full_name} onChange={(event) => setField("full_name", event.target.value)} /></Field>
           <Field label="Outlook email / app login" id="employee-email"><Input id="employee-email" type="email" required autoComplete="email" placeholder="name@unitedlossadjusters.com" value={form.email} onChange={(event) => setField("email", event.target.value)} /></Field>
           <Field label="Job title" id="employee-job-title"><Input id="employee-job-title" required placeholder="e.g. Claims Handler" value={form.job_title} onChange={(event) => setField("job_title", event.target.value)} /></Field>
@@ -183,7 +196,8 @@ function AddEmployeeDialog({ onCreated }) {
             <Field label="Temporary app password" id="employee-password"><PasswordInput id="employee-password" minLength={8} required autoComplete="new-password" placeholder="Minimum 8 characters" value={form.password} onChange={(event) => setField("password", event.target.value)} /></Field>
           </div>
           <p className="text-xs leading-5 text-muted-foreground">This password opens ULA Claims Hub only. It does not create or change the employee's Microsoft Outlook password.</p>
-          <DialogFooter><Button type="button" variant="ghost" onClick={() => handleOpen(false)}>Cancel</Button><Button type="submit" disabled={saving || !form.full_name.trim() || !form.job_title.trim() || !validEmail || !validPassword}>{saving ? "Adding employee…" : "Add Employee"}</Button></DialogFooter>
+          </DialogBody>
+          <DialogFooter className="border-t p-4"><Button type="button" variant="ghost" onClick={() => handleOpen(false)}>Cancel</Button><Button type="submit" disabled={saving || !form.full_name.trim() || !form.job_title.trim() || !validEmail || !validPassword}>{saving ? "Adding employee…" : "Add Employee"}</Button></DialogFooter>
         </form>
       </DialogContent>
     </Dialog>

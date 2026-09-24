@@ -22,6 +22,7 @@ import {
 } from "recharts";
 import { appClient } from "@/api/appClient";
 import { Button } from "@/components/ui/button";
+import LoadError from "@/components/LoadError";
 
 const BUSINESS_LINES = ["Yacht", "Property", "Marine Cargo (Reefer/GFS)", "Marine Cargo (Non-Reefer)", "Bulk Vessel", "Air Shipment (NET)", "Land Shipment", "Fidelity Claims"];
 const PIE_COLORS = ["#1f8a79", "#496f84", "#bd8731", "#b44f46", "#688f83", "#4f5d5a", "#8d6d43"];
@@ -38,15 +39,19 @@ const statusClass = {
 export default function Dashboard() {
   const [claims, setClaims] = useState([]);
   const [loading, setLoading] = useState(true);
+  const [error, setError] = useState("");
+  const [retry, setRetry] = useState(0);
 
   useEffect(() => {
     let active = true;
+    setLoading(true);
+    setError("");
     appClient.entities.Claim.list("-created_date", 200)
       .then((data) => active && setClaims(data))
-      .catch((error) => console.error(error))
+      .catch((reason) => active && setError(`Dashboard could not be loaded. ${reason.message}`))
       .finally(() => active && setLoading(false));
     return () => { active = false; };
-  }, []);
+  }, [retry]);
 
   const stats = useMemo(() => {
     const open = claims.filter((claim) => claim.status !== "Closed").length;
@@ -83,6 +88,8 @@ export default function Dashboard() {
   if (loading) {
     return <div className="flex min-h-[420px] items-center justify-center"><Loader2 className="h-7 w-7 animate-spin text-primary" aria-label="Loading dashboard" /></div>;
   }
+
+  if (error) return <LoadError message={error} onRetry={() => setRetry((value) => value + 1)} />;
 
   return (
     <div className="space-y-6">

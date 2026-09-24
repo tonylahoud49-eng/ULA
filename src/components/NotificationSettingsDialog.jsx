@@ -2,6 +2,7 @@ import React, { useState, useEffect } from "react";
 import {
   Dialog,
   DialogContent,
+  DialogBody,
   DialogHeader,
   DialogTitle,
   DialogFooter,
@@ -12,6 +13,8 @@ import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Switch } from "@/components/ui/switch";
 import { toast } from "@/components/ui/use-toast";
+import LoadError from "@/components/LoadError";
+import { RadioGroup, RadioGroupItem } from "@/components/ui/radio-group";
 import {
   Settings2,
   CheckCircle2,
@@ -42,6 +45,9 @@ export function NotificationSettingsDialog({ triggerButton }) {
   const [diagnostics, setDiagnostics] = useState(null);
   const [settings, setSettings] = useState(getStoredNotificationSettings);
   const [saving, setSaving] = useState(false);
+  const [loading, setLoading] = useState(true);
+  const [loadError, setLoadError] = useState("");
+  const [retry, setRetry] = useState(0);
 
   const fetchDiagnostics = async () => {
     try {
@@ -53,20 +59,26 @@ export function NotificationSettingsDialog({ triggerButton }) {
   };
 
   useEffect(() => {
+    const controller = new AbortController();
     if (open) {
+      setLoading(true);
+      setLoadError("");
       setSettings(getStoredNotificationSettings());
       fetchDiagnostics();
-      fetch("/api/settings/leave-notifications", { credentials: "same-origin" })
+      fetch("/api/settings/leave-notifications", { credentials: "same-origin", signal: controller.signal })
         .then(async (response) => {
           if (!response.ok) throw new Error("Notification settings could not be loaded.");
           return response.json();
         })
-        .then((saved) => setSettings(saved))
-        .catch(() => {});
+        .then((saved) => { if (!controller.signal.aborted) setSettings(saved); })
+        .catch((error) => { if (!controller.signal.aborted) setLoadError(error.message); })
+        .finally(() => { if (!controller.signal.aborted) setLoading(false); });
     }
-  }, [open]);
+    return () => controller.abort();
+  }, [open, retry]);
 
   const handleSave = async () => {
+    if (saving || loading || loadError) return;
     setSaving(true);
     try {
       const response = await fetch("/api/settings/leave-notifications", {
@@ -105,8 +117,8 @@ export function NotificationSettingsDialog({ triggerButton }) {
           </Button>
         )}
       </DialogTrigger>
-      <DialogContent className="sm:max-w-[540px]">
-        <DialogHeader>
+      <DialogContent className="sm:max-w-[540px] flex flex-col gap-0 overflow-hidden p-0">
+        <DialogHeader className="border-b p-5 pr-10">
           <div className="flex items-center gap-2">
             <div className="p-2 rounded-lg bg-primary/10 text-primary">
               <Settings2 className="w-5 h-5" />
@@ -120,6 +132,9 @@ export function NotificationSettingsDialog({ triggerButton }) {
           </div>
         </DialogHeader>
 
+        <DialogBody>
+        {loadError && <LoadError message={loadError} onRetry={() => setRetry((value) => value + 1)} />}
+        {loading && <p className="text-sm" role="status">Loading settings...</p>}
         {diagnostics && (
           <div className={`p-2.5 rounded-md border text-xs flex items-start gap-2 ${
             diagnostics.configured
@@ -142,7 +157,7 @@ export function NotificationSettingsDialog({ triggerButton }) {
           </div>
         )}
 
-        <div className="space-y-4 py-2 text-xs">
+        <fieldset disabled={loading || saving || Boolean(loadError)} className="space-y-4 py-2 text-xs disabled:opacity-60">
           {/* Master Toggle */}
           <div className="flex items-center justify-between p-3 rounded-lg border bg-slate-50">
             <div className="space-y-0.5">
@@ -150,6 +165,7 @@ export function NotificationSettingsDialog({ triggerButton }) {
               <div className="text-[11px] text-slate-500">Dispatch emails on leave submissions and approval/rejection decisions.</div>
             </div>
             <Switch
+              aria-label="Enable automated leave emails"
               checked={settings.enabled}
               onCheckedChange={(val) => setSettings({ ...settings, enabled: val })}
             />
@@ -158,43 +174,43 @@ export function NotificationSettingsDialog({ triggerButton }) {
           {/* Routing Mode Selection */}
           <div className="space-y-2">
             <Label className="text-xs font-semibold text-slate-900">Routing Mode</Label>
-            <div className="grid grid-cols-2 gap-2.5">
-              <div
-                onClick={() => setSettings({ ...settings, routing_mode: "simple" })}
-                className={`p-3 rounded-lg border cursor-pointer transition-all ${
+            <RadioGroup aria-label="Routing mode" value={settings.routing_mode} onValueChange={(routing_mode) => setSettings({ ...settings, routing_mode })} className="grid sm:grid-cols-2 gap-2.5">
+              <label
+                className={`p-3 rounded-lg border cursor-pointer transition-colors ${
                   settings.routing_mode === "simple"
                     ? "border-primary bg-primary/5 ring-1 ring-primary text-primary"
                     : "border-slate-200 hover:border-slate-300 text-slate-700"
                 }`}
               >
+                <RadioGroupItem value="simple" aria-label="Simple routing" className="mb-2" />
                 <div className="font-medium flex items-center gap-1.5">
                   <Mail className="w-3.5 h-3.5" />
                   <span>Simple (1-to-1)</span>
                 </div>
                 <div className="text-[11px] text-muted-foreground mt-1">
-                  Submission $\rightarrow$ Admin only.<br />
-                  Decision $\rightarrow$ Employee only.
+                  Submission: Admin only.<br />
+                  Decision: Employee only.
                 </div>
-              </div>
+              </label>
 
-              <div
-                onClick={() => setSettings({ ...settings, routing_mode: "extended" })}
-                className={`p-3 rounded-lg border cursor-pointer transition-all ${
+              <label
+                className={`p-3 rounded-lg border cursor-pointer transition-colors ${
                   settings.routing_mode === "extended"
                     ? "border-primary bg-primary/5 ring-1 ring-primary text-primary"
                     : "border-slate-200 hover:border-slate-300 text-slate-700"
                 }`}
               >
+                <RadioGroupItem value="extended" aria-label="Manager and HR routing" className="mb-2" />
                 <div className="font-medium flex items-center gap-1.5">
                   <Users className="w-3.5 h-3.5" />
                   <span>Manager & HR CC</span>
                 </div>
                 <div className="text-[11px] text-muted-foreground mt-1">
-                  Submission $\rightarrow$ Admin + Manager CC.<br />
-                  Approval $\rightarrow$ Employee + HR CC.
+                  Submission: Admin + Manager CC.<br />
+                  Approval: Employee + HR CC.
                 </div>
-              </div>
-            </div>
+              </label>
+            </RadioGroup>
           </div>
 
           {/* Additional CC Settings */}
@@ -215,6 +231,7 @@ export function NotificationSettingsDialog({ triggerButton }) {
               <div className="flex items-center justify-between pt-1">
                 <span className="text-slate-700">CC HR on Approved Requests</span>
                 <Switch
+                  aria-label="CC HR on approved requests"
                   checked={settings.cc_hr_on_approval}
                   onCheckedChange={(val) => setSettings({ ...settings, cc_hr_on_approval: val })}
                 />
@@ -222,19 +239,21 @@ export function NotificationSettingsDialog({ triggerButton }) {
               <div className="flex items-center justify-between pt-1">
                 <span className="text-slate-700">CC Line Manager on Submissions</span>
                 <Switch
+                  aria-label="CC line manager on submissions"
                   checked={settings.cc_manager_on_submission}
                   onCheckedChange={(val) => setSettings({ ...settings, cc_manager_on_submission: val })}
                 />
               </div>
             </div>
           )}
-        </div>
+        </fieldset>
+        </DialogBody>
 
-        <DialogFooter className="pt-2">
+        <DialogFooter className="border-t p-4">
           <Button variant="ghost" size="sm" onClick={() => setOpen(false)} className="h-8 text-xs">
             Cancel
           </Button>
-          <Button size="sm" onClick={handleSave} disabled={saving} className="h-8 text-xs gap-1.5 bg-primary text-primary-foreground">
+          <Button size="sm" onClick={handleSave} disabled={saving || loading || Boolean(loadError)} className="h-8 text-xs gap-1.5 bg-primary text-primary-foreground">
             <Save className="w-3.5 h-3.5" />
             <span>{saving ? "Saving..." : "Save Settings"}</span>
           </Button>

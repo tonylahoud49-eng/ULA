@@ -1,5 +1,5 @@
-import React, { useEffect, useMemo, useState } from "react";
-import { useNavigate } from "react-router-dom";
+import React, { useEffect, useMemo, useRef, useState } from "react";
+import { useNavigate, useSearchParams } from "react-router-dom";
 import {
   AlertTriangle,
   ArrowLeft,
@@ -24,7 +24,7 @@ import {
   DialogTrigger,
 } from "@/components/ui/dialog";
 import { Input } from "@/components/ui/input";
-import { Label } from "@/components/ui/label";
+import RField from "@/components/FormField";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Textarea } from "@/components/ui/textarea";
 import { toast } from "@/components/ui/use-toast";
@@ -34,6 +34,9 @@ import AIAnalysisProgressCard, { formatModelDisplayName } from "@/components/AIA
 import AIModelSelector from "@/components/AIModelSelector";
 import AITokenWatch from "@/components/AITokenWatch";
 import AIBillingHistory from "@/components/AIBillingHistory";
+import WorkflowActions from "@/components/WorkflowActions";
+import LoadError from "@/components/LoadError";
+import { savedAnalysisState, reviewedClaimValues } from "@/lib/reportWorkflow";
 
 const BUSINESS_LINES = ["Yacht", "Property", "Marine Cargo (Reefer/GFS)", "Marine Cargo (Non-Reefer)", "Bulk Vessel", "Air Shipment (NET)", "Land Shipment", "Fidelity Claims", "Requires Review", "Unclassified"];
 const STEPS = ["Select Claim", "Upload Evidence", "AI Analysis", "Review & Edit", "Generate Report"];
@@ -129,31 +132,84 @@ export default function AIReporting() {
   const [loadingDummy, setLoadingDummy] = useState(false);
   const [newClaimVisibility, setNewClaimVisibility] = useState("");
   const [billingOpen, setBillingOpen] = useState(false);
+  const [claimsLoading, setClaimsLoading] = useState(true);
+  const [loadError, setLoadError] = useState("");
+  const [selecting, setSelecting] = useState(false);
+  const [saving, setSaving] = useState(false);
+  const [creating, setCreating] = useState(false);
+  const [search, setSearch] = useState("");
+  const selectionVersion = useRef(0);
+  const [searchParams] = useSearchParams();
+  const initialClaimId = searchParams.get("claim");
   const navigate = useNavigate();
   const readiness = useMemo(() => reportReadiness(edited || {}, documents), [edited, documents]);
+  const draftState = useMemo(() => savedAnalysisState(claim, documents), [claim, documents]);
+  const visibleClaims = claims.filter((item) => `${item.title} ${item.claim_number} ${item.insured || ""}`.toLowerCase().includes(search.toLowerCase()));
 
-  useEffect(() => {
-    appClient.entities.Claim.list("-created_date", 100)
-      .then(setClaims)
-      .catch((error) => toast({ variant: "destructive", title: "Claims could not be loaded", description: error.message }));
-  }, []);
-
-  const selectClaim = async (id) => {
-    setSelectedClaimId(id);
-    const selected = await appClient.entities.Claim.get(id);
-    setClaim(selected);
-    setEdited(selected);
-    setDocuments(await appClient.entities.ClaimDocument.filter({ claim_id: id }));
-    setAnalysis(null);
-    setAnalysisError("");
+  const loadClaims = async () => {
+    setClaimsLoading(true);
+    setLoadError("");
+    try {
+      setClaims(await appClient.entities.Claim.list("-created_date", 500));
+    } catch (error) {
+      setLoadError(`Claims could not be loaded. ${error.message}`);
+    } finally {
+      setClaimsLoading(false);
+    }
   };
 
+  const selectClaim = async (id, resume = false) => {
+    const version = ++selectionVersion.current;
+    setSelecting(true);
+    setSelectedClaimId(null);
+    try {
+      const [selected, docs] = await Promise.all([
+        appClient.entities.Claim.get(id),
+        appClient.entities.ClaimDocument.filter({ claim_id: id }),
+      ]);
+      if (version !== selectionVersion.current) return false;
+      if (!selected) throw new Error("Claim not found or access was removed.");
+      setSelectedClaimId(id);
+      setClaim(selected);
+      setDocuments(docs);
+      setAnalysis(selected.ai_analysis || null);
+      setEdited(reviewedClaimValues(selected, selected.ai_analysis));
+      setAnalysisError("");
+      if (resume) setStep(savedAnalysisState(selected, docs).canDraft ? 3 : 1);
+      return true;
+    } catch (error) {
+      if (version === selectionVersion.current) {
+        setLoadError(`Claim could not be opened. ${error.message}`);
+        setStep(0);
+      }
+      return false;
+    } finally {
+      if (version === selectionVersion.current) setSelecting(false);
+    }
+  };
+
+  useEffect(() => {
+    loadClaims();
+    if (initialClaimId) selectClaim(initialClaimId, true);
+    return () => { selectionVersion.current += 1; };
+  }, [initialClaimId]);
+
+  useEffect(() => { window.scrollTo({ top: 0, behavior: "instant" }); }, [step]);
+
   const createClaim = async () => {
-    const year = new Date().getFullYear();
-    const number = `ULA-${year}-${String(claims.length + 1).padStart(4, "0")}`;
-    const created = await appClient.entities.Claim.create({ claim_number: number, title: "New AI Claim", business_line: "Unclassified", status: "New", priority: "Medium", visibility: newClaimVisibility });
-    await selectClaim(created.id);
-    setClaims((current) => [created, ...current]);
+    if (creating) return;
+    setCreating(true);
+    try {
+      const year = new Date().getFullYear();
+      const number = `ULA-${year}-${String(claims.length + 1).padStart(4, "0")}`;
+      const created = await appClient.entities.Claim.create({ claim_number: number, title: "New AI Claim", business_line: "Unclassified", status: "New", priority: "Medium", visibility: newClaimVisibility });
+      if (await selectClaim(created.id)) setStep(1);
+      setClaims((current) => [created, ...current]);
+    } catch (error) {
+      toast({ variant: "destructive", title: "Claim could not be created", description: error.message });
+    } finally {
+      setCreating(false);
+    }
   };
 
   const createDummyTestClaim = async () => {
@@ -210,6 +266,7 @@ export default function AIReporting() {
   };
 
   const runAnalysis = async () => {
+    if (analyzing || !selectedClaimId) return;
     setAnalyzing(true);
     setAnalysisError("");
     setPreflightStats(null);
@@ -252,14 +309,9 @@ export default function AIReporting() {
         });
       }
 
-      await selectClaim(selectedClaimId);
+      if (!await selectClaim(selectedClaimId)) return;
       setAnalysis(response.data.analysis);
-      const suggestions = response.data.analysis.suggested_claim_data || {};
-      setEdited((current) => Object.fromEntries(Object.entries({ ...current, ...suggestions }).map(([key, value]) => {
-        const existing = current[key];
-        const canSuggest = existing === undefined || existing === null || existing === "" || (key === "business_line" && existing === "Unclassified");
-        return [key, canSuggest ? value : existing];
-      })));
+      setEdited((current) => reviewedClaimValues(current, response.data.analysis));
       setStep(3);
     } catch (error) {
       clearTimeout(timer1);
@@ -274,18 +326,27 @@ export default function AIReporting() {
   };
 
   const saveEdits = async () => {
-    const updated = await appClient.entities.Claim.update(selectedClaimId, edited);
-    setClaim(updated);
-    setEdited(updated);
-    toast({ title: "Claim data saved", description: "The controlled draft will use these reviewed values." });
+    if (saving) return;
+    setSaving(true);
+    try {
+      const updated = await appClient.entities.Claim.update(selectedClaimId, edited);
+      setClaim(updated);
+      setEdited(updated);
+      toast({ title: "Claim data saved", description: "The controlled draft will use these reviewed values." });
+    } catch (error) {
+      toast({ variant: "destructive", title: "Changes were not saved", description: error.message });
+    } finally {
+      setSaving(false);
+    }
   };
 
   const generateReport = async () => {
+    if (generating || !draftState.canDraft) return;
     setGenerating(true);
     try {
       await appClient.entities.Claim.update(selectedClaimId, edited);
       await appClient.functions.invoke("generateReport", { claim_id: selectedClaimId, edited_data: edited });
-      navigate(`/claims/${selectedClaimId}`);
+      navigate(`/claims/${selectedClaimId}?tab=report`);
     } catch (error) {
       toast({ variant: "destructive", title: "Draft report could not be generated", description: error.response?.data?.error || error.message });
     } finally {
@@ -298,7 +359,7 @@ export default function AIReporting() {
       <div className="docket-header">
         <div>
           <h2 className="docket-title">Controlled reporting workspace</h2>
-          <p className="docket-subtitle">Register evidence, analyze every source with the configured document-understanding service, verify every suggestion, and generate a unified ULA draft for professional review.</p>
+          <p className="docket-subtitle">{claim ? `${claim.claim_number} - ${claim.title}` : "Claims awaiting review and reporting"}</p>
         </div>
         <div className="flex flex-wrap items-center gap-2.5">
           <Dialog open={billingOpen} onOpenChange={setBillingOpen}>
@@ -331,6 +392,7 @@ export default function AIReporting() {
       </div>
 
       <Stepper step={step} />
+      {loadError && <LoadError message={loadError} onRetry={() => { loadClaims(); if (initialClaimId) selectClaim(initialClaimId, true); }} />}
 
       {step === 0 && (
         <Card className="docket-surface overflow-hidden shadow-none">
@@ -338,30 +400,30 @@ export default function AIReporting() {
             <div><h3 className="font-heading text-xl font-semibold">Select a claim</h3><p className="mt-1 text-xs text-muted-foreground">The business line determines the unified report template.</p></div>
             <div className="flex flex-wrap items-center gap-2">
               <Select value={newClaimVisibility} onValueChange={setNewClaimVisibility}>
-                <SelectTrigger className="w-[210px]"><SelectValue placeholder="Choose claim visibility" /></SelectTrigger>
+                <SelectTrigger aria-label="New claim visibility" className="w-[210px]"><SelectValue placeholder="Choose claim visibility" /></SelectTrigger>
                 <SelectContent>
                   <SelectItem value="private">Private — only me and admins</SelectItem>
                   <SelectItem value="public">Public — all employees</SelectItem>
                 </SelectContent>
               </Select>
-              <Button variant="outline" onClick={createDummyTestClaim} disabled={loadingDummy || !newClaimVisibility}>
+              {import.meta.env.DEV && <Button variant="outline" onClick={createDummyTestClaim} disabled={loadingDummy || !newClaimVisibility}>
                 <Sparkles className="w-4 h-4 mr-2 text-primary" /> {loadingDummy ? "Generating..." : "Create Test Claim with Evidence"}
-              </Button>
-              <Button onClick={createClaim} disabled={!newClaimVisibility}><Wand2 className="w-4 h-4 mr-2" /> Create New AI Claim</Button>
+              </Button>}
+              <Button onClick={createClaim} disabled={creating || selecting || !newClaimVisibility}><Wand2 className="w-4 h-4 mr-2" /> {creating ? "Creating..." : "Create New AI Claim"}</Button>
             </div>
           </div>
-          <div className="max-h-[430px] divide-y overflow-y-auto scrollbar-thin">
-            {claims.length ? claims.map((item) => (
-              <button key={item.id} type="button" onClick={() => selectClaim(item.id)} className={`w-full border-l-2 p-4 text-left transition-colors ${selectedClaimId === item.id ? "border-l-primary bg-primary/5" : "border-l-transparent hover:bg-muted/40"}`}>
+          <div className="border-b p-4"><Input aria-label="Search claims" placeholder="Search claims" value={search} onChange={(event) => setSearch(event.target.value)} /></div>
+          <div className="max-h-[430px] divide-y overflow-y-auto scrollbar-thin" aria-busy={claimsLoading || selecting}>
+            {claimsLoading ? <p className="p-6 text-sm" role="status">Loading claims...</p> : visibleClaims.length ? visibleClaims.map((item) => (
+              <button key={item.id} type="button" aria-pressed={selectedClaimId === item.id} onClick={() => selectClaim(item.id)} className={`w-full border-l-2 p-4 text-left transition-colors ${selectedClaimId === item.id ? "border-l-primary bg-primary/5" : "border-l-transparent hover:bg-muted/40"}`}>
                 <div className="flex flex-wrap items-center justify-between gap-2">
                   <span className="font-semibold">{item.title}</span>
                   <span className="font-mono text-xs text-muted-foreground">{item.claim_number}</span>
                 </div>
                 <p className="mt-1 text-xs text-muted-foreground">{item.business_line} · {item.status}</p>
               </button>
-            )) : <div className="p-10 text-center text-sm text-muted-foreground">No claims registered yet.</div>}
+            )) : <div className="p-10 text-center text-sm text-muted-foreground">{loadError ? "Claims are unavailable." : search ? "No matching claims." : "No claims registered yet."}</div>}
           </div>
-          {selectedClaimId && <div className="flex justify-end border-t p-5"><Button onClick={() => setStep(1)}>Continue <ArrowRight /></Button></div>}
         </Card>
       )}
 
@@ -376,12 +438,10 @@ export default function AIReporting() {
           <DocumentUploader claimId={selectedClaimId} documents={documents} onChanged={reloadDocs} />
           <div className="flex flex-wrap items-center justify-between gap-2">
             <div className="flex gap-2">
-              <Button variant="outline" onClick={() => setStep(0)}><ArrowLeft className="w-4 h-4 mr-2" /> Change claim</Button>
-              <Button variant="secondary" onClick={loadSampleEvidence} disabled={loadingDummy}>
+              {import.meta.env.DEV && <Button variant="secondary" onClick={loadSampleEvidence} disabled={loadingDummy}>
                 <Sparkles className="w-4 h-4 mr-2 text-primary" /> {loadingDummy ? "Attaching..." : "Attach Sample Evidence Pack"}
-              </Button>
+              </Button>}
             </div>
-            <Button onClick={() => setStep(2)} disabled={!documents.length}>Continue to AI Analysis <ArrowRight className="w-4 h-4 ml-2" /></Button>
           </div>
         </div>
       )}
@@ -409,15 +469,13 @@ export default function AIReporting() {
                   onEnableFallbackChange={setEnableFallback}
                   disabled={analyzing}
                 />
-                <Button onClick={runAnalysis} disabled={analyzing} className="ula-gradient text-white hover:opacity-90">Run AI Analysis</Button>
               </div>
-              <div className="mt-6 flex justify-center"><Button variant="ghost" onClick={() => setStep(1)}><ArrowLeft className="w-4 h-4 mr-2" /> Back to upload</Button></div>
             </Card>
           )}
         </div>
       )}
 
-      {step === 3 && claim && <ReviewStep analysis={analysis} edited={edited} setEdited={setEdited} readiness={readiness} onSave={saveEdits} onBack={() => setStep(2)} onNext={() => setStep(4)} selectedProvider={selectedProvider} />}
+      {step === 3 && claim && <ReviewStep analysis={analysis} edited={edited} setEdited={setEdited} readiness={readiness} selectedProvider={selectedProvider} />}
 
       {step === 4 && claim && (
         <Card className="docket-surface overflow-hidden shadow-none">
@@ -444,11 +502,19 @@ export default function AIReporting() {
               </div>
             )}
             <p className="mx-auto max-w-2xl text-sm text-muted-foreground">The generated document remains a draft. Cause, coverage, adjustment, liability, recommendations, and conclusion require professional review; only an authorized approver may issue the final version.</p>
-            <Button onClick={generateReport} disabled={generating} className="mt-5">{generating ? <><Loader2 className="animate-spin" /> Generating report…</> : <><Sparkles /> Generate Draft Report</>}</Button>
-            <div className="mt-5"><Button variant="ghost" onClick={() => setStep(3)}><ArrowLeft /> Back to review</Button></div>
           </div>
         </Card>
       )}
+      <WorkflowActions label="Reporting actions">
+        {step > 0 ? <Button variant="outline" disabled={analyzing || generating || saving} onClick={() => setStep(step - 1)}><ArrowLeft /> Back</Button> : <span className="text-sm text-muted-foreground" role="status">{selecting ? "Opening claim..." : selectedClaimId ? claim?.claim_number : "No claim selected"}</span>}
+        <div className="flex flex-wrap items-center gap-2">
+          {step === 3 && <Button variant="outline" disabled={saving} onClick={saveEdits}><FileText /> {saving ? "Saving..." : "Save changes"}</Button>}
+          {step <= 1 && <Button disabled={!selectedClaimId || selecting || loadingDummy || (step === 1 && !documents.length)} onClick={() => setStep(draftState.canDraft ? 3 : step + 1)}>{draftState.canDraft ? "Review saved analysis" : step === 0 ? "Continue to evidence" : "Continue to analysis"}<ArrowRight /></Button>}
+          {step === 2 && <Button onClick={runAnalysis} disabled={analyzing || !documents.length}>{analyzing ? <Loader2 className="animate-spin" /> : <Sparkles />}{analyzing ? "Analyzing..." : "Run AI Analysis"}</Button>}
+          {step === 3 && <Button disabled={saving || !draftState.canDraft} onClick={() => setStep(4)}>Continue to report<ArrowRight /></Button>}
+          {step === 4 && <Button onClick={generateReport} disabled={generating || !draftState.canDraft}>{generating ? <Loader2 className="animate-spin" /> : <Sparkles />}{generating ? "Generating..." : "Generate Draft Report"}</Button>}
+        </div>
+      </WorkflowActions>
     </div>
   );
 }
@@ -457,7 +523,7 @@ function Stepper({ step }) {
   return (
     <ol className="docket-surface grid overflow-hidden rounded-lg sm:grid-cols-5" aria-label="Report workflow">
       {STEPS.map((label, index) => (
-        <li key={label} className={`flex min-w-0 items-center gap-3 border-b p-3 last:border-b-0 sm:border-b-0 sm:border-r sm:last:border-r-0 ${index === step ? "bg-primary/5" : ""}`}>
+        <li key={label} aria-current={index === step ? "step" : undefined} className={`${index === step ? "flex" : "hidden sm:flex"} min-w-0 items-center gap-3 border-b p-3 last:border-b-0 sm:border-b-0 sm:border-r sm:last:border-r-0 ${index === step ? "bg-primary/5" : ""}`}>
           <span className={`flex h-7 w-7 shrink-0 items-center justify-center rounded-full border text-xs font-semibold ${index < step ? "border-primary bg-primary text-primary-foreground" : index === step ? "border-primary text-primary" : "border-border text-muted-foreground"}`}>{index < step ? <CheckCircle className="h-4 w-4" /> : index + 1}</span>
           <span className={`truncate text-xs font-semibold ${index <= step ? "text-foreground" : "text-muted-foreground"}`}>{label}</span>
         </li>
@@ -466,7 +532,7 @@ function Stepper({ step }) {
   );
 }
 
-function ReviewStep({ analysis, edited, setEdited, readiness, onSave, onBack, onNext, selectedProvider }) {
+function ReviewStep({ analysis, edited, setEdited, readiness, selectedProvider }) {
   const set = (key, value) => setEdited({ ...edited, [key]: value });
   const number = (key, value) => setEdited({ ...edited, [key]: value === "" ? undefined : Number(value) });
   const confidenceClass = analysis?.confidence >= 80 ? "text-emerald-700" : analysis?.confidence >= 60 ? "text-amber-700" : "text-red-700";
@@ -492,7 +558,7 @@ function ReviewStep({ analysis, edited, setEdited, readiness, onSave, onBack, on
       </div>
 
       <Card className="docket-surface overflow-hidden shadow-none">
-        <div className="flex flex-col justify-between gap-3 border-b bg-muted/35 p-5 sm:flex-row sm:items-center"><div><h3 className="font-heading text-xl font-semibold">Review extracted and entered facts</h3><p className="mt-1 text-xs text-muted-foreground">Empty values remain explicit gaps. Saving does not approve any professional determination.</p></div><Button size="sm" variant="outline" onClick={onSave}>Save Changes</Button></div>
+        <div className="border-b bg-muted/35 p-5"><h3 className="font-heading text-xl font-semibold">Review extracted and entered facts</h3><p className="mt-1 text-xs text-muted-foreground">Empty values remain explicit gaps. Saving does not approve any professional determination.</p></div>
         <div className="grid grid-cols-1 gap-4 p-5 sm:grid-cols-2 xl:grid-cols-3">
           <RField label="Business Line"><Select value={edited.business_line || "Unclassified"} onValueChange={(value) => set("business_line", value)}><SelectTrigger><SelectValue /></SelectTrigger><SelectContent>{BUSINESS_LINES.map((line) => <SelectItem key={line} value={line}>{line}</SelectItem>)}</SelectContent></Select></RField>
           <RField label="Employee visibility"><Select value={edited.visibility || "private"} onValueChange={(value) => set("visibility", value)}><SelectTrigger><SelectValue /></SelectTrigger><SelectContent><SelectItem value="private">Private — creator and admins</SelectItem><SelectItem value="public">Public — all employees</SelectItem></SelectContent></Select></RField>
@@ -525,7 +591,6 @@ function ReviewStep({ analysis, edited, setEdited, readiness, onSave, onBack, on
         </Card>
       )}
 
-      <div className="flex justify-between"><Button variant="outline" onClick={onBack}><ArrowLeft /> Back</Button><Button onClick={onNext}>Continue to Report <ArrowRight /></Button></div>
     </div>
   );
 }
@@ -539,6 +604,3 @@ function ReadinessPanel({ readiness }) {
   );
 }
 
-function RField({ label, children }) {
-  return <div><Label className="text-xs font-semibold">{label}</Label><div className="mt-1.5">{children}</div></div>;
-}

@@ -12,12 +12,12 @@ import {
   Shield,
   Settings,
   Terminal,
-  X,
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { useAuth } from "@/lib/AuthContext";
 import AILogsModal from "@/components/AILogsModal";
 import ulaLogo from "@/assets/ula-logo.png";
+import { Sheet, SheetContent, SheetTitle, SheetTrigger } from "@/components/ui/sheet";
 
 const navItems = [
   { to: "/", label: "Dashboard", description: "Portfolio control", icon: LayoutDashboard, end: true },
@@ -49,15 +49,8 @@ export default function Layout() {
     await logout();
   };
 
-  return (
-    <div className="min-h-screen bg-background lg:flex">
-      <a href="#main-content" className="fixed left-3 top-3 z-[60] -translate-y-20 bg-primary px-4 py-2 text-sm font-semibold text-primary-foreground focus:translate-y-0">
-        Skip to content
-      </a>
-
-      <aside
-        className={`fixed inset-y-0 left-0 z-50 flex w-[272px] flex-col border-r border-sidebar-border bg-sidebar text-sidebar-foreground transition-transform duration-300 lg:sticky lg:top-0 lg:h-screen ${open ? "translate-x-0" : "-translate-x-full lg:translate-x-0"}`}
-      >
+  const sidebar = (
+      <div className="flex h-full min-h-0 flex-col bg-sidebar text-sidebar-foreground">
         <div className="border-b border-sidebar-border px-5 py-5">
           <div className="flex items-center gap-3">
             <div className="flex h-14 w-[72px] items-center justify-center overflow-hidden rounded-md bg-white">
@@ -116,7 +109,7 @@ export default function Layout() {
                   className={({ isActive }) => `group flex items-center gap-3 rounded-md px-3 py-3 transition-colors ${isActive ? "bg-sidebar-primary text-sidebar-primary-foreground" : "text-sidebar-foreground/76 hover:bg-sidebar-accent hover:text-white"}`}
                 >
                   <Settings className="h-[18px] w-[18px] shrink-0" aria-hidden="true" />
-                  <span className="min-w-0 flex-1"><span className="block text-sm font-semibold leading-tight">Settings</span><span className="mt-0.5 block text-[0.68rem] leading-tight opacity-65">Audit history</span></span>
+                  <span className="min-w-0 flex-1"><span className="block text-sm font-semibold leading-tight">Settings</span><span className="mt-0.5 block text-[0.68rem] leading-tight opacity-65">Notifications and history</span></span>
                   <ChevronRight className="h-4 w-4 opacity-0 transition-opacity group-hover:opacity-70" aria-hidden="true" />
                 </NavLink>
               </div>
@@ -139,23 +132,30 @@ export default function Layout() {
             Sign out
           </Button>
         </div>
-      </aside>
+      </div>
+  );
 
-      {open && <button type="button" aria-label="Close navigation" className="fixed inset-0 z-40 bg-black/45 lg:hidden" onClick={() => setOpen(false)} />}
-
+  return (
+    <div className="min-h-screen bg-background lg:flex">
+      <a href="#main-content" className="fixed left-3 top-3 z-[60] -translate-y-20 bg-primary px-4 py-2 text-sm font-semibold text-primary-foreground focus:translate-y-0">Skip to content</a>
+      <aside className="sticky top-0 hidden h-screen w-[272px] shrink-0 border-r border-sidebar-border lg:block">{sidebar}</aside>
       <div className="min-w-0 flex-1">
         <header className="sticky top-0 z-30 flex min-h-16 items-center justify-between border-b bg-background/95 px-4 backdrop-blur-sm sm:px-6 lg:px-8">
-          <div className="flex items-center gap-3">
-            <Button variant="ghost" size="icon" className="lg:hidden" onClick={() => setOpen((value) => !value)} aria-label={open ? "Close navigation" : "Open navigation"}>
-              {open ? <X /> : <Menu />}
-            </Button>
-            <div>
-              <h1 className="font-heading text-xl font-semibold leading-none sm:text-2xl">{pageTitle}</h1>
+          <div className="flex min-w-0 items-center gap-2 sm:gap-3">
+            <Sheet open={open} onOpenChange={setOpen}>
+              <SheetTrigger asChild><Button variant="ghost" size="icon" className="shrink-0 lg:hidden" aria-label="Open navigation"><Menu /></Button></SheetTrigger>
+              <SheetContent side="left" aria-describedby={undefined} className="flex w-[min(300px,90vw)] flex-col gap-0 border-sidebar-border bg-sidebar p-0 text-sidebar-foreground">
+                <SheetTitle className="sr-only">Main navigation</SheetTitle>
+                {sidebar}
+              </SheetContent>
+            </Sheet>
+            <div className="min-w-0">
+              <h1 className="font-heading text-lg font-semibold leading-tight sm:text-2xl">{pageTitle}</h1>
               <p className="mt-1 hidden text-xs text-muted-foreground sm:block">United Loss Adjusters &amp; Surveyors</p>
             </div>
           </div>
           <div className="flex items-center gap-3">
-            <AILogsModal
+            {user?.role === "admin" && <AILogsModal
               triggerButton={
                 <Button
                   variant="outline"
@@ -164,12 +164,12 @@ export default function Layout() {
                   title="View real-time server AI analysis logs and diagnostics"
                 >
                   <Terminal className="h-3.5 w-3.5 text-primary" />
-                  <span>AI Logs</span>
+                  <span className="hidden sm:inline">AI Logs</span>
                 </Button>
               }
-            />
+            />}
             <span className="hidden items-center gap-1.5 status-mark border-primary/30 bg-primary/5 text-primary sm:inline-flex">
-              <ClipboardCheck className="h-3.5 w-3.5" /> Local development
+              <ClipboardCheck className="h-3.5 w-3.5" /> {import.meta.env.DEV ? "Local development" : "Claims workspace"}
             </span>
           </div>
         </header>

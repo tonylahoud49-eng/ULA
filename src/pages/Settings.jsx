@@ -7,6 +7,8 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@
 import { Tabs, TabsList, TabsTrigger, TabsContent } from "@/components/ui/tabs";
 import { AlertTriangle, Coins, History, Search } from "lucide-react";
 import AIBillingHistory from "@/components/AIBillingHistory";
+import { NotificationSettingsDialog } from "@/components/NotificationSettingsDialog";
+import { EmailTestDialog } from "@/components/EmailTestDialog";
 
 const formatTime = (value) => value ? new Intl.DateTimeFormat(undefined, { dateStyle: "medium", timeStyle: "medium" }).format(new Date(value)) : "—";
 
@@ -47,17 +49,24 @@ export default function Settings() {
         </div>
       </div>
 
-      <Tabs defaultValue="ai-billing" className="w-full">
-        <TabsList className="w-full justify-start gap-4 border-b border-border/80 pb-px">
+      <Tabs defaultValue="notifications" className="w-full">
+        <TabsList className="w-full justify-start gap-1 overflow-x-auto border-b border-border/80 pb-px">
+          <TabsTrigger value="notifications">Notifications</TabsTrigger>
           <TabsTrigger value="ai-billing" className="gap-2 text-xs sm:text-sm">
             <Coins className="h-4 w-4 text-emerald-600" />
-            AI Usage & Billing History
+            AI Billing
           </TabsTrigger>
           <TabsTrigger value="audit-log" className="gap-2 text-xs sm:text-sm">
             <History className="h-4 w-4 text-primary" />
-            Global Audit Log
+            Audit Log
           </TabsTrigger>
         </TabsList>
+        <TabsContent value="notifications" className="mt-6">
+          <section className="flex flex-wrap items-center justify-between gap-4 border-b py-4">
+            <h3 className="font-heading text-xl font-semibold">Leave notifications</h3>
+            <div className="flex flex-wrap gap-2"><NotificationSettingsDialog /><EmailTestDialog /></div>
+          </section>
+        </TabsContent>
 
         <TabsContent value="ai-billing" className="mt-6">
           <AIBillingHistory

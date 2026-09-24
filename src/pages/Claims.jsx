@@ -162,9 +162,9 @@ export default function Claims() {
           <p className="docket-subtitle">Search every matter, identify its current gate, and open the controlled claim workspace.</p>
         </div>
         <div className="flex gap-2">
-          <Button variant="outline" onClick={generateDummyClaim} disabled={generatingDummy}>
+          {import.meta.env.DEV && <Button variant="outline" onClick={generateDummyClaim} disabled={generatingDummy}>
             <Sparkles className="w-4 h-4 mr-2 text-primary" /> {generatingDummy ? "Generating..." : "Generate Dummy Claim"}
-          </Button>
+          </Button>}
           <Link to="/ai-reporting">
             <Button>
               <Plus className="w-4 h-4 mr-2" /> New AI Claim

@@ -5,7 +5,9 @@ import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
-import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter, DialogTrigger } from "@/components/ui/dialog";
+import { Dialog, DialogBody, DialogContent, DialogHeader, DialogTitle, DialogFooter, DialogTrigger } from "@/components/ui/dialog";
+import LoadError from "@/components/LoadError";
+import ConfirmAction from "@/components/ConfirmAction";
 import { Textarea } from "@/components/ui/textarea";
 import { toast } from "@/components/ui/use-toast";
 import { calculateWorkingDays } from "@/lib/leaveWorkflow";
@@ -21,12 +23,15 @@ export default function AnnualLeave() {
   const [employees, setEmployees] = useState([]);
   const [leaves, setLeaves] = useState([]);
   const [loading, setLoading] = useState(true);
+  const [loadError, setLoadError] = useState("");
+  const [action, setAction] = useState(null);
   const [viewDate, setViewDate] = useState(new Date());
   const [open, setOpen] = useState(false);
   const [currentUser, setCurrentUser] = useState(null);
   const reviewRequestId = useMemo(() => new URLSearchParams(globalThis.location?.search || "").get("request"), []);
 
   const load = async () => {
+    setLoadError("");
     try {
       let [employeeRecords, leaveRecords, user] = await Promise.all([
         appClient.entities.Employee.list(),
@@ -36,6 +41,8 @@ export default function AnnualLeave() {
       setEmployees(employeeRecords);
       setLeaves(leaveRecords);
       setCurrentUser(user);
+    } catch (error) {
+      setLoadError(`Leave information could not be loaded. ${error.message}`);
     } finally {
       setLoading(false);
     }
@@ -50,9 +57,11 @@ export default function AnnualLeave() {
   const totalRemaining = useMemo(() => employees.reduce((s, e) => s + Math.max(0, (e.annual_leave_total ?? 15) - (e.annual_leave_used ?? 0)) + (e.toil_balance ?? 0), 0), [employees]);
 
   if (loading) return <div className="flex justify-center py-20"><div className="w-8 h-8 border-4 border-primary/20 border-t-primary rounded-full animate-spin" /></div>;
+  if (loadError) return <LoadError message={loadError} onRetry={load} />;
 
   return (
     <div className="space-y-6">
+      <ConfirmAction action={action} onClose={() => setAction(null)} />
       <div className="docket-header">
         <div>
           <h2 className="docket-title">Annual leave control</h2>
@@ -118,12 +127,12 @@ export default function AnnualLeave() {
         </Card>
 
         <Card className="docket-surface p-5 shadow-none">
-          <div className="flex items-center justify-between mb-4">
+          <div className="flex flex-wrap items-center justify-between gap-2 mb-4">
             <h3 className="font-heading text-xl font-semibold">{currentUser?.role === "admin" ? "Company calendar" : "My leave calendar"}</h3>
             <div className="flex items-center gap-2">
-              <Button size="icon" variant="ghost" onClick={() => setViewDate(new Date(viewDate.getFullYear(), viewDate.getMonth() - 1, 1))}><ChevronLeft className="w-4 h-4" /></Button>
+              <Button size="icon" variant="ghost" aria-label="Previous month" onClick={() => setViewDate(new Date(viewDate.getFullYear(), viewDate.getMonth() - 1, 1))}><ChevronLeft className="w-4 h-4" /></Button>
               <span className="text-sm font-medium w-32 text-center">{MONTHS[viewDate.getMonth()]} {viewDate.getFullYear()}</span>
-              <Button size="icon" variant="ghost" onClick={() => setViewDate(new Date(viewDate.getFullYear(), viewDate.getMonth() + 1, 1))}><ChevronRight className="w-4 h-4" /></Button>
+              <Button size="icon" variant="ghost" aria-label="Next month" onClick={() => setViewDate(new Date(viewDate.getFullYear(), viewDate.getMonth() + 1, 1))}><ChevronRight className="w-4 h-4" /></Button>
             </div>
           </div>
           <CalendarGrid viewDate={viewDate} leaves={leaves} />
@@ -160,8 +169,8 @@ export default function AnnualLeave() {
                     <td className="py-2.5 text-right">
                       {l.status === "Pending" && currentUser?.role === "admin" && (
                         <div className="flex justify-end gap-1">
-                          <Button size="icon" variant="ghost" title="Approve request" onClick={() => decideLeave(l, "Approved", load)}><Check className="w-4 h-4 text-emerald-600" /></Button>
-                          <Button size="icon" variant="ghost" title="Reject request" onClick={() => decideLeave(l, "Rejected", load)}><X className="w-4 h-4 text-red-500" /></Button>
+                          <Button size="icon" variant="ghost" title="Approve request" aria-label={`Approve request for ${l.employee_name}`} onClick={() => setAction({ title: "Approve leave request?", description: `${l.employee_name}: ${l.start_date} to ${l.end_date} (${l.days} days)`, label: "Approve request", onConfirm: () => decideLeave(l, "Approved", load) })}><Check className="w-4 h-4 text-emerald-600" /></Button>
+                          <Button size="icon" variant="ghost" title="Reject request" aria-label={`Reject request for ${l.employee_name}`} onClick={() => setAction({ title: "Reject leave request?", description: `${l.employee_name}: ${l.start_date} to ${l.end_date}`, label: "Reject request", onConfirm: () => decideLeave(l, "Rejected", load) })}><X className="w-4 h-4 text-red-500" /></Button>
                         </div>
                       )}
                       {currentUser?.role === "admin" && failedEmailTarget(l) && (
@@ -240,8 +249,7 @@ async function decideLeave(leave, decision, reload) {
     if (result.data?.email_error) {
       toast({
         title: `Request ${decision} (Email Failed)`,
-        description: `Leave ${decision.toLowerCase()} locally, but automated email failed: ${result.data.email_error}`,
-        variant: "destructive",
+        description: `Leave ${decision.toLowerCase()} and saved. The email notification needs to be retried.`,
       });
     } else {
       toast({
@@ -251,6 +259,7 @@ async function decideLeave(leave, decision, reload) {
     }
   } catch (error) {
     toast({ title: "Leave request was not updated", description: error.message, variant: "destructive" });
+    return false;
   } finally {
     await reload();
   }
@@ -330,7 +339,7 @@ function LeaveRequestDialog({ employees, currentUser, onCreated }) {
   };
 
   const submit = async () => {
-    if (!form.employee_id || days < 1) return;
+    if (saving || !form.employee_id || days < 1) return;
     setSaving(true);
     try {
       if (!validEmpEmail && validDraftEmail && emp) {
@@ -348,9 +357,8 @@ function LeaveRequestDialog({ employees, currentUser, onCreated }) {
         });
       } else if (result.data?.email_error) {
         toast({
-          title: form.leave_type === "TOIL Claim" ? "TOIL Claim Saved (Email Degraded)" : "Leave Saved (Email Degraded)",
-          description: `Request saved with Pending status, but notification email could not be sent: ${result.data.email_error}`,
-          variant: "destructive",
+          title: "Request saved. Email delivery failed.",
+          description: "Your request is Pending. An administrator can retry the notification from the request's email status.",
         });
       } else {
         toast({
@@ -372,16 +380,16 @@ function LeaveRequestDialog({ employees, currentUser, onCreated }) {
     : "Request Leave";
 
   return (
-    <DialogContent className="max-w-md">
-      <DialogHeader>
+    <DialogContent className="max-w-md flex flex-col gap-0 overflow-hidden p-0">
+      <DialogHeader className="border-b p-5 pr-10">
         <DialogTitle>{modalTitle}</DialogTitle>
       </DialogHeader>
-      <div className="space-y-4 py-2">
+      <DialogBody className="space-y-4">
         {isAdmin && (
           <div>
-            <Label>Employee</Label>
+            <Label htmlFor="leave-employee">Employee</Label>
             <Select value={form.employee_id} onValueChange={handleEmployeeChange}>
-              <SelectTrigger className="mt-1"><SelectValue placeholder="Select employee" /></SelectTrigger>
+              <SelectTrigger id="leave-employee" className="mt-1"><SelectValue placeholder="Select employee" /></SelectTrigger>
               <SelectContent>{employees.map((e) => <SelectItem key={e.id} value={e.id}>{e.name}</SelectItem>)}</SelectContent>
             </Select>
           </div>
@@ -413,9 +421,9 @@ function LeaveRequestDialog({ employees, currentUser, onCreated }) {
         )}
 
         <div>
-          <Label>Category / Leave Type</Label>
+          <Label htmlFor="leave-type">Category / Leave Type</Label>
           <Select value={form.leave_type} onValueChange={(v) => setForm({ ...form, leave_type: v })}>
-            <SelectTrigger className="mt-1"><SelectValue /></SelectTrigger>
+            <SelectTrigger id="leave-type" className="mt-1"><SelectValue /></SelectTrigger>
             <SelectContent>
               <SelectItem value="Annual Leave">Annual Leave (Deduct from 15-day allowance)</SelectItem>
               <SelectItem value="TOIL">TOIL (Take earned time off)</SelectItem>
@@ -427,17 +435,18 @@ function LeaveRequestDialog({ employees, currentUser, onCreated }) {
         </div>
         <div className="grid grid-cols-2 gap-3">
           <div>
-            <Label>{form.leave_type === "TOIL Claim" ? "Worked Start Date" : "Start Date"}</Label>
-            <Input type="date" value={form.start_date} onChange={(e) => setForm({ ...form, start_date: e.target.value })} className="mt-1" />
+            <Label htmlFor="leave-start">{form.leave_type === "TOIL Claim" ? "Worked Start Date" : "Start Date"}</Label>
+            <Input id="leave-start" type="date" value={form.start_date} onChange={(e) => setForm({ ...form, start_date: e.target.value })} className="mt-1" />
           </div>
           <div>
-            <Label>{form.leave_type === "TOIL Claim" ? "Worked End Date" : "End Date"}</Label>
-            <Input type="date" value={form.end_date} onChange={(e) => setForm({ ...form, end_date: e.target.value })} className="mt-1" />
+            <Label htmlFor="leave-end">{form.leave_type === "TOIL Claim" ? "Worked End Date" : "End Date"}</Label>
+            <Input id="leave-end" type="date" min={form.start_date || undefined} value={form.end_date} onChange={(e) => setForm({ ...form, end_date: e.target.value })} className="mt-1" />
           </div>
         </div>
         <div>
-          <Label>{form.leave_type === "TOIL Claim" ? "Work description / reason *" : "Note / reason"}</Label>
+          <Label htmlFor="leave-note">{form.leave_type === "TOIL Claim" ? "Work description / reason *" : "Note / reason"}</Label>
           <Textarea
+            id="leave-note"
             value={form.note}
             onChange={(e) => setForm({ ...form, note: e.target.value })}
             placeholder={form.leave_type === "TOIL Claim" ? "e.g. Worked emergency vessel inspection on weekend" : "Optional comments..."}
@@ -475,8 +484,8 @@ function LeaveRequestDialog({ employees, currentUser, onCreated }) {
           </div>
         )}
         {insufficient && <p className="text-xs text-red-600">Insufficient balance for this request.</p>}
-      </div>
-      <DialogFooter>
+      </DialogBody>
+      <DialogFooter className="border-t p-4">
         <Button onClick={submit} disabled={saving || !form.employee_id || days < 1 || insufficient || !emailResolved} className="ula-gradient text-white hover:opacity-90">
           {saving ? "Submitting…" : (form.leave_type === "TOIL Claim" ? "Submit TOIL Claim" : "Submit Request")}
         </Button>
@@ -583,11 +592,12 @@ function EditEmployeeDialog({ employee, onUpdated }) {
           <Pencil className="w-3.5 h-3.5" />
         </button>
       </DialogTrigger>
-      <DialogContent className="max-w-md">
-        <DialogHeader>
+      <DialogContent className="max-w-md flex flex-col gap-0 overflow-hidden p-0">
+        <DialogHeader className="border-b p-5 pr-10">
           <DialogTitle>Edit Employee — {employee.name}</DialogTitle>
         </DialogHeader>
-        <form onSubmit={handleSave} className="space-y-3 py-2 text-xs">
+        <form onSubmit={handleSave} className="flex min-h-0 flex-col text-xs">
+          <DialogBody className="space-y-3">
           <div className="space-y-1">
             <Label>Name *</Label>
             <Input
@@ -679,7 +689,8 @@ function EditEmployeeDialog({ employee, onUpdated }) {
             </div>
           </div>
 
-          <DialogFooter className="pt-3 flex items-center justify-between sm:justify-between">
+          </DialogBody>
+          <DialogFooter className="border-t p-4 items-center justify-between sm:justify-between">
             <Button
               type="button"
               variant="ghost"

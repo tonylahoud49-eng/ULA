@@ -1,5 +1,5 @@
 import React, { useEffect, useMemo, useState } from "react";
-import { useParams, Link } from "react-router-dom";
+import { useParams, Link, useSearchParams } from "react-router-dom";
 import remarkGfm from "remark-gfm";
 import ulaLogo from "@/assets/ula-logo.png";
 import ulaSkyscrapers from "@/assets/ula-skyscrapers.png";
@@ -9,7 +9,7 @@ import { appClient } from "@/api/appClient";
 import { Card } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
-import { Label } from "@/components/ui/label";
+import Field from "@/components/FormField";
 import { Textarea } from "@/components/ui/textarea";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
@@ -23,7 +23,7 @@ import {
   AlertDialogHeader,
   AlertDialogTitle,
 } from "@/components/ui/alert-dialog";
-import { ArrowLeft, Download, FileText, FileCheck2, Sparkles, AlertTriangle, Save, CheckCircle, ClipboardCheck, ShieldCheck, Trash2 } from "lucide-react";
+import { ArrowLeft, ArrowRight, Download, FileText, FileCheck2, Sparkles, AlertTriangle, Save, CheckCircle, ClipboardCheck, ShieldCheck, Trash2 } from "lucide-react";
 import DocumentUploader from "@/components/DocumentUploader";
 import ReactMarkdown from "react-markdown";
 import { toast } from "@/components/ui/use-toast";
@@ -32,6 +32,9 @@ import AIAnalysisProgressCard, { formatModelDisplayName } from "@/components/AIA
 import AIModelSelector from "@/components/AIModelSelector";
 import AITokenWatch from "@/components/AITokenWatch";
 import { MAX_REPORT_PHOTOGRAPHS, selectReportPhotographs } from "@/lib/reportPhotoSelection";
+import WorkflowActions from "@/components/WorkflowActions";
+import LoadError from "@/components/LoadError";
+import { savedAnalysisState } from "@/lib/reportWorkflow";
 
 const BUSINESS_LINES = ["Yacht", "Property", "Marine Cargo (Reefer/GFS)", "Marine Cargo (Non-Reefer)", "Bulk Vessel", "Air Shipment (NET)", "Land Shipment", "Fidelity Claims", "Requires Review", "Unclassified"];
 const STATUSES = ["New", "Under Investigation", "Pending Documents", "Report Draft", "Report Final", "Closed"];
@@ -266,6 +269,8 @@ const markdownComponents = {
 
 export default function ClaimDetail() {
   const { id } = useParams();
+  const [searchParams, setSearchParams] = useSearchParams();
+  const activeTab = ["overview", "documents", "report"].includes(searchParams.get("tab")) ? searchParams.get("tab") : "overview";
   const [claim, setClaim] = useState(null);
   const [documents, setDocuments] = useState([]);
   const [reports, setReports] = useState([]);
@@ -279,9 +284,13 @@ export default function ClaimDetail() {
   const [enableFallback, setEnableFallback] = useState(true);
   const [editing, setEditing] = useState(false);
   const [form, setForm] = useState({});
+  const [loadError, setLoadError] = useState("");
+  const [saving, setSaving] = useState(false);
   const readiness = useMemo(() => reportReadiness(claim || {}, documents), [claim, documents]);
+  const draftState = useMemo(() => savedAnalysisState(claim, documents), [claim, documents]);
 
   const load = async () => {
+    setLoadError("");
     try {
       const [c, docs, reps] = await Promise.all([
         appClient.entities.Claim.get(id),
@@ -292,6 +301,9 @@ export default function ClaimDetail() {
       setForm(c);
       setDocuments(docs);
       setReports(reps);
+      setAnalysis(c?.ai_analysis || null);
+    } catch (error) {
+      setLoadError(`Claim could not be loaded. ${error.message}`);
     } finally {
       setLoading(false);
     }
@@ -356,19 +368,29 @@ export default function ClaimDetail() {
   };
 
   const saveClaim = async () => {
-    await appClient.entities.Claim.update(id, form);
-    setEditing(false);
-    await load();
+    if (saving) return;
+    setSaving(true);
+    try {
+      await appClient.entities.Claim.update(id, form);
+      setEditing(false);
+      await load();
+      toast({ title: "Claim saved" });
+    } catch (error) {
+      toast({ variant: "destructive", title: "Changes were not saved", description: error.message });
+    } finally {
+      setSaving(false);
+    }
   };
 
   if (loading) return <div className="flex justify-center py-20"><div className="w-8 h-8 border-4 border-primary/20 border-t-primary rounded-full animate-spin" /></div>;
+  if (loadError) return <LoadError message={loadError} onRetry={load} />;
   if (!claim) return <div className="text-center py-20 text-muted-foreground">Claim not found.</div>;
 
   return (
     <div className="space-y-6">
       <div className="docket-header">
         <div className="flex min-w-0 items-start gap-3">
-          <Link to="/claims"><Button variant="ghost" size="icon"><ArrowLeft className="w-4 h-4" /></Button></Link>
+          <Button asChild variant="ghost" size="icon"><Link to="/claims" aria-label="Back to claims"><ArrowLeft className="w-4 h-4" /></Link></Button>
           <div className="min-w-0 flex-1">
             <div className="flex flex-wrap items-center gap-2">
               <h2 className="docket-title truncate">{claim.title}</h2>
@@ -397,6 +419,16 @@ export default function ClaimDetail() {
         </div>
       </div>
 
+      {analysis && !analyzing && activeTab !== "report" && !editing && (
+        <section aria-label="Next reporting step" className="flex flex-wrap items-center justify-between gap-3 border-y border-primary/25 bg-primary/5 px-4 py-3">
+          <div className="min-w-0 flex-1">
+            <h3 className="font-semibold text-sm">{draftState.canDraft ? "Analysis saved. Ready for review." : "Evidence needs review before drafting."}</h3>
+            {!draftState.canDraft && <p className="mt-1 text-sm text-muted-foreground">{draftState.reason}</p>}
+          </div>
+          <Button asChild><Link to={`/ai-reporting?claim=${encodeURIComponent(id)}`}>{draftState.canDraft ? "Review & create report" : "Review evidence"}<ArrowRight /></Link></Button>
+        </section>
+      )}
+
       {preflightStats && !analysisProgress.active && !analysis?.usage && (
         <AITokenWatch mode="pre_run" preflight={preflightStats} provider={selectedProvider} />
       )}
@@ -408,7 +440,7 @@ export default function ClaimDetail() {
         </div>
       )}
 
-      {analysis?.usage && (
+      {analysis?.usage && activeTab !== "report" && (
         <AITokenWatch
           mode="post_run"
           usage={analysis.usage}
@@ -418,9 +450,9 @@ export default function ClaimDetail() {
         />
       )}
 
-      <ReleaseChain claim={claim} documents={documents} reports={reports} readiness={readiness} />
+      {activeTab !== "report" && <ReleaseChain claim={claim} documents={documents} reports={reports} readiness={readiness} />}
 
-      {analysis && (
+      {analysis && activeTab !== "report" && (
         <section className="docket-surface overflow-hidden rounded-lg border border-border shadow-xs" aria-label="AI analysis summary">
           <div className="flex flex-wrap items-center justify-between gap-3 border-b bg-muted/25 px-5 py-3">
             <div className="flex items-center gap-2.5">
@@ -458,7 +490,7 @@ export default function ClaimDetail() {
         </Card>
       )}
 
-      <Tabs defaultValue="overview">
+      <Tabs value={activeTab} onValueChange={(tab) => setSearchParams((current) => { current.set("tab", tab); return current; }, { replace: true })}>
         <TabsList className="w-full justify-start overflow-x-auto">
           <TabsTrigger value="overview">Overview</TabsTrigger>
           <TabsTrigger value="documents">Documents ({documents.length})</TabsTrigger>
@@ -471,8 +503,7 @@ export default function ClaimDetail() {
               <h3 className="font-heading font-semibold text-sm">Claim Details</h3>
               {editing ? (
                 <div className="flex gap-2">
-                  <Button size="sm" variant="outline" onClick={() => { setEditing(false); setForm(claim); }}>Cancel</Button>
-                  <Button size="sm" onClick={saveClaim} className="ula-gradient text-white"><Save className="w-3.5 h-3.5 mr-1" /> Save</Button>
+                  <span className="text-xs text-muted-foreground">Editing claim</span>
                 </div>
               ) : (
                 <Button size="sm" variant="outline" onClick={() => setEditing(true)}>Edit</Button>
@@ -490,6 +521,10 @@ export default function ClaimDetail() {
           <ReportSection claimId={id} claim={claim} documents={documents} reports={reports} onChanged={load} />
         </TabsContent>
       </Tabs>
+      {editing && activeTab === "overview" && <WorkflowActions label="Claim actions">
+        <Button variant="outline" disabled={saving} onClick={() => { setEditing(false); setForm(claim); }}>Cancel</Button>
+        <Button disabled={saving} onClick={saveClaim}><Save />{saving ? "Saving..." : "Save changes"}</Button>
+      </WorkflowActions>}
     </div>
   );
 }
@@ -587,9 +622,6 @@ function EditForm({ form, setForm }) {
   );
 }
 
-function Field({ label, children }) {
-  return <div><Label className="text-xs">{label}</Label><div className="mt-1">{children}</div></div>;
-}
 
 function ControlledReportPreview({ report, data }) {
   const sections = useMemo(() => parseMarkdownSections(report?.content), [report?.content]);
@@ -1111,6 +1143,8 @@ function ReportSection({ claimId, claim, documents, reports, onChanged }) {
   };
 
   const approve = async (r) => {
+    if (!r || approvingReportId) return;
+    setApprovingReportId(r.id);
     try {
       const user = await appClient.auth.me();
       const updatedAssignments = (r.assignments || []).map((assignment) => {
@@ -1134,6 +1168,7 @@ function ReportSection({ claimId, claim, documents, reports, onChanged }) {
         assignments: updatedAssignments,
       });
       await appClient.entities.Claim.update(claimId, { status: "Report Final" });
+      setReportToApprove(null);
       await onChanged();
       toast({
         title: "Report Approved & Finalized",
@@ -1145,6 +1180,8 @@ function ReportSection({ claimId, claim, documents, reports, onChanged }) {
         title: "Approval failed",
         description: e.message || "Failed to approve report version",
       });
+    } finally {
+      setApprovingReportId(null);
     }
   };
 
@@ -1253,7 +1290,8 @@ function ReportSection({ claimId, claim, documents, reports, onChanged }) {
                     <Button
                       size="sm"
                       className="bg-emerald-600 text-white hover:bg-emerald-700 font-semibold shadow-xs"
-                      onClick={() => approve(r)}
+                      onClick={() => setReportToApprove(r)}
+                      disabled={Boolean(approvingReportId)}
                     >
                       <FileCheck2 className="h-4 w-4 mr-1" />
                       Approve &amp; Sign Off
@@ -1264,7 +1302,7 @@ function ReportSection({ claimId, claim, documents, reports, onChanged }) {
                   <Button variant="outline" size="sm" onClick={() => exportTxt(r)}><Download className="h-4 w-4 mr-1" /> TXT</Button>
                   <Button variant="outline" size="sm" onClick={() => exportDocx(r)}><Download className="h-4 w-4 mr-1" /> DOCX</Button>
                   <Button size="sm" onClick={() => exportPdf(r)} className="ula-gradient text-white hover:opacity-90"><Download className="h-4 w-4 mr-1" /> PDF</Button>
-                  <Button variant="ghost" size="sm" onClick={() => setReportToDelete(r)} className="text-destructive hover:bg-destructive/10 hover:text-destructive"><Trash2 className="h-4 w-4" /></Button>
+                  <Button variant="ghost" size="sm" aria-label={`Delete report version ${r.version_number}`} title="Delete report version" onClick={() => setReportToDelete(r)} className="text-destructive hover:bg-destructive/10 hover:text-destructive"><Trash2 className="h-4 w-4" /></Button>
                 </div>
               </div>
               <div className="grid border-b bg-muted/20 sm:grid-cols-4">
