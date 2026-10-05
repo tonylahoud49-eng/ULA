@@ -23,7 +23,7 @@ Deploy the backend and rebuilt frontend together. Follow `WINDOWS_PRODUCTION_DEP
 
 - `AI_JOB_STORAGE_DIR` defaults to `.data/analysis-jobs` in the installation. Use a persistent local directory writable only by the application service and administrators. Include it in the normal encrypted evidence backup and retention process. It contains claim evidence, intermediate analysis, results and discussion history.
 - `AI_JOB_MAX_PAGES` defaults to 2,000 per PDF. The existing file-count and upload-byte limits still apply. Large uploads remain subject to proxy limits.
-- `AI_JOB_REQUEST_TIMEOUT_MS` defaults to 900,000 milliseconds per provider request.
+- `AI_JOB_REQUEST_TIMEOUT_MS` defaults to 300,000 milliseconds per provider attempt and is capped at five minutes even when the environment sets a larger value. With three total attempts and two brief backoffs, a single batch stops within about 15 minutes.
 - `AI_JOB_IDLE_TIMEOUT_MS` defaults to 120,000 milliseconds without response data, including connection setup. A silent request is aborted and receives the existing bounded retries. Stream activity does not extend the total request deadline.
 - `AI_JOB_BATCH_MAX_PAGES` defaults to 20 (maximum 20). Review batches are bounded by page count as well as token/image/byte budgets, so a 40-page claim cannot wait for one giant review checkpoint. Non-PDF evidence counts as at least one page. On resume, oversized unfinished batches from older releases are split; saved reviews are reused.
 - Run one analysis worker process per installation. A local PID lock prevents duplicate execution of the same job across processes on the same host; distributed workers and shared multi-host volumes are not supported by this implementation.

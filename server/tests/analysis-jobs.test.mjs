@@ -53,8 +53,10 @@ test("40 pages get multiple checkpoints even when the provider request budget fi
   const calls = [];
   const { jobs, store } = fixture(t, {
     inspect: async () => ({ page_count: 40 }), measure: () => ({ fits: true }),
+    env: { AI_JOB_REQUEST_TIMEOUT_MS: 900_000 },
     providerFactory: () => ({ analyze: async (params) => {
       calls.push(params);
+      assert.equal(params.requestTimeoutMs, 300_000, "configured timeouts cannot exceed the five-minute per-attempt cap");
       if (calls.length === 1) {
         params.onProgress({ stage: "receiving", received_bytes: 42, private_text: "must never be persisted" });
         firstStarted(); await first;
@@ -172,7 +174,7 @@ test("empty partial review and unreviewed citations cannot become a draft", asyn
   const job = await jobs.create(request()); await jobs.idle();
   await assert.rejects(jobs.provisional(job.id, "user-1"), /No evidence batch/);
   const invalid = analysis(); invalid.fields = [{ sources: [{ document_id: "doc", document_name: "doc.pdf", page: 8, supporting_text: "unread", evidence_mode: "document_vision" }] }];
-  assert.throws(() => verifyReviewedSourcePages(invalid, [{ document_id: "doc", document_name: "doc.pdf", pages: [{ page: 1 }] }]), /unreviewed/);
+  assert.throws(() => verifyReviewedSourcePages(invalid, [{ document_id: "doc", document_name: "doc.pdf", pages: [{ page: 1 }] }]), /Review rejected: Claude cited unreviewed evidence \(doc\.pdf, page 8\).*No pages from this batch were counted/);
   const error = describeAnalysisFailure(new Error("Bad image [image_request_error]"), { active_batch: [{ document_name: "doc.pdf", pages: [8] }] });
   assert.match(error.message, /provisional draft/);
 });

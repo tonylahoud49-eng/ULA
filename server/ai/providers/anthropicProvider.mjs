@@ -1305,7 +1305,7 @@ export function createAnthropicProvider({
             "x-api-key": apiKey,
           },
           body: requestBodyText,
-          timeoutMs: requestTimeoutMs || Number(process.env.AI_JOB_REQUEST_TIMEOUT_MS) || 900_000,
+          timeoutMs: requestTimeoutMs || Math.min(300_000, Number(process.env.AI_JOB_REQUEST_TIMEOUT_MS) || 300_000),
           idleTimeoutMs: idleTimeoutMs || Number(process.env.AI_JOB_IDLE_TIMEOUT_MS) || 120_000,
           onProgress,
           onHeaders: (incoming) => {

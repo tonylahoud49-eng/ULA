@@ -43,6 +43,14 @@ async function repairVisualPayload(params) {
 }
 
 export function describeAnalysisFailure(error, job) {
+  if (["unreviewed-citation", "unreviewed-visual-citation"].includes(error.code)) {
+    return {
+      message: error.message,
+      code: error.code,
+      details: error.message,
+      affected: error.affectedEvidence || job.active_batch || null,
+    };
+  }
   if (imageError(error)) return { message: "The AI could not read one or more images in this batch. Completed reviews are saved. Retry this batch, replace the affected file with a readable PDF/image, or use completed reviews for a provisional draft.", code: "image-review-failed", details: error.message, affected: job.active_batch || null };
   if (transient(error)) return { message: "The analysis service was interrupted after retries. Completed reviews are saved. Retry the unfinished stage.", code: "analysis-service-interrupted", details: error.message, affected: job.active_batch || null };
   return { message: error.message || "Analysis interrupted. Completed reviews are saved.", code: error.code || "analysis-stage-failed", affected: job.active_batch || null };
@@ -107,11 +115,37 @@ export function verifyReviewedSourcePages(analysis, evidence, reviews) {
     Object.values(value).forEach((child) => walk(child, visit));
   };
   for (const review of reviews || []) walk(review.analysis, (source) => { if (source.evidence_mode !== "extracted_text") visualSources.add(key(source)); });
+  const unreviewed = [];
   walk(analysis, (source) => {
     const document = evidence.find((item) => item.document_id === source.document_id && item.document_name === source.document_name);
-    if (!document || (source.page !== null && source.page !== undefined && !document.pages.some((page) => page.page === source.page))) throw jobError("The returned analysis cited an unreviewed document or page. Saved evidence reviews are retained; retry reconciliation.", 422, "unreviewed-citation");
-    if (reviews && source.evidence_mode !== "extracted_text" && !visualSources.has(key(source))) throw jobError("Reconciliation returned a visual citation absent from the completed reviews. Retry reconciliation.", 422, "unreviewed-visual-citation");
+    if (!document || (source.page !== null && source.page !== undefined && !document.pages.some((page) => page.page === source.page))) unreviewed.push(source);
   });
+  if (unreviewed.length) {
+    const affectedEvidence = [...new Map(unreviewed.map((source) => [`${source.document_name}:${source.page}`, {
+      document_name: source.document_name || "Unknown document",
+      pages: Number.isInteger(source.page) ? [source.page] : [],
+    }])).values()].slice(0, 12);
+    const listed = affectedEvidence.map((item) => `${item.document_name}${item.pages.length ? `, page ${item.pages[0]}` : ", page unknown"}`).join("; ");
+    const error = jobError(`Review rejected: Claude cited unreviewed evidence (${listed}). No pages from this batch were counted. Retry will repeat the unfinished review; extracted files and completed review batches are saved.`, 422, "unreviewed-citation");
+    error.affectedEvidence = affectedEvidence;
+    throw error;
+  }
+  if (reviews) {
+    const unverifiedVisual = [];
+    walk(analysis, (source) => {
+      if (source.evidence_mode !== "extracted_text" && !visualSources.has(key(source))) unverifiedVisual.push(source);
+    });
+    if (unverifiedVisual.length) {
+      const affectedEvidence = [...new Map(unverifiedVisual.map((source) => [`${source.document_name}:${source.page}`, {
+        document_name: source.document_name || "Unknown document",
+        pages: Number.isInteger(source.page) ? [source.page] : [],
+      }])).values()].slice(0, 12);
+      const listed = affectedEvidence.map((item) => `${item.document_name}${item.pages.length ? `, page ${item.pages[0]}` : ""}`).join("; ");
+      const error = jobError(`Reconciliation cited a visual page absent from the saved reviews (${listed}). Completed page reviews are retained; retry reconciliation.`, 422, "unreviewed-visual-citation");
+      error.affectedEvidence = affectedEvidence;
+      throw error;
+    }
+  }
 }
 
 export function createAnalysisJobs({ store, providerFactory, getStyleReferences, env = process.env, extract = extractEvidenceFile, inspect = inspectPdf, measure = measureJobRequest, sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms)) }) {
@@ -214,7 +248,9 @@ export function createAnalysisJobs({ store, providerFactory, getStyleReferences,
       }
       const call = async (params, label) => {
         for (let attempt = 0; ; attempt += 1) {
-          const requestTimeoutMs = positive(env.AI_JOB_REQUEST_TIMEOUT_MS, 900_000);
+          // A configured value may lower the limit; it cannot expand one
+          // provider attempt beyond five minutes (15 minutes across 3 tries).
+          const requestTimeoutMs = Math.min(300_000, positive(env.AI_JOB_REQUEST_TIMEOUT_MS, 300_000));
           const idleTimeoutMs = positive(env.AI_JOB_IDLE_TIMEOUT_MS, 120_000);
           job.request_progress = {
             label, attempt: attempt + 1, max_attempts: 3, stage: "connecting",
