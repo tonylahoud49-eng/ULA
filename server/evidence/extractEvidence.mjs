@@ -152,7 +152,14 @@ async function pdfPageHasMaterialRaster(page, operations) {
   return false;
 }
 
-async function extractPdf(buffer) {
+export async function inspectPdf(buffer) {
+  const pdfjs = await import("pdfjs-dist/legacy/build/pdf.mjs");
+  const task = pdfjs.getDocument({ data: new Uint8Array(buffer), disableWorker: true });
+  try { return { page_count: (await task.promise).numPages }; }
+  finally { await task.destroy(); }
+}
+
+async function extractPdf(buffer, pageRange) {
   const pdfjs = await import("pdfjs-dist/legacy/build/pdf.mjs");
   const standardFontDataUrl = fileURLToPath(
     new URL("../../node_modules/pdfjs-dist/standard_fonts/", import.meta.url),
@@ -163,7 +170,13 @@ async function extractPdf(buffer) {
   const task = pdfjs.getDocument({ data: new Uint8Array(buffer), disableWorker: true, standardFontDataUrl, wasmUrl });
   const pdf = await task.promise;
   try {
-    if (pdf.numPages > MAX_PDF_PAGES) {
+    const firstPage = pageRange?.start ?? 1;
+    const lastPage = Math.min(pageRange?.end ?? pdf.numPages, pdf.numPages);
+    if (!Number.isInteger(firstPage) || !Number.isInteger(lastPage) || firstPage < 1 || lastPage < firstPage) {
+      throw new EvidenceExtractionError("Invalid PDF page range.");
+    }
+    const maxPages = Number(process.env.AI_MAX_PDF_PAGES) > 0 ? Math.floor(Number(process.env.AI_MAX_PDF_PAGES)) : MAX_PDF_PAGES;
+    if (lastPage - firstPage + 1 > maxPages) {
       throw new EvidenceExtractionError(
         `PDF has ${pdf.numPages} pages; split it into files of at most ${MAX_PDF_PAGES} pages before analysis.`,
         { status: 413, code: "pdf-page-limit" },
@@ -173,7 +186,7 @@ async function extractPdf(buffer) {
     const visionImages = [];
     const searchableVisualCandidates = [];
     const imageOnlyPages = [];
-    for (let pageNumber = 1; pageNumber <= pdf.numPages; pageNumber += 1) {
+    for (let pageNumber = firstPage; pageNumber <= lastPage; pageNumber += 1) {
       const page = await pdf.getPage(pageNumber);
       try {
         const content = await page.getTextContent();
@@ -209,7 +222,8 @@ async function extractPdf(buffer) {
         reason: candidate.sparseText ? "sparse-searchable-visual" : "material-raster-with-searchable-text",
       })),
     ].sort((left, right) => left.pageNumber - right.pageNumber);
-    if (selectedPages.length > MAX_PDF_VISION_PAGES) {
+    const maxVisualPages = Number(process.env.AI_MAX_PDF_VISION_PAGES) > 0 ? Math.floor(Number(process.env.AI_MAX_PDF_VISION_PAGES)) : MAX_PDF_VISION_PAGES;
+    if (selectedPages.length > maxVisualPages) {
       throw new EvidenceExtractionError(
         `PDF contains ${selectedPages.length} pages requiring visual review; split it into files with at most ${MAX_PDF_VISION_PAGES} visual pages before analysis.`,
         { status: 413, code: "pdf-vision-page-limit" },
@@ -219,7 +233,7 @@ async function extractPdf(buffer) {
     // Claude natively understands PDFs. For a large scanned bundle, sending
     // the original PDF is safer and more complete than rasterizing every page
     // in-process; local page text remains available for citation verification.
-    if (selectedPages.length > MAX_SEARCHABLE_VISUAL_PAGES
+    if (!pageRange && selectedPages.length > MAX_SEARCHABLE_VISUAL_PAGES
       && buffer.length <= MAX_ANTHROPIC_NATIVE_PDF_BYTES) {
       return { pages, visionImages, nativePdf: true };
     }
@@ -319,7 +333,7 @@ export async function extractEvidenceFile(file, metadata = {}) {
 
   try {
     if (mimeType === "application/pdf" || extension === ".pdf") {
-      const { pages, visionImages, nativePdf } = await extractPdf(file.buffer);
+      const { pages, visionImages, nativePdf } = await extractPdf(file.buffer, metadata.page_range);
       const searchablePageCount = pages.filter((page) => page.text).length;
       return {
         ...base,

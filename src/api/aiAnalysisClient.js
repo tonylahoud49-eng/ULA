@@ -96,6 +96,9 @@ export function mapAnalysis(result) {
 
   return {
     status: "completed",
+    job_id: result.job_id || null,
+    provisional: result.provisional === true,
+    review_scope: result.review_scope || "complete",
     provider: result.provider,
     model: result.model,
     response_id: result.response_id,
@@ -165,7 +168,42 @@ const readResponseBody = async (response) => {
   return { body, responseText };
 };
 
-async function analyzeClaimWithProviderOnce({ claim, documents, provider, model, disable_fallback, onPreflight }) {
+export async function analysisJobRequest(url, options = {}) {
+  const response = await fetch(url, options);
+  const { body } = await readResponseBody(response);
+  if (!response.ok) throw createRequestError(body.error || "Could not reach the saved analysis. Refresh to reconnect; server checkpoints are retained.", response.status, body.code);
+  return body;
+}
+
+export async function waitForAnalysisJob(initialJob, onProgress) {
+  let job = initialJob;
+  let failures = 0;
+  for (;;) {
+    onProgress?.(job);
+    if (job.state === "complete") return mapAnalysis(await analysisJobRequest(`/api/ai/jobs/${job.id}/result`));
+    if (["failed", "interrupted"].includes(job.state)) {
+      const error = createRequestError(job.error?.message || job.message, 409, job.error?.code || "analysis-interrupted");
+      error.job = job;
+      throw error;
+    }
+    await new Promise((resolve) => setTimeout(resolve, 2000));
+    try {
+      job = (await analysisJobRequest(`/api/ai/jobs/${job.id}`)).job;
+      failures = 0;
+    } catch (error) {
+      failures += 1;
+      if (failures >= 3 || [401, 403, 404].includes(error.status)) throw createRequestError("Connection to the saved analysis was lost. Reopen this claim to reconnect; completed work remains on the server.", error.status || 503, "analysis-poll-disconnected");
+    }
+  }
+}
+
+async function analyzeClaimWithProviderOnce({ claim, documents, provider, model, disable_fallback, onProgress, jobId, provisional }) {
+  if (jobId) {
+    const { job } = await analysisJobRequest(`/api/ai/jobs/${jobId}`);
+    if (job.claim_id !== claim.id || job.documents.length !== documents.length || job.documents.some((entry) => !documents.some((document) => document.id === entry.id && document.file_name === entry.file_name && (entry.storage_key || entry.file_url || "") === (document.storage_key || document.file_url || "")))) throw createRequestError("The attachments changed. Start a new analysis using the current evidence.", 409, "analysis-evidence-changed");
+    if (provisional) return mapAnalysis(await analysisJobRequest(`/api/ai/jobs/${jobId}/provisional`, { method: "POST" }));
+    return waitForAnalysisJob(job, onProgress);
+  }
   let statusResponse;
   try {
     statusResponse = await fetchAIStatus();
@@ -211,6 +249,8 @@ async function analyzeClaimWithProviderOnce({ claim, documents, provider, model,
       file_mime_type: document.file_mime_type || stored.mimeType || stored.blob.type,
       file_type: document.file_type,
       category: document.category,
+      storage_key: document.storage_key,
+      file_url: document.file_url,
     });
   }
 
@@ -226,40 +266,14 @@ async function analyzeClaimWithProviderOnce({ claim, documents, provider, model,
     return form;
   };
 
-  let preflightToken;
   if (resolvedProvider === "anthropic") {
-    let preflightResponse;
-    try {
-      preflightResponse = await fetch("/api/ai/preflight", { method: "POST", body: buildForm() });
-    } catch {
-      throw createRequestError(
-        "Anthropic preflight failed — the local analysis server is not running.",
-        503,
-        "ai-server-unavailable",
-      );
-    }
-    const { body: preflightBody } = await readResponseBody(preflightResponse);
-    if (!preflightResponse.ok || !preflightBody.ok) {
-      const error = createRequestError(
-        preflightBody.error || `Anthropic preflight failed with HTTP ${preflightResponse.status}.`,
-        preflightResponse.status,
-        preflightBody.code || "anthropic-preflight-failed",
-      );
-      error.provider = preflightBody.provider;
-      error.model = preflightBody.model;
-      error.details = preflightBody.error;
-      error.providerStatus = preflightBody.provider_status;
-      error.preflight = preflightBody.stats;
-      throw error;
-    }
-    preflightToken = preflightBody.preflight_token;
-    if (onPreflight) onPreflight({ ...preflightBody.stats, connectivity: preflightBody.connectivity });
-    await new Promise((resolve) => setTimeout(resolve, 0));
+    const { job } = await analysisJobRequest("/api/ai/jobs", { method: "POST", body: buildForm() });
+    return waitForAnalysisJob(job, onProgress);
   }
 
   let response;
   try {
-    response = await fetch("/api/ai/analyze", { method: "POST", body: buildForm({ preflightToken }) });
+    response = await fetch("/api/ai/analyze", { method: "POST", body: buildForm() });
   } catch {
     throw createRequestError(
       "AI analysis unavailable — the local analysis server is not running. Start the app with npm run dev.",

@@ -31,6 +31,7 @@ import { toast } from "@/components/ui/use-toast";
 import DocumentUploader from "@/components/DocumentUploader";
 import { REPORT_WORKFLOW_ROLES, reportReadiness } from "@/lib/reportTemplates";
 import AIAnalysisProgressCard, { formatModelDisplayName } from "@/components/AIAnalysisProgressCard";
+import AnalysisWorkspace from "@/components/AnalysisWorkspace";
 import AIModelSelector from "@/components/AIModelSelector";
 import AITokenWatch from "@/components/AITokenWatch";
 import AIBillingHistory from "@/components/AIBillingHistory";
@@ -265,14 +266,12 @@ export default function AIReporting() {
     setDocuments(await appClient.entities.ClaimDocument.filter({ claim_id: selectedClaimId }));
   };
 
-  const runAnalysis = async () => {
+  const runAnalysis = async (savedJobId = null, provisional = false) => {
     if (analyzing || !selectedClaimId) return;
     setAnalyzing(true);
     setAnalysisError("");
     setPreflightStats(null);
-    setAnalysisProgress({ active: true, progress: 10, stage: "Running local safety and request-size checks...", step: 1, totalSteps: 4 });
-    let timer1;
-    let timer2;
+    setAnalysisProgress({ active: true, progress: 0, stage: provisional ? "Preparing a provisional analysis from saved reviews..." : "Preparing uploaded evidence and connecting to analysis...", step: 1, totalSteps: 4 });
     const separator = selectedProvider.indexOf(":");
     const requestedProvider = separator >= 0 ? selectedProvider.slice(0, separator) : selectedProvider;
     const requestedModel = separator >= 0 ? selectedProvider.slice(separator + 1) : undefined;
@@ -280,22 +279,17 @@ export default function AIReporting() {
     try {
       const response = await appClient.functions.invoke("analyseClaim", {
         claim_id: selectedClaimId,
+        job_id: typeof savedJobId === "string" ? savedJobId : undefined,
+        provisional,
+        on_progress: (job) => setAnalysisProgress({ active: true, job, stage: job.message, step: 1, totalSteps: 4 }),
         provider: requestedProvider,
         model: requestedModel,
         disable_fallback: requestedProvider === "anthropic" || !enableFallback,
         on_preflight: (stats) => {
           setPreflightStats(stats);
           setAnalysisProgress({ active: true, progress: 25, stage: "Preflight passed. Starting protected Claude analysis...", step: 1, totalSteps: 4 });
-          timer1 = setTimeout(() => {
-            setAnalysisProgress({ active: true, progress: 45, stage: "Classifying document categories & confidence scoring...", step: 2, totalSteps: 4 });
-          }, 500);
-          timer2 = setTimeout(() => {
-            setAnalysisProgress({ active: true, progress: 75, stage: "Extracting salient facts & policy coverage positions...", step: 3, totalSteps: 4 });
-          }, 1200);
         },
       });
-      clearTimeout(timer1);
-      clearTimeout(timer2);
       setAnalysisProgress({ active: true, progress: 100, stage: "Analysis complete! Finalizing suggestions...", step: 4, totalSteps: 4 });
       await new Promise((r) => setTimeout(r, 300));
       setAnalysis(response.data.analysis);
@@ -314,8 +308,6 @@ export default function AIReporting() {
       setEdited((current) => reviewedClaimValues(current, response.data.analysis));
       setStep(3);
     } catch (error) {
-      clearTimeout(timer1);
-      clearTimeout(timer2);
       const message = error.response?.data?.error || error.message;
       setAnalysisError(message);
       toast({ variant: "destructive", title: "Analysis could not be completed", description: message });
@@ -427,6 +419,10 @@ export default function AIReporting() {
         </Card>
       )}
 
+      {claim && selectedClaimId && <AnalysisWorkspace key={selectedClaimId} claimId={selectedClaimId} analysis={analysis} onLoad={runAnalysis} busy={analyzing} />}
+
+      {analysis?.provisional && <p role="status" className="rounded-md border border-destructive/30 p-3 text-sm">Provisional analysis: some evidence remains unreviewed. Review the listed gaps before using the draft. Final approval and export are blocked.</p>}
+
       {step === 1 && claim && (
         <div className="space-y-4">
           <Card className="docket-surface border-primary/25 bg-primary/5 p-4 shadow-none">
@@ -449,7 +445,7 @@ export default function AIReporting() {
       {step === 2 && claim && (
         <div>
           {analyzing ? (
-            <AIAnalysisProgressCard progress={analysisProgress} provider={selectedProvider} preflight={preflightStats} className="mx-auto max-w-2xl" />
+            analysisProgress.job ? <p className="text-sm text-muted-foreground" role="status">Saved analysis progress is shown above.</p> : <AIAnalysisProgressCard progress={analysisProgress} provider={selectedProvider} preflight={preflightStats} className="mx-auto max-w-2xl" />
           ) : (
             <Card className="docket-surface p-8 text-center shadow-none">
               <FileText className="mx-auto mb-4 h-11 w-11 text-primary" />

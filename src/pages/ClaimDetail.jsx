@@ -29,6 +29,7 @@ import ReactMarkdown from "react-markdown";
 import { toast } from "@/components/ui/use-toast";
 import { REPORT_LIFECYCLE, reportReadiness } from "@/lib/reportTemplates";
 import AIAnalysisProgressCard, { formatModelDisplayName } from "@/components/AIAnalysisProgressCard";
+import AnalysisWorkspace from "@/components/AnalysisWorkspace";
 import AIModelSelector from "@/components/AIModelSelector";
 import AITokenWatch from "@/components/AITokenWatch";
 import { MAX_REPORT_PHOTOGRAPHS, selectReportPhotographs } from "@/lib/reportPhotoSelection";
@@ -179,6 +180,9 @@ const collectAppendixImages = async (documents, normalizedRecord) => {
   ));
   const images = [];
   for (const document of candidates) {
+    const review = normalizedRecord?.evidence?.find((item) => item.document_id === document.id);
+    if (["unreviewed", "unsupported", "failed", "unavailable"].includes(review?.extraction_status)) continue;
+    const unreviewedPages = new Set(review?.unreviewed_pages || []);
     try {
       const stored = await appClient.documentStorage.get(document.storage_key || document.file_url);
       const mimeType = String(document.file_mime_type || stored.mimeType || stored.blob.type || "").toLowerCase();
@@ -210,6 +214,7 @@ const collectAppendixImages = async (documents, normalizedRecord) => {
           ? selectedPages.slice(0, MAX_REPORT_PHOTOGRAPHS)
           : Array.from({ length: Math.min(pdf.numPages, MAX_REPORT_PHOTOGRAPHS) }, (_, index) => index + 1);
         for (const pageNumber of pagesToRender) {
+          if (unreviewedPages.has(pageNumber)) continue;
           const page = await pdf.getPage(pageNumber);
           const viewport = page.getViewport({ scale: 1.35 });
           const canvas = globalThis.document.createElement("canvas");
@@ -311,13 +316,11 @@ export default function ClaimDetail() {
 
   useEffect(() => { load(); }, [id]);
 
-  const runAnalysis = async () => {
+  const runAnalysis = async (savedJobId = null, provisional = false) => {
     setAnalyzing(true);
     setAnalysisError("");
     setPreflightStats(null);
-    setAnalysisProgress({ active: true, progress: 10, stage: "Running local safety and request-size checks...", step: 1, totalSteps: 4 });
-    let timer1;
-    let timer2;
+    setAnalysisProgress({ active: true, progress: 0, stage: provisional ? "Preparing a provisional analysis from saved reviews..." : "Preparing uploaded evidence and connecting to analysis...", step: 1, totalSteps: 4 });
     const separator = selectedProvider.indexOf(":");
     const requestedProvider = separator >= 0 ? selectedProvider.slice(0, separator) : selectedProvider;
     const requestedModel = separator >= 0 ? selectedProvider.slice(separator + 1) : undefined;
@@ -325,22 +328,17 @@ export default function ClaimDetail() {
     try {
       const res = await appClient.functions.invoke("analyseClaim", {
         claim_id: id,
+        job_id: typeof savedJobId === "string" ? savedJobId : undefined,
+        provisional,
+        on_progress: (job) => setAnalysisProgress({ active: true, job, stage: job.message, step: 1, totalSteps: 4 }),
         provider: requestedProvider,
         model: requestedModel,
         disable_fallback: requestedProvider === "anthropic" || !enableFallback,
         on_preflight: (stats) => {
           setPreflightStats(stats);
           setAnalysisProgress({ active: true, progress: 25, stage: "Preflight passed. Starting protected Claude analysis...", step: 1, totalSteps: 4 });
-          timer1 = setTimeout(() => {
-            setAnalysisProgress({ active: true, progress: 45, stage: "Classifying document categories & confidence scoring...", step: 2, totalSteps: 4 });
-          }, 500);
-          timer2 = setTimeout(() => {
-            setAnalysisProgress({ active: true, progress: 75, stage: "Extracting salient facts & policy coverage positions...", step: 3, totalSteps: 4 });
-          }, 1200);
         },
       });
-      clearTimeout(timer1);
-      clearTimeout(timer2);
       setAnalysisProgress({ active: true, progress: 100, stage: "Analysis complete! Updating claim docket...", step: 4, totalSteps: 4 });
       await new Promise((r) => setTimeout(r, 300));
       setAnalysis(res.data.analysis);
@@ -356,8 +354,6 @@ export default function ClaimDetail() {
 
       await load();
     } catch (e) {
-      clearTimeout(timer1);
-      clearTimeout(timer2);
       const message = e.response?.data?.error || e.message;
       setAnalysisError(message);
       toast({ variant: "destructive", title: "Analysis could not be completed", description: message });
@@ -429,11 +425,14 @@ export default function ClaimDetail() {
         </section>
       )}
 
+      <AnalysisWorkspace key={id} claimId={id} analysis={analysis} onLoad={runAnalysis} busy={analyzing} />
+      {analysis?.provisional && <p role="status" className="rounded-md border border-destructive/30 p-3 text-sm">Provisional analysis: unreviewed evidence is listed in the draft. Final approval and export remain blocked until review is complete and a new draft is generated.</p>}
+
       {preflightStats && !analysisProgress.active && !analysis?.usage && (
         <AITokenWatch mode="pre_run" preflight={preflightStats} provider={selectedProvider} />
       )}
 
-      {analysisProgress.active && (
+      {analysisProgress.active && !analysisProgress.job && (
         <div className="space-y-3">
           <AIAnalysisProgressCard progress={analysisProgress} provider={selectedProvider} preflight={preflightStats} />
           <AITokenWatch mode="in_flight" elapsedSeconds={analysisProgress.step * 3} provider={selectedProvider} />

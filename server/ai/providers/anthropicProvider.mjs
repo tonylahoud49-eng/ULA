@@ -1180,10 +1180,10 @@ function parseAnthropicStructuredResponse(body, status, requestId) {
     : parsed;
 }
 
-function contentBlocks(claim, evidence, files, styleReferences) {
+function contentBlocks(claim, evidence, files, styleReferences, referenceEvidence) {
   const content = [{
     type: "text",
-    text: promptText(claim, evidence, styleReferences),
+    text: promptText(claim, evidence, styleReferences, referenceEvidence),
     cache_control: { type: "ephemeral" },
   }];
   const sentImageHashes = new Set();
@@ -1233,13 +1233,15 @@ function contentBlocks(claim, evidence, files, styleReferences) {
   return content;
 }
 
-function buildAnthropicRequestBody({ model, maxOutputTokens, claim, evidence, files, styleReferences = [] }) {
+function buildAnthropicRequestBody({ model, maxOutputTokens, claim, evidence, files, styleReferences = [], analysisContext, referenceEvidence }) {
   const thinking = /claude-(?:sonnet|opus)-4-6/i.test(model) && maxOutputTokens >= 4_096
     ? {
       type: "enabled",
       budget_tokens: Math.min(SONNET_4_6_THINKING_BUDGET_TOKENS, Math.floor(maxOutputTokens / 4)),
     }
     : { type: "adaptive" };
+  const content = contentBlocks(claim, evidence, files, styleReferences, referenceEvidence);
+  if (analysisContext) content.push({ type: "text", text: analysisContext });
   return {
     model,
     max_tokens: maxOutputTokens,
@@ -1251,8 +1253,8 @@ function buildAnthropicRequestBody({ model, maxOutputTokens, claim, evidence, fi
         schema: structuredOutputSchema(),
       },
     },
-    system: ANTHROPIC_SYSTEM_INSTRUCTIONS,
-    messages: [{ role: "user", content: contentBlocks(claim, evidence, files, styleReferences) }],
+    system: ANTHROPIC_SYSTEM_INSTRUCTIONS + (analysisContext ? "\nOWNER-APPROVED STAGED WORKFLOW: Follow the application-supplied batch/reconciliation scope. Intermediate batches review only their supplied pages and remain provisional. Reconciliation uses the complete sourced ledgers from already-reviewed pages, without claiming to newly inspect absent originals. An explicitly requested incomplete provisional reconciliation must identify every unreviewed document/page and must not imply complete review. Final issue remains blocked for that exception. All other provenance, calculation and professional-review rules apply." : ""),
+    messages: [{ role: "user", content }],
   };
 }
 
@@ -1269,8 +1271,8 @@ export function createAnthropicProvider({
   return {
     name: "anthropic",
     model: resolvedModel,
-    async analyze({ claim, evidence, files, styleReferences = [] }) {
-      const prepared = prepareEvidenceForAnthropic(evidence);
+    async analyze({ claim, evidence, files, styleReferences = [], requestEvidence, analysisContext }) {
+      const prepared = prepareEvidenceForAnthropic(requestEvidence || evidence);
       const claimContext = prepareClaimContextForAnthropic(claim);
       const requestBody = buildAnthropicRequestBody({
         model: resolvedModel,
@@ -1279,6 +1281,8 @@ export function createAnthropicProvider({
         evidence: prepared.evidence,
         files,
         styleReferences,
+        analysisContext,
+        referenceEvidence: requestEvidence ? evidence : undefined,
       });
       const requestBodyText = JSON.stringify(requestBody);
       const requestBytes = Buffer.byteLength(requestBodyText);
@@ -1300,6 +1304,7 @@ export function createAnthropicProvider({
             "x-api-key": apiKey,
           },
           body: requestBodyText,
+          signal: AbortSignal.timeout(Number(process.env.AI_JOB_REQUEST_TIMEOUT_MS) || 900_000),
         });
       } catch (error) {
         throw logTransportFailure(error, {

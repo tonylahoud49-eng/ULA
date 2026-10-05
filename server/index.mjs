@@ -7,6 +7,10 @@ import { fileURLToPath } from "node:url";
 import { createConfiguredProvider, getAIStatus } from "./ai/provider.mjs";
 import { safeAiDebugLog } from "./ai/debugLog.mjs";
 import { createAnalysisResultStore } from "./ai/analysisResultStore.mjs";
+import { createAnalysisJobStore } from "./ai/analysisJobStore.mjs";
+import { createAnalysisJobs } from "./ai/analysisJobs.mjs";
+import { createAnalysisChat } from "./ai/analysisChat.mjs";
+import { registerAnalysisJobRoutes } from "./ai/analysisJobRoutes.mjs";
 import {
   AnthropicPreflightError,
   consumeAnthropicPreflightToken,
@@ -142,6 +146,29 @@ const requireDocumentAccess = (request, response, next) => postgresRepository
 const requireBackendAdmin = (request, response, next) => postgresRepository
   ? authHttp.requireAuth(request, response, () => authHttp.requireAdmin(request, response, next))
   : next();
+
+let savedAnalysisJobs;
+let savedAnalysisChat;
+const getSavedAnalysisJobs = () => {
+  loadServerEnv();
+  if (!savedAnalysisJobs) savedAnalysisJobs = createAnalysisJobs({
+    store: createAnalysisJobStore(process.env.AI_JOB_STORAGE_DIR || path.join(DATA_DIR, "analysis-jobs")),
+    providerFactory: (model) => {
+      const { provider, status } = createConfiguredProvider({ providerName: "anthropic", modelName: model, disableFallback: true });
+      if (!provider) throw new Error(status.reason || "Claude is unavailable.");
+      return provider;
+    },
+    getStyleReferences: () => loadApprovedStyleReferences(process.env.ULA_REPORT_REFERENCE_DIR || path.join(root, "server", "ai", "references")),
+  });
+  return savedAnalysisJobs;
+};
+registerAnalysisJobRoutes(app, {
+  requireAccess: requireDocumentAccess,
+  upload: upload.array("files", maxFiles),
+  repository: postgresRepository,
+  getJobs: getSavedAnalysisJobs,
+  getChat: () => savedAnalysisChat ||= createAnalysisChat({ jobs: getSavedAnalysisJobs() }),
+});
 
 // --- Entity REST Endpoints ---
 app.get("/api/entities/:entity", requireDocumentAccess, async (request, response) => {

@@ -1,10 +1,12 @@
 const activeAnalyses = new Map();
 
-export function analysisSingleFlightKey({ claim, documents = [], provider, model }) {
+export function analysisSingleFlightKey({ claim, documents = [], provider, model, jobId, provisional }) {
   return JSON.stringify({
     claim_id: claim?.id || null,
     provider: provider || null,
     model: model || null,
+    job_id: jobId || null,
+    provisional: provisional === true,
     documents: documents.map((document) => [
       document.id || null,
       document.storage_key || document.file_url || null,

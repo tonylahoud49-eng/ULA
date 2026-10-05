@@ -170,7 +170,7 @@ function repairJsonStrings(str) {
   return result;
 }
 
-function promptText(claim, evidence, styleReferences) {
+function promptText(claim, evidence, styleReferences, referenceEvidence = evidence) {
   const evidenceSections = evidence.map((item) => {
     const text = evidenceText(item);
     return [
@@ -178,11 +178,11 @@ function promptText(claim, evidence, styleReferences) {
       `DOCUMENT NAME: ${item.document_name}`,
       `MIME TYPE: ${item.mime_type}`,
       `LOCAL EXTRACTION STATUS: ${item.extraction_status}`,
-      text || "[No searchable text was extracted. Inspect the attached PDF/image visually.]",
+      text || (item.reviewed_in_batches ? "[Original pages were reviewed in saved batches. Use the sourced review ledger supplied for reconciliation.]" : "[No searchable text was extracted. Inspect the attached PDF/image visually.]"),
     ].join("\n");
   }).join("\n\n--- END DOCUMENT ---\n\n");
   const separatedReferences = splitAnalysisReferences(styleReferences);
-  const applicableStyleReferences = selectApplicableStyleReferences(separatedReferences.styleReferences, { claim, evidence })
+  const applicableStyleReferences = selectApplicableStyleReferences(separatedReferences.styleReferences, { claim, evidence: referenceEvidence })
     .map(({ applies_to: _appliesTo, ...reference }) => reference);
   const references = applicableStyleReferences.length
     ? JSON.stringify(applicableStyleReferences)
@@ -190,7 +190,7 @@ function promptText(claim, evidence, styleReferences) {
   const legalReferences = separatedReferences.legalReferences.length
     ? JSON.stringify(separatedReferences.legalReferences)
     : "No locally retrieved legal reference excerpts were supplied.";
-  const coveragePlan = buildAnalysisCoveragePlan(evidence);
+  const coveragePlan = buildAnalysisCoveragePlan(referenceEvidence);
 
   return `CLAIM METADATA (context only; it is not proof):\n${JSON.stringify(claim, null, 2)}\n\nEVIDENCE REGISTER AND EXTRACTED CONTENT:\n${evidenceSections}\n\n${coveragePlan.prompt}\n\nAPPROVED STYLE REFERENCES (style/section order and owner-approved analysis methodology only; never claim evidence):\n${references}\n\nCOLLECTIVE PROFESSIONAL KNOWLEDGE REFERENCES (reasoning aids only; never evidence or report content):\n${legalReferences}\n\nReview every current-claim PDF page in page-number order before writing the analysis. Apply only claim-, policy-, jurisdiction-, loss-, and fact-relevant principles. Resolve scope differences; never mix rules indiscriminately, quote, summarize, cite, or name these references in the output. Keep alternative quantities and units in separate sourced records; never concatenate them into one number. Keep loss rows separate from deductible, salvage, recovery, and depreciation so each deduction is applied once. cause_of_loss is only one concise express source-stated mechanism. Populate it only where the cited source explicitly attributes the loss (for example, a labelled cause/nature-of-loss statement or "damage was caused by" wording); a damage label such as "breakage during transit", discovery timing, packing, a condition observation, or a model inference is never an express cause. Put those matters in domain-labelled findings with their qualification. For every party field, retain only the expressly role-labelled legal entity and stop before an adjoining invoice, policy, B/L, contact, address, heading, or OCR fragment; return null where the role is not actually assigned. Follow clauses across line or page breaks; if the complete material wording cannot be verified, return null and identify the missing continuation. Where current policy or cover-note wording exists, return a separately cited policy_application finding for each material policy issue: exact provision and page, matched current fact and page or exact gap, provisional impact, and remaining professional decision. Never use the phrase "not established" in client-facing text; name the precise evidence gap and decision affected instead. Execute every material test in the applicable owner-approved methodology profile and the Director-grade analysis protocol before returning the structured analysis. Do not merely restate the profile or the evidence. Return the strongest evidence-supported provisional analysis after checking the complete claim file and completing the final quality audit. Produce client-ready synthesis, not an extraction dump: preserve draft/original transport status; keep raw OCR and photo-page fragments only in provenance; reconcile quotation lines, ancillary charges, VAT/tax and deductible separately; keep VAT/tax recoverability provisional unless evidenced; enforce the same parties, chronology, currency, claim status, cause qualification, cover and liability position across summary, analysis, adjustment and conclusion; and make each evidence gap specific to the decision it would resolve.`;
 }

@@ -1163,14 +1163,20 @@ const auth = {
   },
 };
 
-const buildAnalysis = async ({ claim_id: claimId, provider, model, disable_fallback, on_preflight: onPreflight }) => {
+const buildAnalysis = async ({ claim_id: claimId, provider, model, disable_fallback, on_preflight: onPreflight, on_progress: onProgress, job_id: jobId, provisional }) => {
   const claim = await entities.Claim.get(claimId);
   if (!claim) throw createError("Claim not found", 404);
   const documents = await entities.ClaimDocument.filter({ claim_id: claimId });
   if (!documents.length) throw createError("No documents uploaded for this claim");
 
-  const analysis = await analyzeClaimWithProvider({ claim, documents, provider, model, disable_fallback, onPreflight });
+  const analysis = await analyzeClaimWithProvider({ claim, documents, provider, model, disable_fallback, onPreflight, onProgress, jobId, provisional });
+  const currentDocuments = await entities.ClaimDocument.filter({ claim_id: claimId });
+  if (currentDocuments.length !== documents.length || currentDocuments.some((current) => !documents.some((document) => document.id === current.id && (document.storage_key || document.file_url) === (current.storage_key || current.file_url)))) {
+    throw createError("The attachments changed while analysis was running. The result is saved, but a new analysis is required for the current evidence.", 409, "analysis-evidence-changed");
+  }
+  const currentClaim = await entities.Claim.get(claimId);
   const saveDocumentMetadata = () => Promise.all(documents.map((document) => {
+    const reviewStatus = analysis.evidence_snapshot.find((item) => item.document_id === document.id)?.extraction_status;
     const detections = analysis.document_types
       .map((type) => ({
         category: type.document_type,
@@ -1180,7 +1186,7 @@ const buildAnalysis = async ({ claim_id: claimId, provider, model, disable_fallb
       }))
       .filter((type) => type.sources.length);
     return entities.ClaimDocument.update(document.id, {
-      extraction_status: "complete",
+      extraction_status: ["partial", "unreviewed", "unsupported"].includes(reviewStatus) ? reviewStatus : "complete",
       detected_categories: detections.map((type) => type.category),
       detected_category_evidence: detections.map((type) => ({
         category: type.category,
@@ -1211,7 +1217,7 @@ const buildAnalysis = async ({ claim_id: claimId, provider, model, disable_fallb
   // Merge suggestions into claim fields only if they are currently empty/null/blank
   // and never overwrite user-entered data
   for (const [key, val] of Object.entries(suggestions)) {
-    const currentVal = claim[key];
+    const currentVal = currentClaim[key];
     const isEmpty = currentVal === undefined || currentVal === null || currentVal === "" || (key === "business_line" && currentVal === "Unclassified");
     if (isEmpty && val !== undefined && val !== null && val !== "") {
       claimUpdates[key] = val;
@@ -1257,6 +1263,9 @@ const buildReport = async ({ claim_id: claimId, edited_data: editedData }) => {
       mime_type: item.mime_type,
       extraction_status: item.extraction_status,
       extraction_warning: item.warning || null,
+      unreviewed_pages: item.unreviewed_pages || [],
+      reviewed_page_count: item.reviewed_page_count ?? null,
+      review_error: item.review_error || null,
       extracted_content_length: item.pages?.reduce((total, page) => total + String(page.text || "").length, 0) || 0,
     })),
   };

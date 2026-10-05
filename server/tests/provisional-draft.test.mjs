@@ -34,3 +34,18 @@ test("provisional permission does not bypass missing analysis, new evidence, fai
   }
   assert.throws(() => evidenceForDraft({ ...analysis, evidence_snapshot: [excluded] }, [documents[1]]), /No reviewed evidence/);
 });
+
+test("owner-approved partial PDF review lists exact unreviewed pages and blocks final DOCX", async () => {
+  const partial = { document_id: "survey", document_name: "survey.pdf", mime_type: "application/pdf", extraction_status: "partial", pages: [{ page: 1, text: "Survey attendance recorded." }], reviewed_page_count: 1, unreviewed_pages: [2, 3, 4] };
+  const currentDocuments = [{ id: "survey", file_name: "survey.pdf" }];
+  const incompleteAnalysis = { status: "completed", provisional: true, review_scope: "partial", evidence_snapshot: [partial] };
+  const evidence = evidenceForDraft(incompleteAnalysis, currentDocuments);
+  const draft = createUnifiedReportDraft({ claim: { id: "partial-example", business_line: "Property" }, documents: currentDocuments, evidence, versions: [], generatedBy: "Test Reviewer" });
+  assert.match(draft.content, /survey.pdf \(not reviewed\)/);
+  assert.match(draft.content, /unreviewed pages: 2, 3, 4/);
+  assert.ok(draft.normalizedRecord.report_quality.issue_blockers.some((item) => item.includes("2, 3, 4")));
+  const template = await fs.readFile(new URL("../../samples/templates/ULA-Master-Report.docx", import.meta.url));
+  await assert.rejects(populateMasterReportDocx(template, { report: { status: "Final", normalized_claim_record: draft.normalizedRecord } }), /unreviewed pages/);
+  assert.throws(() => evidenceForDraft({ ...incompleteAnalysis, provisional: false }, currentDocuments), /extraction or page-coverage/);
+  assert.throws(() => evidenceForDraft({ ...incompleteAnalysis, evidence_snapshot: [{ ...partial, unreviewed_pages: [] }] }, currentDocuments), /page ranges/);
+});
