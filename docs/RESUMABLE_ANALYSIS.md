@@ -24,6 +24,8 @@ Deploy the backend and rebuilt frontend together. Follow `WINDOWS_PRODUCTION_DEP
 - `AI_JOB_STORAGE_DIR` defaults to `.data/analysis-jobs` in the installation. Use a persistent local directory writable only by the application service and administrators. Include it in the normal encrypted evidence backup and retention process. It contains claim evidence, intermediate analysis, results and discussion history.
 - `AI_JOB_MAX_PAGES` defaults to 2,000 per PDF. The existing file-count and upload-byte limits still apply. Large uploads remain subject to proxy limits.
 - `AI_JOB_REQUEST_TIMEOUT_MS` defaults to 900,000 milliseconds per provider request.
+- `AI_JOB_IDLE_TIMEOUT_MS` defaults to 120,000 milliseconds without response data, including connection setup. A silent request is aborted and receives the existing bounded retries. Stream activity does not extend the total request deadline.
+- `AI_JOB_BATCH_MAX_PAGES` defaults to 20 (maximum 20). Review batches are bounded by page count as well as token/image/byte budgets, so a 40-page claim cannot wait for one giant review checkpoint. Non-PDF evidence counts as at least one page. On resume, oversized unfinished batches from older releases are split; saved reviews are reused.
 - Run one analysis worker process per installation. A local PID lock prevents duplicate execution of the same job across processes on the same host; distributed workers and shared multi-host volumes are not supported by this implementation.
 - Extraction settings are read at execution time. The legacy PDF limits remain available; the new job path uses bounded ranges of at most 20 PDF pages and does not send an oversized original PDF to the provider.
 
@@ -32,6 +34,8 @@ The browser submits a job and polls saved status. Closing the browser does not c
 Jobs are private to their submitting user and require current claim access in production. Resume and result application reject changed attachment identities or storage references. New requests are fingerprinted from claim context, original file contents, model/output settings, methodology snapshot and pipeline version. An old completed analysis is never silently applied over new evidence.
 
 ## Large files and errors
+
+During each provider attempt, the workspace shows elapsed time, attempt number, the total request deadline and the last received connection activity. Stream activity is saved at bounded intervals without exposing generated text or private reasoning. Only completed, validated review batches advance the page counter. Status polling times out after 30 seconds and reports a connection error instead of leaving a silently frozen poll.
 
 The server extracts every PDF page in original order and retains the original document and page numbers. It groups extraction checkpoints according to conservative token/image/byte budgets. If one request exceeds capacity, only that unfinished group is split. Image-request errors receive a single image re-encoding attempt before smaller page ranges are tried. Unreadable individual pages remain explicit failures, not silently excluded evidence.
 

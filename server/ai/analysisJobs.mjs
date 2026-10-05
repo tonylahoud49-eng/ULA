@@ -116,6 +116,8 @@ export function verifyReviewedSourcePages(analysis, evidence, reviews) {
 
 export function createAnalysisJobs({ store, providerFactory, getStyleReferences, env = process.env, extract = extractEvidenceFile, inspect = inspectPdf, measure = measureJobRequest, sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms)) }) {
   const queue = [];
+  const batchPageLimit = Math.min(20, positive(env.AI_JOB_BATCH_MAX_PAGES, 20));
+  const withinPageLimit = (evidence) => evidence.reduce((sum, item) => sum + Math.max(1, item.pages.length), 0) <= batchPageLimit;
   let busy = false;
   const save = (job, message) => {
     job.updated_at = now();
@@ -128,6 +130,7 @@ export function createAnalysisJobs({ store, providerFactory, getStyleReferences,
   const recover = (job) => {
     if (job && ["running", "queued"].includes(job.state) && !queue.includes(job.id) && !store.locked(job.id)) {
       job.state = "interrupted";
+      job.request_progress = null;
       job.error = { message: "The server stopped before this stage was saved. Completed checkpoints are intact.", code: "worker-interrupted" };
       save(job, "Interrupted. Resume from the last saved checkpoint.");
     }
@@ -164,7 +167,7 @@ export function createAnalysisJobs({ store, providerFactory, getStyleReferences,
       if (!job.units) {
         job.phase = "extracting"; save(job, "Checking document pages and planning evidence extraction.");
         const units = [], inventory = [];
-        const pageSize = Math.min(20, positive(env.AI_MAX_PDF_PAGES, 80), positive(env.AI_MAX_PDF_VISION_PAGES, 40));
+        const pageSize = Math.min(batchPageLimit, positive(env.AI_MAX_PDF_PAGES, 80), positive(env.AI_MAX_PDF_VISION_PAGES, 40));
         for (let index = 0; index < input.files.length; index += 1) {
           const file = input.files[index];
           if (isPdf(file)) {
@@ -201,7 +204,8 @@ export function createAnalysisJobs({ store, providerFactory, getStyleReferences,
         const groups = []; let current = [];
         for (const index of usableIndexes) {
           const candidate = [...current, index];
-          if (current.length && !measure(paramsFor(candidate, batchInstruction)).fits) { groups.push(current); current = []; }
+          const candidateParams = paramsFor(candidate, batchInstruction);
+          if (current.length && (!withinPageLimit(candidateParams.evidence) || !measure(candidateParams).fits)) { groups.push(current); current = []; }
           current.push(index);
         }
         if (current.length) groups.push(current);
@@ -210,9 +214,34 @@ export function createAnalysisJobs({ store, providerFactory, getStyleReferences,
       }
       const call = async (params, label) => {
         for (let attempt = 0; ; attempt += 1) {
-          try { return await provider.analyze(params); }
+          const requestTimeoutMs = positive(env.AI_JOB_REQUEST_TIMEOUT_MS, 900_000);
+          const idleTimeoutMs = positive(env.AI_JOB_IDLE_TIMEOUT_MS, 120_000);
+          job.request_progress = {
+            label, attempt: attempt + 1, max_attempts: 3, stage: "connecting",
+            started_at: now(), deadline_at: new Date(Date.now() + requestTimeoutMs).toISOString(),
+            last_activity_at: null, received_bytes: 0,
+          };
+          save(job, `${label}: contacting the analysis service (attempt ${attempt + 1} of 3).`);
+          let lastSaved = Date.now();
+          const onProgress = (progress) => {
+            const previous = job.request_progress.stage;
+            const stage = ["connecting", "waiting", "receiving", "validating"].includes(progress.stage) ? progress.stage : previous;
+            job.request_progress.stage = stage;
+            if (stage !== "connecting") job.request_progress.last_activity_at = now();
+            if (Number.isFinite(progress.received_bytes)) job.request_progress.received_bytes = progress.received_bytes;
+            if (previous !== stage || Date.now() - lastSaved >= 3000) {
+              const message = previous !== stage ? {
+                waiting: `${label}: connected; waiting for the AI response.`,
+                receiving: `${label}: receiving AI response data. Pages count as reviewed after this batch is checked and saved.`,
+                validating: `${label}: response received; checking the structured result and citations.`,
+              }[stage] : undefined;
+              save(job, message); lastSaved = Date.now();
+            }
+          };
+          try { return await provider.analyze({ ...params, onProgress, requestTimeoutMs, idleTimeoutMs }); }
           catch (error) {
             if (!transient(error) || attempt >= 2) throw error;
+            job.request_progress.stage = "retrying";
             save(job, `${label} interrupted. Retrying in ${2 ** (attempt + 1)} seconds; completed work is saved.`);
             await sleep(1000 * 2 ** (attempt + 1));
           }
@@ -228,6 +257,9 @@ export function createAnalysisJobs({ store, providerFactory, getStyleReferences,
         save(job, `Reviewing batch ${index + 1} of ${job.batches.length}: ${params.evidence.map((item) => `${item.document_name}${item.kind === "pdf" ? ` (pages ${item.pages[0].page}–${item.pages.at(-1).page})` : ""}`).join(", ")}.`);
         let result;
         try {
+          // Also subdivide pending batches saved by an older release. Completed
+          // reviews above are always reused, regardless of their former size.
+          if (!withinPageLimit(params.evidence)) throw jobError("This unfinished batch exceeds the checkpoint page limit.", 413, "batch-page-limit");
           if (!measure(params).fits) throw jobError("This batch exceeds the request budget.", 413, "batch-too-large");
           try { result = await call(params, `Batch ${index + 1}`); }
           catch (error) {
@@ -263,6 +295,7 @@ export function createAnalysisJobs({ store, providerFactory, getStyleReferences,
         }
         verifyReviewedSourcePages(result.analysis, params.evidence);
         store.write(id, `review-${batch.id}`, result);
+        job.request_progress = null;
         batch.state = "complete"; job.usage = usageFor(job); save(job, `Batch ${index + 1} saved and citations checked.`);
       }
       job.phase = "synthesizing";
@@ -289,8 +322,10 @@ export function createAnalysisJobs({ store, providerFactory, getStyleReferences,
       };
       store.write(id, "result", payload);
       job.state = "complete"; job.phase = "complete"; job.usage = payload.usage; job.error = null;
+      job.request_progress = null;
       save(job, "Analysis complete. The saved result is ready for professional review.");
     } catch (error) {
+      job.request_progress = null;
       job.state = "failed"; job.error = { ...describeAnalysisFailure(error, job), provider_status: error.providerStatus || error.status || null };
       save(job, `Stopped during ${job.phase}. Completed checkpoints are saved.`);
     } finally { release(); }

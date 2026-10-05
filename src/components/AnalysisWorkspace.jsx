@@ -5,10 +5,16 @@ import { Button } from "@/components/ui/button";
 import { Textarea } from "@/components/ui/textarea";
 import { analysisJobRequest } from "@/api/aiAnalysisClient";
 
+const duration = (milliseconds) => {
+  const seconds = Math.max(0, Math.floor(milliseconds / 1000));
+  return `${Math.floor(seconds / 60)}m ${String(seconds % 60).padStart(2, "0")}s`;
+};
+
 export default function AnalysisWorkspace({ claimId, analysis, onLoad, busy = false }) {
   const [job, setJob] = useState(null);
   const [error, setError] = useState("");
   const [acting, setActing] = useState(false);
+  const [clock, setClock] = useState(Date.now());
   const [chatOpen, setChatOpen] = useState(false);
   const [messages, setMessages] = useState([]);
   const [question, setQuestion] = useState("");
@@ -18,6 +24,13 @@ export default function AnalysisWorkspace({ claimId, analysis, onLoad, busy = fa
   const retryRequest = useRef(null);
   const mountedClaim = useRef(claimId);
   mountedClaim.current = claimId;
+
+  const running = ["queued", "running"].includes(job?.state);
+  useEffect(() => {
+    if (!running) return;
+    const timer = setInterval(() => setClock(Date.now()), 1000);
+    return () => clearInterval(timer);
+  }, [running]);
 
   useEffect(() => {
     let active = true, timer;
@@ -73,7 +86,7 @@ export default function AnalysisWorkspace({ claimId, analysis, onLoad, busy = fa
   if (!job && !chatJobId && !error) return null;
   const stopped = ["failed", "interrupted"].includes(job?.state);
   const canUsePartialReview = stopped && job.completed_batches > 0 && job.completed_batches < job.total_batches;
-  const running = ["queued", "running"].includes(job?.state);
+  const request = running ? job?.request_progress : null;
   const phases = ["extracting", "reviewing", "synthesizing", "complete"];
   const phaseIndex = phases.indexOf(job?.phase);
   const count = job?.total_pages ? `${job.reviewed_pages} of ${job.total_pages} PDF pages reviewed` : `${job?.completed_batches || 0} of ${job?.total_batches || 0} review batches saved`;
@@ -100,6 +113,20 @@ export default function AnalysisWorkspace({ claimId, analysis, onLoad, busy = fa
         </ol>
         <div role="progressbar" aria-label="Evidence review completed" aria-valuemin={0} aria-valuemax={100} aria-valuenow={percent} aria-valuetext={count} className="h-1.5 overflow-hidden rounded-full bg-muted"><div className="h-full bg-primary" style={{ width: `${percent}%` }} /></div>
         <p className="break-words text-sm" role="status">{job.message}</p>
+        {request && <div className="space-y-1 text-sm text-muted-foreground">
+          <p className="tabular-nums">{request.label} · Attempt {request.attempt} of {request.max_attempts} · Elapsed {duration(clock - Date.parse(request.started_at))}</p>
+          <p>{request.last_activity_at
+            ? `Last AI connection activity: ${new Date(request.last_activity_at).toLocaleTimeString()}.`
+            : "Waiting for the analysis service to connect."}</p>
+          <p>{clock >= Date.parse(request.deadline_at)
+            ? "The request deadline has passed. Waiting for the server to confirm the retry or error."
+            : `This attempt has up to ${duration(Date.parse(request.deadline_at) - clock)} remaining. A silent connection is retried sooner.`}</p>
+        </div>}
+        {running && job.phase === "reviewing" && <p className="text-sm text-muted-foreground">The page count increases when a complete batch is checked and saved. A receiving response is not yet a saved review.</p>}
+        {!!job.active_batch?.length && running && <details className="text-sm">
+          <summary className="cursor-pointer text-muted-foreground">Documents in this batch ({job.active_batch.length})</summary>
+          <ul className="mt-2 space-y-1">{job.active_batch.map((item, index) => <li className="break-words" key={index}>{item.document_name}{item.pages.length ? ` · Pages ${item.pages[0]}–${item.pages.at(-1)}` : ""}</li>)}</ul>
+        </details>}
         {job.phase === "extracting" && <p className="text-xs text-muted-foreground">{job.extracted_units} of {job.total_units} extraction checkpoints saved.</p>}
         {running && <p className="text-xs text-muted-foreground">You can leave this page. Work continues on the server and completed checkpoints are saved.</p>}
         {job.error && <div className="space-y-2 rounded-md border border-destructive/30 bg-destructive/5 p-3" role="alert">

@@ -46,6 +46,54 @@ test("180-page analysis saves ordered batches, reconciles once and reuses result
   assert.throws(() => jobs.get("../../secret", "user-1"), /not found/);
 });
 
+test("40 pages get multiple checkpoints even when the provider request budget fits", async (t) => {
+  let finishFirst, firstStarted;
+  const started = new Promise((resolve) => { firstStarted = resolve; });
+  const first = new Promise((resolve) => { finishFirst = resolve; });
+  const calls = [];
+  const { jobs, store } = fixture(t, {
+    inspect: async () => ({ page_count: 40 }), measure: () => ({ fits: true }),
+    providerFactory: () => ({ analyze: async (params) => {
+      calls.push(params);
+      if (calls.length === 1) {
+        params.onProgress({ stage: "receiving", received_bytes: 42, private_text: "must never be persisted" });
+        firstStarted(); await first;
+      }
+      return response();
+    } }),
+  });
+  const submitted = await jobs.create(request());
+  await started;
+  const running = jobs.get(submitted.id, "user-1");
+  assert.equal(running.total_batches, 2);
+  assert.equal(running.reviewed_pages, 0);
+  assert.equal(running.request_progress.stage, "receiving");
+  assert.equal(running.request_progress.received_bytes, 42);
+  assert.ok(running.request_progress.last_activity_at);
+  assert.doesNotMatch(JSON.stringify(store.read(submitted.id)), /private_text|must never/);
+  finishFirst(); await jobs.idle();
+  assert.equal(calls.length, 3);
+  assert.equal(jobs.get(submitted.id, "user-1").reviewed_pages, 40);
+  assert.equal(jobs.get(submitted.id, "user-1").request_progress, null);
+});
+
+test("resume subdivides an oversized unfinished batch saved by an older release", async (t) => {
+  const { jobs, store, factory } = fixture(t, {
+    inspect: async () => ({ page_count: 40 }), measure: () => ({ fits: true }),
+    providerFactory: () => ({ analyze: async () => { throw new Error("Unavailable"); } }),
+  });
+  const submitted = await jobs.create(request()); await jobs.idle();
+  const record = store.read(submitted.id);
+  record.batches = [{ id: "old", indexes: [0, 1], state: "pending", page_count: 40 }];
+  store.write(submitted.id, "job", record);
+  const reviews = [];
+  const resumed = factory({ providerFactory: () => ({ analyze: async (params) => { if (!params.requestEvidence) reviews.push(params.evidence); return response(); } }) });
+  resumed.resume(submitted.id, "user-1"); await resumed.idle();
+  assert.deepEqual(reviews.map((evidence) => evidence[0].pages.length), [20, 20]);
+  assert.deepEqual(reviews.flatMap((evidence) => evidence[0].pages.map((page) => page.page)), Array.from({ length: 40 }, (_, index) => index + 1));
+  assert.equal(resumed.get(submitted.id, "user-1").state, "complete");
+});
+
 test("image failure persists completed batches; provisional draft blocks final; restart resumes only unfinished work", async (t) => {
   let fail = true;
   const calls = [];

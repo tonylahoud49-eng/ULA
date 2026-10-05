@@ -1,4 +1,5 @@
 import crypto from "node:crypto";
+import { requestAnthropicResponse } from "./anthropicTransport.mjs";
 import { z } from "zod";
 import {
   ANALYSIS_DOMAINS,
@@ -1271,7 +1272,7 @@ export function createAnthropicProvider({
   return {
     name: "anthropic",
     model: resolvedModel,
-    async analyze({ claim, evidence, files, styleReferences = [], requestEvidence, analysisContext }) {
+    async analyze({ claim, evidence, files, styleReferences = [], requestEvidence, analysisContext, onProgress, requestTimeoutMs, idleTimeoutMs }) {
       const prepared = prepareEvidenceForAnthropic(requestEvidence || evidence);
       const claimContext = prepareClaimContextForAnthropic(claim);
       const requestBody = buildAnthropicRequestBody({
@@ -1294,48 +1295,40 @@ export function createAnthropicProvider({
         max_output_tokens: resolvedMaxOutputTokens,
         request_bytes: requestBytes,
       };
-      let response;
+      let response, responseText, responseHeadersElapsedMs;
       try {
-        response = await fetchImpl(endpoint, {
-          method: "POST",
+        ({ response, responseText } = await requestAnthropicResponse({
+          fetchImpl, endpoint,
           headers: {
             "content-type": "application/json",
             "anthropic-version": "2023-06-01",
             "x-api-key": apiKey,
           },
           body: requestBodyText,
-          signal: AbortSignal.timeout(Number(process.env.AI_JOB_REQUEST_TIMEOUT_MS) || 900_000),
-        });
+          timeoutMs: requestTimeoutMs || Number(process.env.AI_JOB_REQUEST_TIMEOUT_MS) || 900_000,
+          idleTimeoutMs: idleTimeoutMs || Number(process.env.AI_JOB_IDLE_TIMEOUT_MS) || 120_000,
+          onProgress,
+          onHeaders: (incoming) => {
+            responseHeadersElapsedMs = Date.now() - requestStartedAt;
+            safeAiDebugLog("[ULA AI debug] Claude response headers", {
+              http_status: incoming.status, model: resolvedModel,
+              provider_request_id: incoming.headers?.get?.("request-id") || null,
+              elapsed_ms: responseHeadersElapsedMs,
+            });
+          },
+        }));
       } catch (error) {
         throw logTransportFailure(error, {
           ...transportContext,
-          phase: "awaiting_response_headers",
+          phase: error.transportPhase || "awaiting_response_headers",
           elapsed_ms: Date.now() - requestStartedAt,
-          http_status: null,
-          provider_request_id: null,
+          response_headers_elapsed_ms: responseHeadersElapsedMs,
+          http_status: error.httpStatus || null,
+          provider_request_id: error.providerRequestId || null,
         });
       }
       const requestId = response.headers?.get?.("request-id") || response.headers?.get?.("x-request-id") || null;
-      const responseHeadersElapsedMs = Date.now() - requestStartedAt;
-      safeAiDebugLog("[ULA AI debug] Claude response headers", {
-        http_status: response.status,
-        model: resolvedModel,
-        provider_request_id: requestId,
-        elapsed_ms: responseHeadersElapsedMs,
-      });
-      let responseText;
-      try {
-        responseText = await response.text();
-      } catch (error) {
-        throw logTransportFailure(error, {
-          ...transportContext,
-          phase: "reading_response_stream",
-          elapsed_ms: Date.now() - requestStartedAt,
-          response_headers_elapsed_ms: responseHeadersElapsedMs,
-          http_status: response.status,
-          provider_request_id: requestId,
-        });
-      }
+      onProgress?.({ stage: "validating" });
       let body;
       try {
         body = parseAnthropicResponseBody(

@@ -169,10 +169,17 @@ const readResponseBody = async (response) => {
 };
 
 export async function analysisJobRequest(url, options = {}) {
-  const response = await fetch(url, options);
-  const { body } = await readResponseBody(response);
-  if (!response.ok) throw createRequestError(body.error || "Could not reach the saved analysis. Refresh to reconnect; server checkpoints are retained.", response.status, body.code);
-  return body;
+  // A hung status request must not silently stop the polling loop forever.
+  // Long-running POST actions retain their existing provider-side deadlines.
+  const controller = new AbortController();
+  const timer = (!options.method || options.method === "GET")
+    ? setTimeout(() => controller.abort(), 30_000) : null;
+  try {
+    const response = await fetch(url, { ...options, signal: options.signal || controller.signal });
+    const { body } = await readResponseBody(response);
+    if (!response.ok) throw createRequestError(body.error || "Could not reach the saved analysis. Refresh to reconnect; server checkpoints are retained.", response.status, body.code);
+    return body;
+  } finally { clearTimeout(timer); }
 }
 
 export async function waitForAnalysisJob(initialJob, onProgress) {

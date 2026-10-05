@@ -62,6 +62,8 @@ export function publicAnalysisJob(job) {
     id: job.id, claim_id: job.claim_id, provider: job.provider, model: job.model,
     state: job.state, phase: job.phase, message: job.message, error: job.error,
     created_at: job.created_at, updated_at: job.updated_at,
+    request_progress: job.request_progress || null,
+    active_batch: job.active_batch || [],
     documents: job.manifest.map(({ id, file_name, storage_key, file_url }) => ({ id, file_name, storage_key, file_url })),
     extracted_units: job.extracted_units || 0, total_units: job.units?.length || 0,
     completed_batches: completed, total_batches: job.batches?.length || 0,
