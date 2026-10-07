@@ -1,4 +1,4 @@
-import React, { useEffect, useState } from "react";
+import React, { useEffect, useId, useState } from "react";
 import { Brain, Loader2 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -23,11 +23,13 @@ function ReportReview({ report, busy, canReview, act }) {
       <div className="min-w-0"><h4 className="font-medium break-words">{report.report_title || report.file_name}</h4><p className="text-sm text-muted-foreground">{status}</p></div>
       <a href={`/api/ai/brain/reports/${report.id}/file`} className="text-sm underline underline-offset-4">Download original</a>
     </div>
-    <p className="text-sm text-muted-foreground break-words">{report.claim_case_id || "Case reference not supplied"} · {report.business_line} · {report.topic || "Topic not supplied"}</p>
+    <p className="text-sm text-muted-foreground break-words">{report.claim_case_id || "Case reference not supplied"}</p>
     <details className="text-sm">
       <summary className="cursor-pointer">Source and approval details</summary>
       <dl className="mt-2 grid gap-x-4 gap-y-1 sm:grid-cols-[auto_1fr] break-words">
         <dt>Source file</dt><dd>{report.file_name}</dd>
+        <dt>Business line</dt><dd>{report.business_line}</dd>
+        <dt>Loss topic</dt><dd>{report.topic || "Topic not supplied"}</dd>
         <dt>Uploaded by</dt><dd>{report.uploader_name || report.uploaded_by}</dd>
         <dt>Uploaded</dt><dd>{new Date(report.created_at).toLocaleString()}</dd>
         <dt>Human approval</dt><dd>{report.approved_by || "Not recorded"} · {report.approval_date || "No date"}</dd>
@@ -69,10 +71,11 @@ function ReportReview({ report, busy, canReview, act }) {
 }
 
 export default function BrainKnowledgeLibrary() {
-  const [selectedLine, setSelectedLine] = useState("");
+  const [open, setOpen] = useState(false);
   const [uploadOpen, setUploadOpen] = useState(false);
   const [bank, setBank] = useState([]);
   const [reports, setReports] = useState([]);
+  const [businessLines, setBusinessLines] = useState([]);
   const [topics, setTopics] = useState([]);
   const [canReview, setCanReview] = useState(false);
   const [busy, setBusy] = useState(false);
@@ -80,16 +83,18 @@ export default function BrainKnowledgeLibrary() {
   const [progress, setProgress] = useState("");
   const [error, setError] = useState("");
   const [notice, setNotice] = useState("");
-  const receive = (body) => { setReports(body.reports); setBank(body.bank); setTopics(body.topics); setCanReview(body.can_review); setLoaded(true); };
+  const panelId = useId();
+  const receive = (body) => { setReports(body.reports); setBank(body.bank); setBusinessLines(body.business_lines); setTopics(body.topics); setCanReview(body.can_review); setLoaded(true); };
   const refresh = async () => receive(await brainRequest("/reports"));
   useEffect(() => {
+    if (!open) return;
     let active = true;
-    setBusy(true); setProgress("Loading approved report library…"); setError("");
+    setBusy(true); setLoaded(false); setProgress("Loading approved report library…"); setError(""); setNotice("");
     brainRequest("/reports").then((body) => { if (active) receive(body); })
       .catch((cause) => { if (active) setError(cause.message); })
       .finally(() => { if (active) setBusy(false); });
     return () => { active = false; };
-  }, []);
+  }, [open]);
   const act = async (action, label = "Updating library…") => {
     if (busy) return;
     setBusy(true); setProgress(label); setError(""); setNotice("");
@@ -101,36 +106,36 @@ export default function BrainKnowledgeLibrary() {
     } catch (cause) { setNotice(""); setError(cause.message); }
     finally { setBusy(false); }
   };
-  return <section className="border border-border rounded-md bg-background">
-    <div className="flex flex-wrap items-center justify-between gap-3 p-4">
-      <div><h3 className="flex items-center gap-2 font-heading text-lg"><Brain className="h-4 w-4 text-primary" aria-hidden="true" />Brain bank</h3><p className="text-sm text-muted-foreground">{loaded ? `${bank.reduce((count, item) => count + item.active_reports, 0)} approved references across ${bank.length} business-line Brains` : "Loading Brain bank…"}</p></div>
-      <Button variant="outline" size="sm" disabled={busy} onClick={async () => { setBusy(true); setProgress("Refreshing Brain bank…"); setError(""); setNotice(""); try { await refresh(); } catch (cause) { setError(cause.message); } finally { setBusy(false); } }}>Refresh bank</Button>
-    </div>
-    <div className="border-t border-border px-4" aria-busy={busy}>
-      {error && <p role="alert" className="text-sm text-destructive break-words">{error}</p>}
-      {notice && <p role="status" className="text-sm">{notice}</p>}
-      {busy && <p role="status" className="flex items-center gap-2 py-3 text-sm"><Loader2 className="h-4 w-4 animate-spin motion-reduce:animate-none" aria-hidden="true" />{progress}</p>}
-      <div className="divide-y divide-border">{bank.map((item) => {
-        const expanded = selectedLine === item.business_line;
-        const ownedReports = reports.filter((report) => report.business_line === item.business_line);
-        const panelId = `brain-${item.business_line.replace(/[^a-zA-Z0-9]/g, "-")}`;
-        return <div key={item.business_line}>
-          <div className="flex flex-wrap items-center justify-between gap-3 py-3">
-            <div className="min-w-0"><h4 className="font-medium">{item.business_line}</h4><p className="text-xs text-muted-foreground">{item.active_reports} active references · {item.methodology_notes} methodology notes{item.awaiting_review ? ` · ${item.awaiting_review} awaiting review` : ""}</p>{item.preview[0] && <p className="mt-1 max-w-prose line-clamp-1 break-words text-sm text-muted-foreground">{item.preview[0]}</p>}</div>
-            <Button variant="outline" size="sm" disabled={busy} aria-expanded={expanded} aria-controls={panelId} onClick={() => { setSelectedLine(expanded ? "" : item.business_line); setUploadOpen(false); }}>{expanded ? "Close Brain" : "Open Brain"}</Button>
+  const preview = [...new Set(bank.flatMap((item) => item.preview))];
+  return <div className="space-y-4">
+    <Button type="button" variant="outline" disabled={busy} aria-expanded={open} aria-controls={panelId} onClick={() => setOpen(!open)}>
+      <Brain className="h-4 w-4" aria-hidden="true" />{open ? "Close Brain" : "Open Brain"}
+    </Button>
+    {open && <section id={panelId} className="rounded-md border border-border bg-background" aria-label="Brain bank">
+      <div className="flex flex-wrap items-center justify-between gap-3 border-b p-4">
+        <div><h3 className="font-heading text-lg">Brain bank</h3>{loaded && <p className="text-sm text-muted-foreground">{bank.reduce((count, item) => count + item.active_reports, 0)} approved references · {bank.reduce((count, item) => count + item.methodology_notes, 0)} methodology notes</p>}</div>
+        <div className="flex flex-wrap gap-2">
+          <Button type="button" variant="outline" size="sm" disabled={busy} onClick={async () => { setBusy(true); setProgress("Refreshing Brain bank…"); setError(""); setNotice(""); try { await refresh(); } catch (cause) { setError(cause.message); } finally { setBusy(false); } }}>Refresh</Button>
+          <Button type="button" size="sm" disabled={busy || !loaded} aria-expanded={uploadOpen} aria-controls={`${panelId}-upload`} onClick={() => setUploadOpen(!uploadOpen)}>{uploadOpen ? "Close upload" : "Upload approved report"}</Button>
+        </div>
+      </div>
+      <div className="space-y-4 p-4" aria-busy={busy}>
+        {error && <p role="alert" className="text-sm text-destructive break-words">{error}</p>}
+        {notice && <p role="status" className="text-sm">{notice}</p>}
+        {busy && <p role="status" className="flex items-center gap-2 text-sm"><Loader2 className="h-4 w-4 animate-spin motion-reduce:animate-none" aria-hidden="true" />{progress}</p>}
+        {loaded && <>
+          {uploadOpen && <div id={`${panelId}-upload`}><ApprovedReportUpload businessLines={businessLines} topics={topics} disabled={busy} onBusyChange={(value) => { setBusy(value); if (value) setProgress("Saving approved report…"); }} onSaved={async () => {
+            try { await refresh(); }
+            catch (cause) { setError(`The report was saved, but the Brain could not refresh: ${cause.message}`); }
+          }} /></div>}
+          {preview.length > 0 && <details className="text-sm"><summary className="cursor-pointer font-medium">View approved methodology preview</summary><ul className="mt-3 list-disc space-y-2 pl-5 break-words">{preview.map((note) => <li key={note}>{note}</li>)}</ul></details>}
+          <div>
+            <h4 className="font-medium">Report submissions</h4>
+            {!reports.length && <p className="mt-2 text-sm text-muted-foreground">No submissions available to your account. Upload an approved final report here or from its signed report version.</p>}
+            <div className="divide-y divide-border">{reports.map((report) => <ReportReview key={`${report.id}:${report.revision || 0}`} report={report} busy={busy} canReview={canReview} act={act} />)}</div>
           </div>
-          {expanded && <div id={panelId} className="space-y-4 border-t border-border py-4">
-            <div className="flex flex-wrap items-center justify-between gap-2"><p className="text-sm">Approved methodology for {item.business_line}</p><Button size="sm" disabled={busy} aria-expanded={uploadOpen} onClick={() => setUploadOpen(!uploadOpen)}>{uploadOpen ? "Close upload" : "Upload approved report"}</Button></div>
-            {item.preview.length > 0 && <ul className="list-disc pl-5 space-y-2 text-sm break-words">{item.preview.map((note, index) => <li key={index}>{note}</li>)}</ul>}
-            {uploadOpen && <ApprovedReportUpload businessLine={item.business_line} topics={topics} disabled={busy} onBusyChange={(value) => { setBusy(value); if (value) setProgress("Saving approved report…"); }} onSaved={async () => {
-              try { await refresh(); }
-              catch (cause) { setError(`The report was saved, but the Brain could not refresh: ${cause.message}`); }
-            }} />}
-            {!ownedReports.length && <p className="text-sm text-muted-foreground">No submissions available to your account in this Brain. Upload an approved final report here or from its signed report version.</p>}
-            <div className="divide-y divide-border">{ownedReports.map((report) => <ReportReview key={`${report.id}:${report.revision || 0}`} report={report} busy={busy} canReview={canReview} act={act} />)}</div>
-          </div>}
-        </div>;
-      })}</div>
-    </div>
-  </section>;
+        </>}
+      </div>
+    </section>}
+  </div>;
 }
