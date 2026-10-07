@@ -34,7 +34,7 @@ export function registerAnalysisJobRoutes(app, { requireAccess, upload, getJobs,
     if (request.body.provider && request.body.provider !== "anthropic") throw jobError("Saved analysis jobs currently use Claude. Select Claude or use the existing provider workflow.");
     if (!(env.ANTHROPIC_API_KEY || env.ANTHROTIC_API_KEY)) throw jobError("Claude is not configured on the server.", 503);
     const model = request.body.model || env.ANTHROPIC_MODEL || "claude-sonnet-4-6";
-    const job = await getJobs().create({ claim, manifest, files, model, owner: owner(request) });
+    const job = await getJobs().create({ claim, manifest, files, model, owner: owner(request), actor: request.authUser });
     response.status(job.state === "complete" ? 200 : 202).json({ job });
   }));
   app.get("/api/ai/jobs", requireAccess, route(async (request, response) => {

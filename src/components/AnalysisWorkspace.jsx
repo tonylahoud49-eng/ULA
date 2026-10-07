@@ -4,13 +4,14 @@ import { CheckCircle2, Loader2, MessageSquare, RotateCcw, Send, AlertTriangle } 
 import { Button } from "@/components/ui/button";
 import { Textarea } from "@/components/ui/textarea";
 import { analysisJobRequest } from "@/api/aiAnalysisClient";
+import { analysisWorkspaceJobPath } from "@/lib/analysisWorkspaceJob";
 
 const duration = (milliseconds) => {
   const seconds = Math.max(0, Math.floor(milliseconds / 1000));
   return `${Math.floor(seconds / 60)}m ${String(seconds % 60).padStart(2, "0")}s`;
 };
 
-export default function AnalysisWorkspace({ claimId, analysis, onLoad, busy = false }) {
+export default function AnalysisWorkspace({ claimId, analysis, activeJobId, onSelectSaved, onLoad, busy = false }) {
   const [job, setJob] = useState(null);
   const [error, setError] = useState("");
   const [acting, setActing] = useState(false);
@@ -24,6 +25,7 @@ export default function AnalysisWorkspace({ claimId, analysis, onLoad, busy = fa
   const retryRequest = useRef(null);
   const mountedClaim = useRef(claimId);
   mountedClaim.current = claimId;
+  const jobPath = analysisWorkspaceJobPath(claimId, analysis, activeJobId);
 
   const running = ["queued", "running"].includes(job?.state);
   useEffect(() => {
@@ -34,19 +36,25 @@ export default function AnalysisWorkspace({ claimId, analysis, onLoad, busy = fa
 
   useEffect(() => {
     let active = true, timer;
+    const selectedJobId = activeJobId || analysis?.job_id;
     setJob(null); setError(""); setChatOpen(false); setMessages([]); setQuestion(""); setChatError("");
     const poll = async () => {
+      let keepPolling = true;
       try {
-        const data = await analysisJobRequest(`/api/ai/jobs?claim_id=${encodeURIComponent(claimId)}`);
+        const data = await analysisJobRequest(jobPath);
         if (active) { setJob(data.job); setError(""); }
+        keepPolling = !selectedJobId || ["queued", "running"].includes(data.job?.state);
       } catch (failure) { if (active) setError(`Saved progress could not be refreshed. ${failure.message}`); }
-      if (active) timer = setTimeout(poll, 3000);
+      if (active && keepPolling) timer = setTimeout(poll, 3000);
     };
-    if (claimId) poll();
+    // Legacy saved analyses have no job. Showing the claim's latest job beside
+    // one of these would attach an unrelated run to the selected analysis.
+    if (jobPath) poll();
     return () => { active = false; clearTimeout(timer); };
-  }, [claimId]);
+  }, [jobPath, busy]);
 
-  const chatJobId = analysis?.job_id || (job?.state === "complete" ? job.id : null);
+  const displayedAnalysis = !activeJobId || analysis?.job_id === activeJobId ? analysis : null;
+  const chatJobId = displayedAnalysis?.job_id || (job?.state === "complete" ? job.id : null);
   useEffect(() => {
     let active = true;
     if (chatOpen && chatJobId) {
@@ -83,7 +91,7 @@ export default function AnalysisWorkspace({ claimId, analysis, onLoad, busy = fa
     } catch (failure) { if (mountedClaim.current === originalClaim) setChatError(failure.message); }
     finally { if (mountedClaim.current === originalClaim) setSending(false); }
   };
-  if (!job && !chatJobId && !error) return null;
+  if (!job && !chatJobId && !error && !displayedAnalysis?.methodology_references?.length) return null;
   const stopped = ["failed", "interrupted"].includes(job?.state);
   const canUsePartialReview = stopped && job.completed_batches > 0 && job.completed_batches < job.total_batches;
   const request = running ? job?.request_progress : null;
@@ -102,6 +110,7 @@ export default function AnalysisWorkspace({ claimId, analysis, onLoad, busy = fa
           <p className="mt-1 text-sm text-muted-foreground">{job ? count : "Discuss the evidence behind this analysis."}</p>
         </div>
         {chatJobId && <Button variant="outline" size="sm" aria-expanded={chatOpen} onClick={() => setChatOpen(!chatOpen)}><MessageSquare className="mr-2 h-4 w-4" />{chatOpen ? "Close discussion" : "Discuss analysis"}</Button>}
+        {activeJobId && analysis && activeJobId !== analysis.job_id && onSelectSaved && <Button variant="outline" size="sm" disabled={busy || acting} onClick={onSelectSaved}>View previous saved analysis</Button>}
       </div>
       {job && <div className="space-y-4 px-5 py-4">
         <ol className="grid gap-2 text-sm sm:grid-cols-4" aria-label="Analysis stages">
@@ -143,6 +152,11 @@ export default function AnalysisWorkspace({ claimId, analysis, onLoad, busy = fa
         <details className="text-sm"><summary className="cursor-pointer text-muted-foreground">Activity and saved checkpoints</summary><ol className="mt-3 space-y-2">{job.events.slice(-12).map((entry, index) => <li key={index} className="flex gap-3 text-xs"><time className="shrink-0 tabular-nums text-muted-foreground" dateTime={entry.at}>{new Date(entry.at).toLocaleTimeString()}</time><span className="break-words">{entry.message}</span></li>)}</ol></details>
       </div>}
       {error && <p role="alert" className="px-5 pb-4 text-sm text-destructive">{error}</p>}
+      {!!displayedAnalysis?.methodology_references?.length && <details className="border-t px-5 py-4 text-sm">
+        <summary className="cursor-pointer">Approved methodology used ({displayedAnalysis.methodology_references.length})</summary>
+        <p className="mt-2 text-muted-foreground">Internal reference history. These reports guide methodology; current claim evidence supplies all facts. Original files remain available only to their uploader and administrators.</p>
+        <ul className="mt-2 space-y-2">{displayedAnalysis.methodology_references.map((reference) => <li key={`${reference.report_id}:${reference.revision}`} className="break-words">{reference.title} · Revision {reference.revision}<span className="block text-xs text-muted-foreground break-all">Library reference: {reference.report_id}</span></li>)}</ul>
+      </details>}
       {chatOpen && chatJobId && <div className="border-t px-5 py-4">
         <h3 className="font-heading text-lg font-semibold">Discuss this analysis</h3>
         <p className="mt-1 text-xs text-muted-foreground">Answers use the saved analysis and cited evidence. Suggestions do not change your claim or report. Each answer uses the configured Claude service.</p>

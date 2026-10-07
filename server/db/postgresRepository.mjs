@@ -2,6 +2,7 @@ import crypto from "node:crypto";
 import pg from "pg";
 import { createPendingLeave, recordLeaveEmailDelivery, transitionLeave } from "../../src/lib/leaveWorkflow.js";
 import { AuthError, createPasswordHash, publicUser, verifyPassword } from "../auth/authService.mjs";
+import { applyBrainChanges, assertBrainAdmin, brainError, brainMetadata } from "../ai/brain/brainPolicy.mjs";
 
 const { Pool } = pg;
 
@@ -269,6 +270,8 @@ export function createPostgresRepository({ connectionString = process.env.DATABA
   const assertProductionReady = async () => {
     const requiredTables = [
       "app_settings",
+      "brain_reports",
+      "brain_knowledge",
       "audit_log",
       "auth_sessions",
       "auth_users",
@@ -279,7 +282,7 @@ export function createPostgresRepository({ connectionString = process.env.DATABA
       "password_reset_requests",
       "report_versions",
     ];
-    const protectedTables = ["app_settings", "audit_log", "claim_documents", "claims", "employees", "leave_requests", "report_versions"];
+    const protectedTables = ["app_settings", "brain_reports", "brain_knowledge", "audit_log", "claim_documents", "claims", "employees", "leave_requests", "report_versions"];
     const roleResult = await pool.query(POSTGRES_RUNTIME_ROLE_INSPECTION_QUERY);
     const role = roleResult.rows[0];
     if (!role) throw new Error("The PostgreSQL runtime role could not be inspected.");
@@ -401,6 +404,38 @@ export function createPostgresRepository({ connectionString = process.env.DATABA
 
   return {
     list,
+    brain: {
+      list: (actor) => withActor(actor, async (client) => {
+        const { rows } = await client.query("select data - 'extracted_text' as data from ula.brain_reports order by created_at desc");
+        return rows.map((row) => brainMetadata(row.data));
+      }),
+      get: (id, actor) => withActor(actor, async (client) => {
+        const { rows } = await client.query("select data, original from ula.brain_reports where id = $1", [id]);
+        return rows[0] ? { ...rows[0].data, buffer: rows[0].original } : null;
+      }),
+      insert: (record, buffer, actor) => withActor(actor, async (client) => {
+        if (record.uploaded_by !== actor.id || record.approval_status !== "submitted" || record.knowledge_manifest) throw brainError("Invalid approved-report submission.", 403);
+        await client.query("insert into ula.brain_reports (id, owner_id, data, original) values ($1,$2,$3,$4) on conflict (id) do nothing", [record.id, actor.id, record, buffer]);
+        const { rows } = await client.query("select data from ula.brain_reports where id = $1", [record.id]);
+        return brainMetadata(rows[0].data);
+      }),
+      mutate: (id, actor, operation) => withActor(actor, async (client) => {
+        assertBrainAdmin(actor);
+        const { rows } = await client.query("select data from ula.brain_reports where id = $1 for update", [id]);
+        if (!rows[0]) throw brainError("Saved report not found.", 404);
+        const next = applyBrainChanges(rows[0].data, operation(rows[0].data));
+        await client.query("update ula.brain_reports set data = $2 where id = $1", [id, next]);
+        if (next.status === "active" && next.approval_status === "verified" && next.knowledge_manifest?.approved === true) {
+          await client.query("insert into ula.brain_knowledge (report_id, manifest) values ($1,$2) on conflict (report_id) do update set manifest = excluded.manifest, updated_at = now()", [id, next.knowledge_manifest]);
+        } else await client.query("delete from ula.brain_knowledge where report_id = $1", [id]);
+        await audit(client, actor, `brain:${next.status}`, "BrainReport", { id, report_title: next.report_title }, { status: rows[0].data.status, revision: rows[0].data.revision }, { status: next.status, approval_status: next.approval_status, revision: next.revision });
+        return brainMetadata(next);
+      }),
+      references: (actor, businessLine = null) => withActor(actor, async (client) => {
+        const { rows } = await client.query("select manifest from ula.brain_knowledge where manifest->>'approved' = 'true' and ($1::text is null or lower(manifest #>> '{applies_to,business_lines,0}') = lower($1)) order by report_id", [businessLine]);
+        return rows.map((row) => row.manifest);
+      }),
+    },
     get,
     filter,
     create,

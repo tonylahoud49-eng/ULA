@@ -46,6 +46,30 @@ test("180-page analysis saves ordered batches, reconciles once and reuses result
   assert.throws(() => jobs.get("../../secret", "user-1"), /not found/);
 });
 
+test("approved methodology is snapshotted with jobs, recorded in results and invalidates new-job identity", async (t) => {
+  const core = { profile_id: "property-fire", source_role: "style_reference_only", applies_to: { business_lines: ["Property"], evidence_terms_any: ["insured premises"] }, style_notes: ["Test supported facts."] };
+  const brain = { profile_id: "brain-test", brain_report_id: "a".repeat(64), approved: true, is_brain_knowledge: true, revision: 1, title: "Approved Property methodology", source_role: "style_reference_only", applies_to: { business_lines: ["Property"], evidence_terms_any: ["water"] }, style_notes: ["Trace water entry against observed damage."] };
+  let active = [core, brain], calls = 0;
+  const { jobs, store } = fixture(t, {
+    getStyleReferences: async () => active,
+    inspect: async () => ({ page_count: 1 }),
+    extract: async (file, metadata) => ({ ...(await fakeExtract(file, metadata)), pages: [{ page: 1, text: "Water damage at insured premises." }] }),
+    providerFactory: () => ({ analyze: async () => { calls++; return response(); } }),
+  });
+  const input = request(); input.claim.business_line = "Property";
+  const first = await jobs.create(input); await jobs.idle();
+  assert.equal(jobs.result(first.id, input.owner).methodology_references[0].revision, 1);
+  assert.equal((await jobs.create(input)).id, first.id); assert.equal(calls, 1);
+  active = [core, { ...brain, revision: 2 }];
+  const changed = await jobs.create(input); await jobs.idle();
+  assert.notEqual(changed.id, first.id); assert.equal(calls, 2);
+  active = [core];
+  const removed = await jobs.create(input); await jobs.idle();
+  assert.deepEqual(jobs.result(removed.id, input.owner).methodology_references, []);
+  assert.equal(store.read(first.id, "input").styleReferences[1].revision, 1);
+  jobs.resume(first.id, input.owner); await jobs.idle(); assert.equal(calls, 3);
+});
+
 test("40 pages get multiple checkpoints even when the provider request budget fits", async (t) => {
   let finishFirst, firstStarted;
   const started = new Promise((resolve) => { firstStarted = resolve; });

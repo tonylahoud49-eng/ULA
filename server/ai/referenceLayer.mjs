@@ -191,8 +191,9 @@ export function selectApplicableStyleReferences(references = [], { claim = {}, e
     return normalized && source.includes(normalized);
   });
 
-  return references.filter((reference) => {
+  const applicable = references.filter((reference) => {
     if (reference?.source_role !== "style_reference_only") return false;
+    if (reference.is_brain_knowledge && (reference.approved !== true || !specificBusinessLine || !reference.applies_to?.business_lines?.length || !reference.applies_to?.evidence_terms_any?.length)) return false;
     const scope = reference.applies_to;
     if (!scope) return true;
     if (scope.client_terms?.length && !containsAny(scope.client_terms)) return false;
@@ -201,6 +202,19 @@ export function selectApplicableStyleReferences(references = [], { claim = {}, e
       && !scope.business_lines.some((line) => String(line).trim().toLowerCase() === businessLine)) return false;
     return true;
   });
+  const core = applicable.filter((reference) => !reference.is_brain_knowledge);
+  const coreForLine = { "property": "property-fire", "marine cargo (reefer/gfs)": "gfs-reefer", "marine cargo (non-reefer)": "non-reefer-cargo", "bulk vessel": "bulk-vessels", "air shipment (net)": "air-shipments", "land shipment": "land-shipments" };
+  const brain = applicable.filter((reference) => {
+    if (!reference.is_brain_knowledge) return false;
+    if (coreForLine[businessLine] && !core.some((item) => item.profile_id === coreForLine[businessLine])) return false;
+    if (businessLine === "marine cargo (reefer/gfs)" && !containsAny(["Global Foods Solutions", "GFS FZCO", "GFS FZE", "Asteria Trade"], searchableEvidence)) return false;
+    if (businessLine === "yacht" && !containsAny(["yacht", "pleasure craft"], searchableEvidence)) return false;
+    if (businessLine === "fidelity claims" && !containsAny(["fidelity", "employee dishonesty", "embezzlement"], searchableEvidence)) return false;
+    return true;
+  });
+  const score = (reference) => reference.applies_to.evidence_terms_any.reduce((sum, term) => sum + (containsAny([term], searchableEvidence) ? 1 : 0), 0);
+  brain.sort((a, b) => score(b) - score(a) || a.profile_id.localeCompare(b.profile_id));
+  return [...core, ...brain.slice(0, 3)];
 }
 
 export async function selectLegalReferences({

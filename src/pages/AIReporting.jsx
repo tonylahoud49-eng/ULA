@@ -37,6 +37,7 @@ import AITokenWatch from "@/components/AITokenWatch";
 import AIBillingHistory from "@/components/AIBillingHistory";
 import WorkflowActions from "@/components/WorkflowActions";
 import LoadError from "@/components/LoadError";
+import BrainKnowledgeLibrary from "@/components/BrainKnowledgeLibrary";
 import { savedAnalysisState, reviewedClaimValues } from "@/lib/reportWorkflow";
 
 const BUSINESS_LINES = ["Yacht", "Property", "Marine Cargo (Reefer/GFS)", "Marine Cargo (Non-Reefer)", "Bulk Vessel", "Air Shipment (NET)", "Land Shipment", "Fidelity Claims", "Requires Review", "Unclassified"];
@@ -125,6 +126,7 @@ export default function AIReporting() {
   const [analysisProgress, setAnalysisProgress] = useState({ active: false, progress: 0, stage: "", step: 1, totalSteps: 4 });
   const [preflightStats, setPreflightStats] = useState(null);
   const [analysis, setAnalysis] = useState(null);
+  const [workspaceJobId, setWorkspaceJobId] = useState(null);
   const [analysisError, setAnalysisError] = useState("");
   const [selectedProvider, setSelectedProvider] = useState("");
   const [enableFallback, setEnableFallback] = useState(true);
@@ -162,6 +164,7 @@ export default function AIReporting() {
   const selectClaim = async (id, resume = false) => {
     const version = ++selectionVersion.current;
     setSelecting(true);
+    setWorkspaceJobId(null);
     setSelectedClaimId(null);
     try {
       const [selected, docs] = await Promise.all([
@@ -268,6 +271,7 @@ export default function AIReporting() {
 
   const runAnalysis = async (savedJobId = null, provisional = false) => {
     if (analyzing || !selectedClaimId) return;
+    setWorkspaceJobId(typeof savedJobId === "string" ? savedJobId : null);
     setAnalyzing(true);
     setAnalysisError("");
     setPreflightStats(null);
@@ -281,7 +285,7 @@ export default function AIReporting() {
         claim_id: selectedClaimId,
         job_id: typeof savedJobId === "string" ? savedJobId : undefined,
         provisional,
-        on_progress: (job) => setAnalysisProgress({ active: true, job, stage: job.message, step: 1, totalSteps: 4 }),
+        on_progress: (job) => { setWorkspaceJobId(job.id); setAnalysisProgress({ active: true, job, stage: job.message, step: 1, totalSteps: 4 }); },
         provider: requestedProvider,
         model: requestedModel,
         disable_fallback: requestedProvider === "anthropic" || !enableFallback,
@@ -383,6 +387,7 @@ export default function AIReporting() {
         </div>
       </div>
 
+      <BrainKnowledgeLibrary />
       <Stepper step={step} />
       {loadError && <LoadError message={loadError} onRetry={() => { loadClaims(); if (initialClaimId) selectClaim(initialClaimId, true); }} />}
 
@@ -419,7 +424,7 @@ export default function AIReporting() {
         </Card>
       )}
 
-      {claim && selectedClaimId && <AnalysisWorkspace key={selectedClaimId} claimId={selectedClaimId} analysis={analysis} onLoad={runAnalysis} busy={analyzing} />}
+      {claim && selectedClaimId && <AnalysisWorkspace key={selectedClaimId} claimId={selectedClaimId} analysis={analysis} activeJobId={workspaceJobId} onSelectSaved={() => setWorkspaceJobId(null)} onLoad={runAnalysis} busy={analyzing} />}
 
       {analysis?.provisional && <p role="status" className="rounded-md border border-destructive/30 p-3 text-sm">Provisional analysis: some evidence remains unreviewed. Review the listed gaps before using the draft. Final approval and export are blocked.</p>}
 

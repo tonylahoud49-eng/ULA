@@ -344,9 +344,11 @@ export async function validateAnthropicClaimLocally({
   return { evidence: prepared.evidence, originalEvidence: evidence, stats };
 }
 
-export function requestFingerprint({ claim, manifest, files, provider, model }) {
+export function requestFingerprint({ claim, manifest, files, provider, model, styleReferences = [] }) {
   const hash = crypto.createHash("sha256");
   hash.update(JSON.stringify({ claim_id: claim?.id, manifest, provider, model }));
+  const brain = styleReferences.filter((reference) => reference.is_brain_knowledge);
+  if (brain.length) hash.update(JSON.stringify(brain));
   files.forEach((file) => hash.update(file.buffer));
   return hash.digest("hex");
 }

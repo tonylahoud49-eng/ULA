@@ -21,7 +21,9 @@ import {
   validateAnthropicConfiguration,
 } from "./ai/anthropicPreflight.mjs";
 import { extractEvidenceFile, evidenceText } from "./evidence/extractEvidence.mjs";
-import { loadApprovedStyleReferences } from "./ai/referenceLayer.mjs";
+import { loadAnalysisReferences, usedBrainReferences } from "./ai/brain/brainReferences.mjs";
+import { createBrainRouter } from "./ai/brain/brainRoutes.mjs";
+import { createLocalBrainStore } from "./ai/brain/brainStore.mjs";
 import { createLeaveEmailService } from "./leave/leaveEmailService.mjs";
 import { sendTestEmail, getEmailDiagnosticsStatus } from "./email/emailTestService.mjs";
 import { AuthError, createAuthService } from "./auth/authService.mjs";
@@ -147,6 +149,22 @@ const requireBackendAdmin = (request, response, next) => postgresRepository
   ? authHttp.requireAuth(request, response, () => authHttp.requireAdmin(request, response, next))
   : next();
 
+const brainStore = postgresRepository?.brain || createLocalBrainStore(path.join(root, ".data", "brain-reports"));
+const localBrainActor = { id: "local-development", role: "admin", full_name: "Local development" };
+const getAnalysisReferences = ({ claim, actor } = {}) => loadAnalysisReferences({
+  directory: process.env.ULA_REPORT_REFERENCE_DIR || path.join(root, "server", "ai", "references"),
+  store: brainStore, actor: actor || (postgresRepository ? null : localBrainActor), claim,
+});
+app.use("/api/ai/brain", createBrainRouter({
+  store: brainStore,
+  resolveReportVersion: (id, actor) => postgresRepository ? postgresRepository.get("ReportVersion", id, actor) : diskDb.get("ReportVersion", id),
+  requireAccess: (request, response, next) => requireDocumentAccess(request, response, () => {
+    if (!postgresRepository) request.authUser = localBrainActor;
+    next();
+  }),
+  requireAdmin: requireBackendAdmin,
+}));
+
 let savedAnalysisJobs;
 let savedAnalysisChat;
 const getSavedAnalysisJobs = () => {
@@ -158,7 +176,7 @@ const getSavedAnalysisJobs = () => {
       if (!provider) throw new Error(status.reason || "Claude is unavailable.");
       return provider;
     },
-    getStyleReferences: () => loadApprovedStyleReferences(process.env.ULA_REPORT_REFERENCE_DIR || path.join(root, "server", "ai", "references")),
+    getStyleReferences: getAnalysisReferences,
   });
   return savedAnalysisJobs;
 };
@@ -917,7 +935,7 @@ app.post("/api/ai/connectivity", async (_request, response) => {
   }
 });
 
-app.post("/api/ai/preflight", upload.array("files", maxFiles), async (request, response) => {
+app.post("/api/ai/preflight", requireDocumentAccess, upload.array("files", maxFiles), async (request, response) => {
   try {
     loadServerEnv();
     const configuration = validateAnthropicConfiguration();
@@ -932,11 +950,9 @@ app.post("/api/ai/preflight", upload.array("files", maxFiles), async (request, r
     const claim = JSON.parse(request.body.claim || "{}");
     const manifest = JSON.parse(request.body.manifest || "[]");
     const files = request.files || [];
-    const styleReferenceDirectory = process.env.ULA_REPORT_REFERENCE_DIR
-      || path.join(root, "server", "ai", "references");
     let styleReferences;
     try {
-      styleReferences = await loadApprovedStyleReferences(styleReferenceDirectory);
+      styleReferences = await getAnalysisReferences({ claim, actor: request.authUser });
     } catch (error) {
       throw new AnthropicPreflightError(`A required report-reference dependency failed: ${error.message}`, {
         status: 500,
@@ -950,6 +966,7 @@ app.post("/api/ai/preflight", upload.array("files", maxFiles), async (request, r
       files,
       provider: "anthropic",
       model: resolvedModel,
+      styleReferences,
     });
     const preflightToken = issueAnthropicPreflightToken(fingerprint, local.stats, local.originalEvidence);
     return response.json({
@@ -1009,7 +1026,7 @@ app.post("/api/leave/notifications", async (request, response) => {
   }
 });
 
-app.post("/api/ai/analyze", upload.array("files", maxFiles), async (request, response) => {
+app.post("/api/ai/analyze", requireDocumentAccess, upload.array("files", maxFiles), async (request, response) => {
   let activeProviderInfo = null;
   let anthropicFingerprint = null;
   let preflightEvidence = null;
@@ -1046,6 +1063,7 @@ app.post("/api/ai/analyze", upload.array("files", maxFiles), async (request, res
     if (totalBytes > maxTotalBytes) {
       return response.status(413).json({ error: "The complete evidence set is too large for one analysis request.", code: "evidence-set-too-large" });
     }
+    const styleReferences = await getAnalysisReferences({ claim, actor: request.authUser });
     if (isAnthropicRequest) {
       anthropicFingerprint = requestFingerprint({
         claim,
@@ -1053,6 +1071,7 @@ app.post("/api/ai/analyze", upload.array("files", maxFiles), async (request, res
         files,
         provider: "anthropic",
         model: provider.model,
+        styleReferences,
       });
       const preflight = consumeAnthropicPreflightToken(request.body?.preflight_token, anthropicFingerprint);
       preflightEvidence = preflight.originalEvidence;
@@ -1126,10 +1145,6 @@ app.post("/api/ai/analyze", upload.array("files", maxFiles), async (request, res
       model: provider.model,
       document_count: evidence.length,
     });
-    const styleReferenceDirectory = process.env.ULA_REPORT_REFERENCE_DIR
-      || path.join(root, "server", "ai", "references");
-    const styleReferences = await loadApprovedStyleReferences(styleReferenceDirectory);
-
     logAiEvent("info", `Sending evidence payload to ${provider.name} (${provider.model})...`);
     const result = await provider.analyze({ claim, evidence, files, styleReferences });
 
@@ -1158,6 +1173,7 @@ app.post("/api/ai/analyze", upload.array("files", maxFiles), async (request, res
     result.analysis.warnings = [...new Set([...result.analysis.warnings, ...extractionWarnings])];
     const responsePayload = {
       ...result,
+      methodology_references: usedBrainReferences(styleReferences, { claim, evidence }),
       usage: result.usage || null,
       evidence_register: evidence.map(({ pages: _pages, embedded_images: _embeddedImages, vision_images: _visionImages, ...item }) => item),
       evidence_snapshot: evidence.map((item) => ({

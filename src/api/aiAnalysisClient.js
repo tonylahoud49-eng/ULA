@@ -97,6 +97,7 @@ export function mapAnalysis(result) {
   return {
     status: "completed",
     job_id: result.job_id || null,
+    methodology_references: Array.isArray(result.methodology_references) ? result.methodology_references : [],
     provisional: result.provisional === true,
     review_scope: result.review_scope || "complete",
     provider: result.provider,

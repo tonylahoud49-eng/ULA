@@ -4,6 +4,7 @@ import { extractEvidenceFile, inspectPdf } from "../evidence/extractEvidence.mjs
 import { prepareClaimContextForAnthropic, prepareEvidenceForAnthropic } from "../evidence/prepareAnthropicEvidence.mjs";
 import { anthropicProviderInternals } from "./providers/anthropicProvider.mjs";
 import { ANALYSIS_PIPELINE_VERSION, jobError, publicAnalysisJob } from "./analysisJobStore.mjs";
+import { usedBrainReferences, mergeUsedBrainReferences } from "./brain/brainReferences.mjs";
 
 const now = () => new Date().toISOString();
 const digest = (buffer) => crypto.createHash("sha256").update(buffer).digest("hex");
@@ -274,7 +275,10 @@ export function createAnalysisJobs({ store, providerFactory, getStyleReferences,
               save(job, message); lastSaved = Date.now();
             }
           };
-          try { return await provider.analyze({ ...params, onProgress, requestTimeoutMs, idleTimeoutMs }); }
+          try {
+            const result = await provider.analyze({ ...params, onProgress, requestTimeoutMs, idleTimeoutMs });
+            return { ...result, methodology_references: usedBrainReferences(params.styleReferences, { claim: params.claim, evidence: params.evidence }) };
+          }
           catch (error) {
             if (!transient(error) || attempt >= 2) throw error;
             job.request_progress.stage = "retrying";
@@ -353,6 +357,7 @@ export function createAnalysisJobs({ store, providerFactory, getStyleReferences,
       result.analysis.warnings = [...new Set([...result.analysis.warnings, ...excluded.map((item) => `${item.document_name}: ${item.warning}`)])];
       const payload = {
         ...result, job_id: id, usage: usageFor(job),
+        methodology_references: mergeUsedBrainReferences([...results, result]),
         evidence_register: fullEvidence.map(({ pages: _pages, vision_images: _images, embedded_images: _embedded, ...item }) => item),
         evidence_snapshot: fullEvidence.map(({ document_id, document_name, mime_type, extraction_status, pages }) => ({ document_id, document_name, mime_type, extraction_status, pages })),
       };
@@ -383,9 +388,9 @@ export function createAnalysisJobs({ store, providerFactory, getStyleReferences,
       const job = store.list().filter((item) => item.owner === owner && item.claim_id === claimId).sort((a, b) => b.created_at.localeCompare(a.created_at))[0];
       return job ? publicAnalysisJob(recover(job)) : null;
     },
-    async create({ claim, manifest, files, owner, model }) {
+    async create({ claim, manifest, files, owner, model, actor }) {
       if (!claim?.id || !Array.isArray(manifest) || !manifest.length || files.length !== manifest.length || new Set(manifest.map((item) => item.id)).size !== manifest.length || manifest.some((item) => !item.id || typeof item.id !== "string")) throw jobError("Every registered document must be included exactly once.");
-      const styleReferences = await getStyleReferences();
+      const styleReferences = await getStyleReferences({ claim, actor });
       const context = prepareClaimContextForAnthropic(claim);
       const id = store.fingerprint({ version: ANALYSIS_PIPELINE_VERSION, owner, claim: context, model, maxOutputTokens: env.ANTHROPIC_MAX_OUTPUT_TOKENS, styleReferences, documents: manifest.map((item, index) => ({ ...item, hash: digest(files[index].buffer) })) });
       let job = recover(store.read(id));
@@ -440,6 +445,10 @@ export function createAnalysisJobs({ store, providerFactory, getStyleReferences,
         const params = { claim: input.claim, evidence, requestEvidence, files: [], styleReferences: input.styleReferences, model: job.model, analysisContext, env };
         if (!measure({ ...params, evidence: requestEvidence, referenceEvidence: evidence }).fits) throw jobError("Completed reviews exceed the provisional reconciliation budget. They remain saved.", 413);
         const result = await providerFactory(job.model).analyze(params);
+        result.methodology_references = mergeUsedBrainReferences([
+          ...batches.map((batch) => store.read(id, `review-${batch.id}`)),
+          { methodology_references: usedBrainReferences(input.styleReferences, { claim: input.claim, evidence }) },
+        ]);
         verifyReviewedSourcePages(result.analysis, evidence, batches.map((batch) => store.read(id, `review-${batch.id}`)));
         result.analysis.warnings = [...new Set([...result.analysis.warnings, ...gaps.map((item) => `${item.document_name}${item.unreviewed_pages.length ? `, pages ${item.unreviewed_pages.join(", ")}` : ""}: not reviewed. Final issue blocked.`)])];
         result.analysis.human_review_required = [...result.analysis.human_review_required, "Provisional draft only. Complete all unreviewed evidence and regenerate the draft before final issue."];
