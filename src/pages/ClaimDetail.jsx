@@ -498,7 +498,7 @@ export default function ClaimDetail() {
         <TabsList className="w-full justify-start overflow-x-auto">
           <TabsTrigger value="overview">Overview</TabsTrigger>
           <TabsTrigger value="documents">Documents ({documents.length})</TabsTrigger>
-          <TabsTrigger value="report">Report Versions ({reports.length})</TabsTrigger>
+          <TabsTrigger value="report">Reports</TabsTrigger>
         </TabsList>
 
         <TabsContent value="overview" className="space-y-4">
@@ -522,7 +522,7 @@ export default function ClaimDetail() {
         </TabsContent>
 
         <TabsContent value="report" className="space-y-4">
-          <ReportSection claimId={id} claim={claim} documents={documents} reports={reports} onChanged={load} />
+          <ReportSection key={id} claimId={id} claim={claim} documents={documents} reports={reports} onChanged={load} />
         </TabsContent>
       </Tabs>
       {editing && activeTab === "overview" && <WorkflowActions label="Claim actions">
@@ -756,8 +756,9 @@ function ReportSection({ claimId, claim, documents, reports, onChanged }) {
   const [reportToApprove, setReportToApprove] = useState(null);
   const [approvingReportId, setApprovingReportId] = useState(null);
   const [activeReport, setActiveReport] = useState(null);
-  const [uploadReportId, setUploadReportId] = useState(null);
+  const [uploadOpen, setUploadOpen] = useState(false);
   const [uploadBusy, setUploadBusy] = useState(false);
+  const uploadPanelId = React.useId();
   const [exportReport, setExportReport] = useState(null);
   const [reportToDelete, setReportToDelete] = useState(null);
   const [deletingReportId, setDeletingReportId] = useState(null);
@@ -1221,6 +1222,18 @@ function ReportSection({ claimId, claim, documents, reports, onChanged }) {
 
   return (
     <Card className="docket-surface p-5 shadow-none">
+      <section className="mb-6 border-b pb-5" aria-label="Final report upload">
+        <div className="flex flex-wrap items-center justify-between gap-3">
+          <div>
+            <h3 className="font-heading text-xl font-semibold">Final report</h3>
+            <p className="mt-1 max-w-prose text-sm text-muted-foreground">Upload the final file after editing, approval and signing. Generated versions below can remain working drafts.</p>
+          </div>
+          <Button type="button" variant="outline" disabled={uploadBusy} aria-expanded={uploadOpen} aria-controls={uploadPanelId} onClick={() => setUploadOpen(!uploadOpen)}>
+            <Upload className="h-4 w-4" aria-hidden="true" />{uploadOpen ? "Close upload" : "Upload final report"}
+          </Button>
+        </div>
+        {uploadOpen && <div id={uploadPanelId} className="mt-4"><ApprovedReportUpload claim={claim} onBusyChange={setUploadBusy} /></div>}
+      </section>
       <div className="mb-5 flex flex-col justify-between gap-3 border-b pb-4 sm:flex-row sm:items-center">
         <div>
           <h3 className="font-heading text-xl font-semibold">Controlled report versions</h3>
@@ -1266,7 +1279,6 @@ function ReportSection({ claimId, claim, documents, reports, onChanged }) {
           {reports.slice().reverse().map((r) => {
             const reportData = getReportData(r);
             const isFinal = r.issue_state === "Final" || r.status === "Final";
-            const brainLine = r.business_line || claim.business_line;
             return (
             <article key={r.id} className="docket-surface overflow-hidden rounded-lg">
               <div className="flex flex-wrap items-center justify-between gap-3 border-b px-5 py-4">
@@ -1304,9 +1316,6 @@ function ReportSection({ claimId, claim, documents, reports, onChanged }) {
                       Approve &amp; Sign Off
                     </Button>
                   )}
-                  {isFinal && <Button type="button" variant="outline" size="sm" disabled={uploadBusy} aria-expanded={uploadReportId === r.id} aria-controls={`final-report-upload-${r.id}`} onClick={() => setUploadReportId(uploadReportId === r.id ? null : r.id)}>
-                    <Upload className="h-4 w-4 mr-1" aria-hidden="true" />{uploadReportId === r.id ? "Close upload" : "Upload signed final report"}
-                  </Button>}
                   <Button variant="outline" size="sm" onClick={() => setActiveReport(activeReport === r.id ? null : r.id)}>{activeReport === r.id ? "Hide preview" : "View preview"}</Button>
                   <Button variant="outline" size="sm" onClick={() => exportMarkdown(r)}><Download className="h-4 w-4 mr-1" /> MD</Button>
                   <Button variant="outline" size="sm" onClick={() => exportTxt(r)}><Download className="h-4 w-4 mr-1" /> TXT</Button>
@@ -1315,9 +1324,6 @@ function ReportSection({ claimId, claim, documents, reports, onChanged }) {
                   <Button variant="ghost" size="sm" aria-label={`Delete report version ${r.version_number}`} title="Delete report version" onClick={() => setReportToDelete(r)} className="text-destructive hover:bg-destructive/10 hover:text-destructive"><Trash2 className="h-4 w-4" /></Button>
                 </div>
               </div>
-              {isFinal && uploadReportId === r.id && <section id={`final-report-upload-${r.id}`} aria-label={`Upload signed final report for version ${r.version_number}`} className="border-b px-5 py-4">
-                <ApprovedReportUpload report={r} businessLine={brainLine} onBusyChange={setUploadBusy} />
-              </section>}
               <div className="grid border-b bg-muted/20 sm:grid-cols-4">
                 {(r.assignments || []).map((assignment) => (
                   <div key={assignment.role} className="border-b p-3 last:border-b-0 sm:border-b-0 sm:border-r sm:last:border-r-0">
