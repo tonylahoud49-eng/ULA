@@ -5,11 +5,7 @@ import { Button } from "@/components/ui/button";
 import { Textarea } from "@/components/ui/textarea";
 import { analysisJobRequest } from "@/api/aiAnalysisClient";
 import { analysisWorkspaceJobPath } from "@/lib/analysisWorkspaceJob";
-
-const duration = (milliseconds) => {
-  const seconds = Math.max(0, Math.floor(milliseconds / 1000));
-  return `${Math.floor(seconds / 60)}m ${String(seconds % 60).padStart(2, "0")}s`;
-};
+import { analysisDuration as duration, analysisProgressView } from "@/lib/analysisProgress";
 
 export default function AnalysisWorkspace({ claimId, analysis, activeJobId, onSelectSaved, onLoad, busy = false }) {
   const [job, setJob] = useState(null);
@@ -97,30 +93,34 @@ export default function AnalysisWorkspace({ claimId, analysis, activeJobId, onSe
   const request = running ? job?.request_progress : null;
   const phases = ["extracting", "reviewing", "synthesizing", "complete"];
   const phaseIndex = phases.indexOf(job?.phase);
-  const count = job?.total_pages ? `${job.reviewed_pages} of ${job.total_pages} PDF pages reviewed` : `${job?.completed_batches || 0} of ${job?.total_batches || 0} review batches saved`;
-  const percent = job?.total_pages ? Math.round(job.reviewed_pages / job.total_pages * 100) : job?.total_batches ? Math.round(job.completed_batches / job.total_batches * 100) : 0;
+  const progress = analysisProgressView(job, clock);
   return (
     <section className="docket-surface overflow-hidden rounded-lg border border-border" aria-label="Saved analysis and discussion">
       <div className="flex flex-wrap items-center justify-between gap-3 border-b px-5 py-4">
         <div>
           <h2 className="flex items-center gap-2 font-heading text-xl font-semibold">
             {running ? <Loader2 className="h-4 w-4 animate-spin motion-reduce:animate-none" /> : stopped ? <AlertTriangle className="h-4 w-4 text-destructive" /> : <CheckCircle2 className="h-4 w-4 text-primary" />}
-            {stopped ? "Analysis needs attention" : running ? "Analysis in progress" : "Saved analysis"}
+            {progress.title}
           </h2>
-          <p className="mt-1 text-sm text-muted-foreground">{job ? count : "Discuss the evidence behind this analysis."}</p>
+          <p className="mt-1 text-sm text-muted-foreground">{progress.count}</p>
         </div>
         {chatJobId && <Button variant="outline" size="sm" aria-expanded={chatOpen} onClick={() => setChatOpen(!chatOpen)}><MessageSquare className="mr-2 h-4 w-4" />{chatOpen ? "Close discussion" : "Discuss analysis"}</Button>}
         {activeJobId && analysis && activeJobId !== analysis.job_id && onSelectSaved && <Button variant="outline" size="sm" disabled={busy || acting} onClick={onSelectSaved}>View previous saved analysis</Button>}
       </div>
       {job && <div className="space-y-4 px-5 py-4">
         <ol className="grid gap-2 text-sm sm:grid-cols-4" aria-label="Analysis stages">
-          {["Extract evidence", "Review batches", "Reconcile claim", "Ready for review"].map((label, index) => <li key={label} className={`flex items-center gap-2 ${index <= phaseIndex ? "text-foreground" : "text-muted-foreground"}`}>
+          {["Extract evidence", "Review batches", "Reconcile claim", "Ready for review"].map((label, index) => <li key={label} aria-current={job.state !== "queued" && index === phaseIndex ? "step" : undefined} className={`flex items-center gap-2 ${job.state !== "queued" && index <= phaseIndex ? "text-foreground" : "text-muted-foreground"}`}>
             <span className={`flex h-6 w-6 shrink-0 items-center justify-center rounded-full border text-xs ${index < phaseIndex || job.state === "complete" ? "border-primary bg-primary text-primary-foreground" : "border-border"}`}>
               {index < phaseIndex || job.state === "complete" ? <CheckCircle2 className="h-3.5 w-3.5" /> : index + 1}
             </span>{label}
           </li>)}
         </ol>
-        <div role="progressbar" aria-label="Evidence review completed" aria-valuemin={0} aria-valuemax={100} aria-valuenow={percent} aria-valuetext={count} className="h-1.5 overflow-hidden rounded-full bg-muted"><div className="h-full bg-primary" style={{ width: `${percent}%` }} /></div>
+        {progress.percent !== null && <div role="progressbar" aria-label="Evidence review saved" aria-valuemin={0} aria-valuemax={100} aria-valuenow={progress.percent} aria-valuetext={progress.count} className="h-1.5 overflow-hidden rounded-full bg-muted"><div className="h-full bg-primary" style={{ width: `${progress.percent}%` }} /></div>}
+        {progress.queueMessage && <p className="text-sm" role="status">{progress.queueMessage}</p>}
+        {progress.prepared && <p className="text-sm text-muted-foreground">{progress.prepared}</p>}
+        {progress.elapsed && running && <p className="text-sm tabular-nums text-muted-foreground">{progress.elapsed}</p>}
+        {job.active_extraction && job.state === "running" && job.phase === "extracting" && <p className="break-words text-sm">Preparing {job.active_extraction.document_name}{job.active_extraction.start ? `, pages ${job.active_extraction.start}–${job.active_extraction.end}` : ""}.</p>}
+        {job.active_batch_number && job.state === "running" && job.phase === "reviewing" && <p className="text-sm">Reviewing batch {job.active_batch_number} of {job.total_batches}.{job.active_batch?.length === 1 && job.active_batch[0].pages.length > 0 ? ` Pages ${job.active_batch[0].pages[0]}–${job.active_batch[0].pages.at(-1)}.` : ""}</p>}
         <p className="break-words text-sm" role="status">{job.message}</p>
         {request && <div className="space-y-1 text-sm text-muted-foreground">
           <p className="tabular-nums">{request.label} · Attempt {request.attempt} of {request.max_attempts} · Elapsed {duration(clock - Date.parse(request.started_at))}</p>
@@ -136,8 +136,8 @@ export default function AnalysisWorkspace({ claimId, analysis, activeJobId, onSe
           <summary className="cursor-pointer text-muted-foreground">Documents in this batch ({job.active_batch.length})</summary>
           <ul className="mt-2 space-y-1">{job.active_batch.map((item, index) => <li className="break-words" key={index}>{item.document_name}{item.pages.length ? ` · Pages ${item.pages[0]}–${item.pages.at(-1)}` : ""}</li>)}</ul>
         </details>}
-        {job.phase === "extracting" && <p className="text-xs text-muted-foreground">{job.extracted_units} of {job.total_units} extraction checkpoints saved.</p>}
-        {running && <p className="text-xs text-muted-foreground">You can leave this page. Work continues on the server and completed checkpoints are saved.</p>}
+        {job.state !== "queued" && job.phase === "extracting" && job.total_units > 0 && <p className="text-xs text-muted-foreground">{job.extracted_units} of {job.total_units} extraction checkpoints saved.</p>}
+        {running && <p className="text-xs text-muted-foreground">You can leave this page. {job.state === "queued" ? "Your place in the server queue is retained." : "Work continues on the server and completed checkpoints are saved."}</p>}
         {job.error && <div className="space-y-2 rounded-md border border-destructive/30 bg-destructive/5 p-3" role="alert">
           <p className="text-sm">{job.error.message}</p>
           {job.error.affected?.map((item, index) => <p className="text-xs" key={index}>{item.document_name}{item.pages.length === 1 ? ` · Page ${item.pages[0]}` : item.pages.length ? ` · Pages ${item.pages[0]}–${item.pages.at(-1)}` : ""}</p>)}

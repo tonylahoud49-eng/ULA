@@ -5,7 +5,16 @@ import crypto from "node:crypto";
 export const ANALYSIS_PIPELINE_VERSION = "resumable-v1";
 export const jobError = (message, status = 400, code = "analysis-job-error") => Object.assign(new Error(message), { status, code });
 const validId = (id) => /^[a-f0-9]{64}$/.test(String(id));
-const revive = (_key, value) => value?.type === "Buffer" && Array.isArray(value.data) ? Buffer.from(value.data) : value;
+// Parse first, then hydrate buffer containers. A JSON reviver visits every byte
+// of a saved PDF/image array and blocks the API for large checkpoints.
+const hydrateBuffers = (value) => {
+  if (!value || typeof value !== "object") return value;
+  if (value.type === "Buffer" && Array.isArray(value.data)) return Buffer.from(value.data);
+  for (const key of Object.keys(value)) {
+    if (value[key] && typeof value[key] === "object") value[key] = hydrateBuffers(value[key]);
+  }
+  return value;
+};
 
 // Atomic files on a persistent local volume. A process lock prevents a second
 // Node process on this host from repeating paid work for the same job.
@@ -20,7 +29,7 @@ export function createAnalysisJobStore(directory) {
     return path.join(folder(id), `${name}.json`);
   };
   const read = (id, name = "job") => {
-    try { return JSON.parse(fs.readFileSync(artifactPath(id, name), "utf8"), revive); }
+    try { return hydrateBuffers(JSON.parse(fs.readFileSync(artifactPath(id, name), "utf8"))); }
     catch (error) { if (error.code === "ENOENT") return null; throw error; }
   };
   const write = (id, name, value) => {
@@ -51,6 +60,7 @@ export function createAnalysisJobStore(directory) {
   };
   return {
     read, write, locked, acquire,
+    has: (id, name) => fs.existsSync(artifactPath(id, name)),
     list: () => fs.readdirSync(directory).filter(validId).map((id) => read(id)).filter(Boolean),
     fingerprint: (input) => crypto.createHash("sha256").update(JSON.stringify(input)).digest("hex"),
   };
@@ -62,10 +72,14 @@ export function publicAnalysisJob(job) {
     id: job.id, claim_id: job.claim_id, provider: job.provider, model: job.model,
     state: job.state, phase: job.phase, message: job.message, error: job.error,
     created_at: job.created_at, updated_at: job.updated_at,
+    queued_at: job.queued_at || job.created_at, started_at: job.started_at || null,
     request_progress: job.request_progress || null,
     active_batch: job.active_batch || [],
+    active_batch_number: job.active_batch_number || null,
+    active_extraction: job.active_extraction || null,
     documents: job.manifest.map(({ id, file_name, storage_key, file_url }) => ({ id, file_name, storage_key, file_url })),
     extracted_units: job.extracted_units || 0, total_units: job.units?.length || 0,
+    extracted_pages: (job.units || []).slice(0, job.extracted_units || 0).filter((unit) => !unit.derived && unit.range).reduce((sum, unit) => sum + unit.range.end - unit.range.start + 1, 0),
     completed_batches: completed, total_batches: job.batches?.length || 0,
     reviewed_pages: (job.batches || []).filter((batch) => batch.state === "complete").reduce((sum, batch) => sum + batch.page_count, 0),
     total_pages: job.total_pages || 0,

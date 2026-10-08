@@ -5,10 +5,11 @@ import { prepareClaimContextForAnthropic, prepareEvidenceForAnthropic } from "..
 import { anthropicProviderInternals } from "./providers/anthropicProvider.mjs";
 import { ANALYSIS_PIPELINE_VERSION, jobError, publicAnalysisJob } from "./analysisJobStore.mjs";
 import { usedBrainReferences, mergeUsedBrainReferences } from "./brain/brainReferences.mjs";
+import { safeAiDiagnosticLog } from "./debugLog.mjs";
 
 const now = () => new Date().toISOString();
 const digest = (buffer) => crypto.createHash("sha256").update(buffer).digest("hex");
-const positive = (value, fallback) => Number(value) > 0 ? Math.floor(Number(value)) : fallback;
+const positive = (value, fallback) => Math.floor(Number(value)) > 0 ? Math.floor(Number(value)) : fallback;
 const isPdf = (file) => file.mimetype === "application/pdf" || /\.pdf$/i.test(file.originalname);
 const slim = (item) => ({ ...item, vision_images: (item.vision_images || []).map(({ buffer: _buffer, ...image }) => image), embedded_images: (item.embedded_images || []).map(({ buffer: _buffer, ...image }) => image) });
 const compactAnalysis = (analysis) => ({ ...analysis, fields: analysis.fields.filter((field) => field.value !== null) });
@@ -151,9 +152,11 @@ export function verifyReviewedSourcePages(analysis, evidence, reviews) {
 
 export function createAnalysisJobs({ store, providerFactory, getStyleReferences, env = process.env, extract = extractEvidenceFile, inspect = inspectPdf, measure = measureJobRequest, sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms)) }) {
   const queue = [];
-  const batchPageLimit = Math.min(20, positive(env.AI_JOB_BATCH_MAX_PAGES, 20));
+  const active = new Set();
+  const concurrency = Math.min(4, positive(env.AI_JOB_CONCURRENCY, 2));
+  const batchPageLimit = Math.min(60, positive(env.AI_JOB_BATCH_MAX_PAGES, 60));
   const withinPageLimit = (evidence) => evidence.reduce((sum, item) => sum + Math.max(1, item.pages.length), 0) <= batchPageLimit;
-  let busy = false;
+  let scheduled = false;
   const save = (job, message) => {
     job.updated_at = now();
     if (message) {
@@ -163,7 +166,7 @@ export function createAnalysisJobs({ store, providerFactory, getStyleReferences,
     store.write(job.id, "job", job);
   };
   const recover = (job) => {
-    if (job && ["running", "queued"].includes(job.state) && !queue.includes(job.id) && !store.locked(job.id)) {
+    if (job && ["running", "queued"].includes(job.state) && !queue.includes(job.id) && !active.has(job.id) && !store.locked(job.id)) {
       job.state = "interrupted";
       job.request_progress = null;
       job.error = { message: "The server stopped before this stage was saved. Completed checkpoints are intact.", code: "worker-interrupted" };
@@ -176,6 +179,14 @@ export function createAnalysisJobs({ store, providerFactory, getStyleReferences,
     if (!job || job.owner !== owner) throw jobError("Analysis job not found.", 404);
     return job;
   };
+  const visible = (job) => ({
+    ...publicAnalysisJob(job),
+    // Scheduling information only; never disclose another owner's job identity.
+    queue: {
+      position: job.state === "queued" && queue.includes(job.id) ? queue.indexOf(job.id) + 1 : null,
+      waiting_jobs: queue.length, active_jobs: active.size, concurrency,
+    },
+  });
   const filesFor = (input, evidence) => evidence.map((item) => input.files[input.manifest.findIndex((entry) => entry.id === item.document_id)]);
   const combine = (id, indexes) => mergeJobEvidence(indexes.map((index) => store.read(id, `evidence-${index}`)));
   const usageFor = (job) => {
@@ -192,17 +203,20 @@ export function createAnalysisJobs({ store, providerFactory, getStyleReferences,
   const run = async (id) => {
     const release = store.acquire(id);
     if (!release) return;
-    let job = store.read(id);
+    let job;
     try {
+      job = store.read(id);
+      if (!job) throw jobError("Saved analysis job is unavailable.", 404);
+      job.state = "running"; job.error = null; job.started_at ||= now();
+      save(job, "Starting analysis. Loading saved evidence.");
       const input = store.read(id, "input");
       if (!input) throw jobError("Saved upload is unavailable. Start a new analysis.", 409);
       if (job.pipeline_version !== ANALYSIS_PIPELINE_VERSION) throw jobError("This saved job uses a different analysis pipeline. Start a new analysis; the old checkpoints remain available.", 409, "analysis-version-changed");
       const provider = providerFactory(job.model);
-      job.state = "running"; job.error = null;
       if (!job.units) {
         job.phase = "extracting"; save(job, "Checking document pages and planning evidence extraction.");
         const units = [], inventory = [];
-        const pageSize = Math.min(batchPageLimit, positive(env.AI_MAX_PDF_PAGES, 80), positive(env.AI_MAX_PDF_VISION_PAGES, 40));
+        const pageSize = Math.min(20, batchPageLimit, positive(env.AI_MAX_PDF_PAGES, 80), positive(env.AI_MAX_PDF_VISION_PAGES, 40));
         for (let index = 0; index < input.files.length; index += 1) {
           const file = input.files[index];
           if (isPdf(file)) {
@@ -217,8 +231,9 @@ export function createAnalysisJobs({ store, providerFactory, getStyleReferences,
       }
       job.phase = "extracting";
       for (let index = 0; index < job.units.length; index += 1) {
-        if (!store.read(id, `evidence-${index}`)) {
+        if (!store.has(id, `evidence-${index}`)) {
           const unit = job.units[index], file = input.files[unit.index];
+          job.active_extraction = { document_name: file.originalname, start: unit.range?.start || null, end: unit.range?.end || null };
           save(job, `Extracting ${file.originalname}${unit.range ? `, pages ${unit.range.start}–${unit.range.end}` : ""}.`);
           const evidence = await extract(file, { ...input.manifest[unit.index], page_range: unit.range });
           if (evidence.extraction_status === "failed") throw jobError(evidence.warning, evidence.error_status, evidence.error_code);
@@ -226,6 +241,7 @@ export function createAnalysisJobs({ store, providerFactory, getStyleReferences,
         }
         job.extracted_units = index + 1; save(job);
       }
+      job.active_extraction = null;
       const fullEvidence = mergeJobEvidence(job.units.flatMap((unit, index) => unit.derived ? [] : [slim(store.read(id, `evidence-${index}`))]));
       assertJobCoverage(job, fullEvidence);
       const usableIndexes = job.units.map((_, index) => index).filter((index) => store.read(id, `evidence-${index}`).extraction_status !== "unsupported");
@@ -245,7 +261,32 @@ export function createAnalysisJobs({ store, providerFactory, getStyleReferences,
         }
         if (current.length) groups.push(current);
         job.batches = groups.map((indexes, index) => ({ id: String(index), indexes, state: "pending", page_count: indexes.reduce((count, i) => count + (job.units[i].range ? job.units[i].range.end - job.units[i].range.start + 1 : 0), 0) }));
+        job.review_page_limit = batchPageLimit;
         save(job, `Evidence saved. ${job.batches.length} review batch${job.batches.length === 1 ? "" : "es"} planned.`);
+      } else if ((job.review_page_limit || 20) < batchPageLimit) {
+        // Upgrade only contiguous, unpaid batches from the former 20-page plan.
+        // Saved review IDs/results remain untouched, including split batches.
+        const replanned = []; let pending = [];
+        const flush = () => {
+          if (!pending.length) return;
+          replanned.push(pending.length === 1 ? pending[0] : {
+            id: `merged-${pending[0].id}-${pending.at(-1).id}`,
+            indexes: pending.flatMap((batch) => batch.indexes), state: "pending",
+            page_count: pending.reduce((sum, batch) => sum + batch.page_count, 0),
+          });
+          pending = [];
+        };
+        for (const batch of job.batches) {
+          if (store.has(id, `review-${batch.id}`)) { flush(); replanned.push({ ...batch, state: "complete" }); continue; }
+          if (pending.length) {
+            const params = paramsFor([...pending.flatMap((item) => item.indexes), ...batch.indexes], batchInstruction);
+            if (!withinPageLimit(params.evidence) || !measure(params).fits) flush();
+          }
+          pending.push(batch);
+        }
+        flush();
+        job.batches = replanned; job.review_page_limit = batchPageLimit;
+        save(job, `Unfinished reviews planned in batches of up to ${batchPageLimit} pages. Completed reviews are retained.`);
       }
       const call = async (params, label) => {
         for (let attempt = 0; ; attempt += 1) {
@@ -293,6 +334,7 @@ export function createAnalysisJobs({ store, providerFactory, getStyleReferences,
         const checkpoint = store.read(id, `review-${batch.id}`);
         if (checkpoint) { batch.state = "complete"; save(job); continue; }
         const params = paramsFor(batch.indexes, job.batches.length > 1 ? batchInstruction : undefined);
+        job.active_batch_number = index + 1;
         job.active_batch = params.evidence.map((item) => ({ document_name: item.document_name, pages: item.pages.map((page) => page.page).filter(Number.isInteger) }));
         save(job, `Reviewing batch ${index + 1} of ${job.batches.length}: ${params.evidence.map((item) => `${item.document_name}${item.kind === "pdf" ? ` (pages ${item.pages[0].page}–${item.pages.at(-1).page})` : ""}`).join(", ")}.`);
         let result;
@@ -340,6 +382,7 @@ export function createAnalysisJobs({ store, providerFactory, getStyleReferences,
       }
       job.phase = "synthesizing";
       job.active_batch = null;
+      job.active_batch_number = null;
       const results = job.batches.map((batch) => store.read(id, `review-${batch.id}`));
       let result = store.read(id, "synthesis");
       if (!result && results.length === 1) result = results[0];
@@ -366,27 +409,47 @@ export function createAnalysisJobs({ store, providerFactory, getStyleReferences,
       job.request_progress = null;
       save(job, "Analysis complete. The saved result is ready for professional review.");
     } catch (error) {
+      if (!job) throw error;
       job.request_progress = null;
       job.state = "failed"; job.error = { ...describeAnalysisFailure(error, job), provider_status: error.providerStatus || error.status || null };
       save(job, `Stopped during ${job.phase}. Completed checkpoints are saved.`);
     } finally { release(); }
   };
-  const drain = async () => {
-    if (busy) return;
-    busy = true;
-    try { while (queue.length) await run(queue.shift()); }
-    finally { busy = false; }
+  const schedule = () => {
+    if (scheduled) return;
+    scheduled = true;
+    setImmediate(() => { scheduled = false; drain(); });
+  };
+  const drain = () => {
+    while (queue.length && active.size < concurrency) {
+      const id = queue.shift();
+      active.add(id);
+      // Reserve the slot before starting, so recovery/duplicate submissions
+      // cannot mistake a scheduled worker for an interrupted job.
+      Promise.resolve().then(() => run(id)).catch((error) => {
+        safeAiDiagnosticLog("[ULA analysis worker failure]", { job_id: id, code: error.code || "worker-failed" });
+        try {
+          const job = store.read(id);
+          if (job && job.state !== "complete") {
+            job.state = "failed"; job.request_progress = null;
+            job.error = { message: "The analysis worker stopped. Saved checkpoints are retained; retry the unfinished stage.", code: "worker-failed" };
+            save(job, job.error.message);
+          }
+        } catch { /* The diagnostic above remains available if storage failed. */ }
+      }).finally(() => { active.delete(id); schedule(); });
+    }
   };
   const enqueue = (job) => {
-    if (queue.includes(job.id) || store.locked(job.id)) return;
-    job.state = "queued"; job.error = null; save(job, "Queued. Saved checkpoints will be reused.");
-    queue.push(job.id); setImmediate(() => { drain().catch(() => {}); });
+    if (queue.includes(job.id) || active.has(job.id) || store.locked(job.id)) return;
+    job.state = "queued"; job.error = null; job.queued_at = now();
+    save(job, "Waiting for an analysis slot. Saved checkpoints will be reused.");
+    queue.push(job.id); schedule();
   };
   return {
-    get: (id, owner) => publicAnalysisJob(owned(id, owner)),
+    get: (id, owner) => visible(owned(id, owner)),
     latest: (claimId, owner) => {
       const job = store.list().filter((item) => item.owner === owner && item.claim_id === claimId).sort((a, b) => b.created_at.localeCompare(a.created_at))[0];
-      return job ? publicAnalysisJob(recover(job)) : null;
+      return job ? visible(recover(job)) : null;
     },
     async create({ claim, manifest, files, owner, model, actor }) {
       if (!claim?.id || !Array.isArray(manifest) || !manifest.length || files.length !== manifest.length || new Set(manifest.map((item) => item.id)).size !== manifest.length || manifest.some((item) => !item.id || typeof item.id !== "string")) throw jobError("Every registered document must be included exactly once.");
@@ -394,16 +457,16 @@ export function createAnalysisJobs({ store, providerFactory, getStyleReferences,
       const context = prepareClaimContextForAnthropic(claim);
       const id = store.fingerprint({ version: ANALYSIS_PIPELINE_VERSION, owner, claim: context, model, maxOutputTokens: env.ANTHROPIC_MAX_OUTPUT_TOKENS, styleReferences, documents: manifest.map((item, index) => ({ ...item, hash: digest(files[index].buffer) })) });
       let job = recover(store.read(id));
-      if (job) return publicAnalysisJob(job);
+      if (job) return visible(job);
       job = { id, owner, claim_id: claim.id, pipeline_version: ANALYSIS_PIPELINE_VERSION, provider: "anthropic", model, manifest, state: "queued", phase: "extracting", created_at: now(), updated_at: now(), events: [] };
       store.write(id, "input", { claim: context, manifest, files, styleReferences }); save(job);
-      enqueue(job); return publicAnalysisJob(job);
+      enqueue(job); return visible(job);
     },
     resume(id, owner) {
       const job = owned(id, owner);
       if (job.pipeline_version !== ANALYSIS_PIPELINE_VERSION) throw jobError("This saved job uses a different analysis pipeline. Start a new analysis; the old checkpoints remain available.", 409, "analysis-version-changed");
       if (job.state !== "complete") enqueue(job);
-      return publicAnalysisJob(job);
+      return visible(job);
     },
     result(id, owner) {
       const job = owned(id, owner);
@@ -466,6 +529,6 @@ export function createAnalysisJobs({ store, providerFactory, getStyleReferences,
       throw jobError("Complete an analysis or prepare a provisional analysis before opening discussion.", 409);
     },
     owned, store,
-    async idle() { while (busy || queue.length) await sleep(10); },
+    async idle() { while (active.size || queue.length || scheduled) await sleep(10); },
   };
 }

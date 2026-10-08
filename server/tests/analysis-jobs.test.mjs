@@ -21,7 +21,7 @@ function fixture(t, options = {}) {
   const directory = fs.mkdtempSync(path.join(os.tmpdir(), "ula-analysis-jobs-"));
   t.after(() => fs.rmSync(directory, { recursive: true, force: true }));
   const store = createAnalysisJobStore(directory);
-  const factory = (overrides = {}) => createAnalysisJobs({ store, providerFactory: () => ({ analyze: async () => response() }), getStyleReferences: async () => [], inspect: async () => ({ page_count: 180 }), extract: fakeExtract, measure, env: {}, ...options, ...overrides });
+  const factory = (overrides = {}) => createAnalysisJobs({ store, providerFactory: () => ({ analyze: async () => response() }), getStyleReferences: async () => [], inspect: async () => ({ page_count: 180 }), extract: fakeExtract, measure, env: { AI_JOB_BATCH_MAX_PAGES: 20 }, ...options, ...overrides });
   return { store, factory, jobs: factory() };
 }
 
@@ -70,6 +70,112 @@ test("approved methodology is snapshotted with jobs, recorded in results and inv
   jobs.resume(first.id, input.owner); await jobs.idle(); assert.equal(calls, 3);
 });
 
+test("two claims run concurrently; the third keeps a private queue position and starts when a slot frees", async (t) => {
+  const started = [];
+  let releaseFirst, releaseSecond, bothStarted, thirdStarted;
+  const firstGate = new Promise((resolve) => { releaseFirst = resolve; });
+  const secondGate = new Promise((resolve) => { releaseSecond = resolve; });
+  const both = new Promise((resolve) => { bothStarted = resolve; });
+  const third = new Promise((resolve) => { thirdStarted = resolve; });
+  const { jobs } = fixture(t, {
+    env: {}, inspect: async () => ({ page_count: 1 }), measure: () => ({ fits: true }),
+    providerFactory: () => ({ analyze: async (params) => {
+      started.push(params.claim.id);
+      if (started.length === 2) bothStarted();
+      if (params.claim.id === "claim-1") await firstGate;
+      if (params.claim.id === "claim-2") await secondGate;
+      if (params.claim.id === "claim-3") thirdStarted();
+      return response();
+    } }),
+  });
+  t.after(async () => { releaseFirst(); releaseSecond(); await jobs.idle(); });
+  const submitted = [];
+  for (let index = 1; index <= 3; index += 1) {
+    const input = request(); input.claim.id = `claim-${index}`; input.owner = `user-${index}`;
+    submitted.push(await jobs.create(input));
+  }
+  await both;
+  assert.deepEqual(started, ["claim-1", "claim-2"]);
+  const queued = jobs.get(submitted[2].id, "user-3");
+  assert.equal(queued.state, "queued");
+  assert.deepEqual(queued.queue, { position: 1, waiting_jobs: 1, active_jobs: 2, concurrency: 2 });
+  assert.equal(queued.total_units, 0);
+  assert.doesNotMatch(JSON.stringify(queued), /claim-1|claim-2|user-1|user-2/);
+  assert.throws(() => jobs.get(submitted[2].id, "user-1"), /not found/);
+  jobs.resume(submitted[0].id, "user-1");
+  assert.equal(jobs.get(submitted[0].id, "user-1").state, "running");
+  releaseFirst(); await third;
+  assert.deepEqual(started, ["claim-1", "claim-2", "claim-3"]);
+  releaseSecond(); await jobs.idle();
+  assert.ok(submitted.every((job, index) => jobs.get(job.id, `user-${index + 1}`).state === "complete"));
+});
+
+test("60-page default groups small extraction checkpoints, while saved extraction is visible before review", async (t) => {
+  let secondStarted, releaseExtraction;
+  const extracting = new Promise((resolve) => { secondStarted = resolve; });
+  const gate = new Promise((resolve) => { releaseExtraction = resolve; });
+  const calls = [];
+  const { jobs } = fixture(t, {
+    env: {}, inspect: async () => ({ page_count: 71 }), measure: () => ({ fits: true }),
+    extract: async (file, metadata) => {
+      if (metadata.page_range.start === 21) { secondStarted(); await gate; }
+      return fakeExtract(file, metadata);
+    },
+    providerFactory: () => ({ analyze: async (params) => { calls.push(params); return response(); } }),
+  });
+  t.after(async () => { releaseExtraction(); await jobs.idle(); });
+  const submitted = await jobs.create(request());
+  await extracting;
+  const preparing = jobs.get(submitted.id, "user-1");
+  assert.equal(preparing.total_pages, 71);
+  assert.equal(preparing.extracted_pages, 20);
+  assert.equal(preparing.extracted_units, 1);
+  assert.equal(preparing.total_units, 4);
+  assert.equal(preparing.reviewed_pages, 0);
+  assert.equal(preparing.active_extraction.start, 21);
+  releaseExtraction(); await jobs.idle();
+  assert.deepEqual(calls.filter((params) => !params.requestEvidence).map((params) => params.evidence[0].pages.length), [60, 11]);
+  assert.equal(calls.length, 3);
+  const result = jobs.get(submitted.id, "user-1");
+  assert.equal(result.extracted_pages, 71);
+  assert.equal(result.reviewed_pages, 71);
+  assert.equal(result.state, "complete");
+});
+
+test("dense 71-page evidence is split by request budget below the 60-page cap without losing pages", async (t) => {
+  const reviews = [];
+  const { jobs } = fixture(t, {
+    env: {}, inspect: async () => ({ page_count: 71 }),
+    measure: ({ evidence, analysisContext }) => ({ fits: analysisContext?.startsWith("WHOLE-CLAIM") || evidence.reduce((sum, item) => sum + item.pages.length, 0) <= 50 }),
+    providerFactory: () => ({ analyze: async (params) => { if (!params.requestEvidence) reviews.push(params.evidence[0].pages.map((page) => page.page)); return response(); } }),
+  });
+  const submitted = await jobs.create(request()); await jobs.idle();
+  assert.deepEqual(reviews.map((pages) => pages.length), [40, 31]);
+  assert.deepEqual(reviews.flat(), Array.from({ length: 71 }, (_, index) => index + 1));
+  assert.equal(jobs.get(submitted.id, "user-1").state, "complete");
+});
+
+test("resume combines unpaid legacy batches up to 60 pages and reuses completed paid results", async (t) => {
+  let calls = 0;
+  const { jobs, factory, store } = fixture(t, {
+    inspect: async () => ({ page_count: 80 }), measure: () => ({ fits: true }),
+    providerFactory: () => ({ analyze: async () => { if (++calls > 1) throw new Error("Unavailable"); return response(); } }),
+  });
+  const submitted = await jobs.create(request()); await jobs.idle();
+  const savedReview = store.read(submitted.id, "review-0");
+  assert.equal(jobs.get(submitted.id, "user-1").reviewed_pages, 20);
+  const resumedReviews = [];
+  const resumed = factory({
+    env: {}, providerFactory: () => ({ analyze: async (params) => { if (!params.requestEvidence) resumedReviews.push(params.evidence[0].pages.map((page) => page.page)); return response(); } }),
+  });
+  resumed.resume(submitted.id, "user-1"); await resumed.idle();
+  assert.equal(resumedReviews.length, 1);
+  assert.deepEqual(resumedReviews[0], Array.from({ length: 60 }, (_, index) => index + 21));
+  assert.deepEqual(store.read(submitted.id, "review-0"), savedReview);
+  assert.equal(resumed.get(submitted.id, "user-1").reviewed_pages, 80);
+  assert.equal(resumed.get(submitted.id, "user-1").state, "complete");
+});
+
 test("40 pages get multiple checkpoints even when the provider request budget fits", async (t) => {
   let finishFirst, firstStarted;
   const started = new Promise((resolve) => { firstStarted = resolve; });
@@ -77,7 +183,7 @@ test("40 pages get multiple checkpoints even when the provider request budget fi
   const calls = [];
   const { jobs, store } = fixture(t, {
     inspect: async () => ({ page_count: 40 }), measure: () => ({ fits: true }),
-    env: { AI_JOB_REQUEST_TIMEOUT_MS: 900_000 },
+    env: { AI_JOB_REQUEST_TIMEOUT_MS: 900_000, AI_JOB_BATCH_MAX_PAGES: 20 },
     providerFactory: () => ({ analyze: async (params) => {
       calls.push(params);
       assert.equal(params.requestTimeoutMs, 300_000, "configured timeouts cannot exceed the five-minute per-attempt cap");
